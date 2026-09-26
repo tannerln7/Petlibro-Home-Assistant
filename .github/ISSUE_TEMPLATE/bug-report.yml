@@ -1,0 +1,113 @@
+name: Bug report
+description: Report a reproducible problem with Petlibro Local
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Petlibro Local.
+
+        Use this form for a reproducible project problem. If you are not sure whether you found a bug, start in the [ask-for-help discussion](https://github.com/tannerln7/Petlibro-Home-Assistant/discussions/2#discussion-10891804).
+
+        **Do not post MQTT passwords, State Agent tokens, feeder credentials, private SSH keys, signing keys, or unsanitized packet captures.**
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and discussions for this problem.
+          required: true
+        - label: I can reproduce the problem or have included enough evidence to distinguish it from a support request.
+          required: true
+        - label: I removed credentials, tokens, private keys, and device-specific secrets from everything below.
+          required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component
+      description: Choose the component most directly involved.
+      options:
+        - Installer or OTA bootstrap
+        - Home Assistant add-on or MQTT controller
+        - State Agent or State Agent updates
+        - Camera streaming or go2rtc
+        - Docker deployment
+        - Documentation
+        - Other or unknown
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem description
+      description: Explain what happened and how it affects the feeder or integration.
+      placeholder: Describe the observed behavior and when it occurs.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include the exact installer stage, UI action, command, or sequence that triggers the problem.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: Explain what you expected to happen instead.
+    validations:
+      required: true
+
+  - type: input
+    id: feeder_firmware
+    attributes:
+      label: Feeder model and firmware
+      description: Include the exact PLAF203 variant and OEM firmware version when known.
+      placeholder: "PLAF203, firmware 3.1.48"
+
+  - type: input
+    id: project_versions
+    attributes:
+      label: Petlibro Local versions
+      description: Include the add-on and State Agent versions when applicable.
+      placeholder: "Add-on 0.3.9, State Agent 0.3.2"
+
+  - type: input
+    id: environment
+    attributes:
+      label: Host environment
+      description: Include the Home Assistant installation type/version or Docker host details.
+      placeholder: "Home Assistant OS 2026.x on amd64"
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Relevant logs and diagnostics
+      description: Paste only the smallest sanitized excerpt that shows the problem. Use fenced code blocks for logs and commands.
+      placeholder: |
+        ```text
+        Sanitized logs or command output
+        ```
+
+  - type: input
+    id: related_discussion
+    attributes:
+      label: Related discussion
+      description: Link the help or feedback discussion that established this as a concrete problem, if one exists.
+      placeholder: "https://github.com/tannerln7/Petlibro-Home-Assistant/discussions/..."
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional context
+      description: Add anything else that may help reproduce or investigate the problem.

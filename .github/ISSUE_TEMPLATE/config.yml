@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Ask for help
+    url: https://github.com/tannerln7/Petlibro-Home-Assistant/discussions/2#discussion-10891804
+    about: Get installation, configuration, or troubleshooting help before filing a bug.
+  - name: Share feedback
+    url: https://github.com/tannerln7/Petlibro-Home-Assistant/discussions/1#discussion-10891796
+    about: Tell us what worked, what was confusing, or how the project could improve.

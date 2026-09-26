@@ -10,6 +10,19 @@ The project currently targets the MQTT-based **PLAF203 / Granary Camera
 Feeder** family. It is independent community software and is not affiliated
 with Petlibro.
 
+> [!IMPORTANT]
+> **Feedback wanted:** If you set up—or attempt to set up—this project with your
+> PLAF203, please share your experience in the
+> [feedback discussion](https://github.com/tannerln7/Petlibro-Home-Assistant/discussions/1#discussion-10891796).
+> Successful installations are helpful to hear about too. Tell us what worked,
+> what failed or was confusing, and what could make the process easier. If you
+> are stuck or need troubleshooting assistance, use the
+> [ask-for-help discussion](https://github.com/tannerln7/Petlibro-Home-Assistant/discussions/2#discussion-10891804).
+> If you identify a reproducible bug or other concrete project problem,
+> [open an issue](https://github.com/tannerln7/Petlibro-Home-Assistant/issues/new/choose)
+> with reproduction steps, relevant logs, firmware and add-on versions, and a
+> link to any related discussion as supporting context.
+
 ## Components
 
 | Component | Responsibility |
