@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.10-beta.1
+
+- Normalize stock-app feeding-plan IDs into Home Assistant slots 1-9 during
+  fresh reconciliation. The add-on logs an explicit record/ID mapping and uses
+  the normal serialized MQTT acknowledgement and State Agent readback path.
+- Refuse automatic normalization unless every known persistent record field can
+  round-trip without loss, including rejecting nonzero opaque tails and
+  unsupported raw values. Failed verification does not retry indefinitely.
+- Add separate stable (`main`) and development (`develop`) add-on release
+  channels with fail-closed SemVer validation. Development images are
+  versioned prereleases and never update `latest`.
+
 ## 0.3.9
 
 - Prevent a failed State Agent plan read from clearing feeder schedules. The

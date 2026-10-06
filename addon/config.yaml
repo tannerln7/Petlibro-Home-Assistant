@@ -1,8 +1,8 @@
 name: Petlibro Local backend
-version: "0.3.9"
+version: "0.3.10-beta.1"
 slug: petlibro_local
 description: Local PLAF203 MQTT control and camera streaming backend
-url: https://github.com/tannerln7/ha-addon-petlibro-local
+url: https://github.com/tannerln7/Petlibro-Home-Assistant
 image: ghcr.io/tannerln7/ha-addon-petlibro-local
 arch:
   - amd64
@@ -38,7 +38,7 @@ options:
   petlibro_state_agent_timeout_seconds: 2
   state_agent_updates:
     enabled: false
-    manifest_url: https://raw.githubusercontent.com/tannerln7/ha-addon-petlibro-local/state-agent-releases/state-agent/latest.json
+    manifest_url: https://raw.githubusercontent.com/tannerln7/Petlibro-Home-Assistant/state-agent-releases/state-agent/latest.json
     check_on_connect: true
     check_interval_hours: 24
   device_discovery: true

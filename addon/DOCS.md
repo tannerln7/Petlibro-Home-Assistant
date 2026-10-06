@@ -165,7 +165,7 @@ and [State Agent guide](../state-agent/README.md#signed-updates).
 The default manifest is the project's signed stable feed:
 
 ```text
-https://raw.githubusercontent.com/tannerln7/ha-addon-petlibro-local/state-agent-releases/state-agent/latest.json
+https://raw.githubusercontent.com/tannerln7/Petlibro-Home-Assistant/state-agent-releases/state-agent/latest.json
 ```
 
 The nine **Feeding schedule** text entities accept flat JSON. Each document's

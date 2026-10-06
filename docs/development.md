@@ -196,10 +196,15 @@ When a discovery changes maintained behavior:
 ## Packaging and releases
 
 Home Assistant installations normally pull the prebuilt `amd64` image named in
-`addon/config.yaml`. `.github/workflows/publish-addon-image.yml` builds and
-publishes versioned and `latest` images when add-on sources change or the
-workflow is dispatched. Keep release image references enabled in committed
-metadata; only a local Supervisor copy should omit `image:` to force a build.
+`addon/config.yaml`. `main` is the stable channel; `develop` is the integrated
+development and physical-testing channel. The image workflow validates the
+branch/version pairing before publishing, and only stable releases update
+`latest`. Follow the operational [release process](release-process.md) for
+versioning, promotion, immutable tags, and the required hotfix carry-forward
+rule.
+
+Keep release image references enabled in committed metadata; only a local
+Supervisor copy should omit `image:` to force a build.
 
 State Agent releases are separate signed ARM artifacts. Update `VERSION`, build
 the static binaries, publish the immutable artifact, then publish its signed

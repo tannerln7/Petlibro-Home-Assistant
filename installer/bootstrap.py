@@ -30,7 +30,7 @@ DEFAULT_STATE_AGENT_DIR = REPO_ROOT / "state-agent"
 DEFAULT_BUILD_DIR = REPO_ROOT / "build" / "bootstrap"
 DEFAULT_CONFIG_PATH = DEFAULT_BUILD_DIR / "bootstrap-config.json"
 DEFAULT_STATE_AGENT_MANIFEST_URL = (
-    "https://raw.githubusercontent.com/tannerln7/ha-addon-petlibro-local/"
+    "https://raw.githubusercontent.com/tannerln7/Petlibro-Home-Assistant/"
     "state-agent-releases/state-agent/latest.json"
 )
 OEM_PROVISIONING_MEMBER_ID = "1"

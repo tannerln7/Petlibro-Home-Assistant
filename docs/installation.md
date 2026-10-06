@@ -27,7 +27,7 @@ deployment rather than part of this guide.
 4. Add this repository to Home Assistant's add-on repositories:
 
    ```text
-   https://github.com/tannerln7/ha-addon-petlibro-local
+   https://github.com/tannerln7/Petlibro-Home-Assistant
    ```
 
 5. Install **Petlibro Local backend**.
@@ -67,8 +67,8 @@ and final broker. The installer checks for:
 Clone the repository:
 
 ```bash
-git clone https://github.com/tannerln7/ha-addon-petlibro-local.git
-cd ha-addon-petlibro-local
+git clone https://github.com/tannerln7/Petlibro-Home-Assistant.git
+cd Petlibro-Home-Assistant
 ```
 
 The first preparation needs Internet access. The installer clones a pinned
@@ -288,7 +288,7 @@ from Home Assistant; requests from other source IPs are rejected by design.
 
 The one-time OEM bootstrap is not used for routine State Agent updates. The
 installer defaults to the project's signed release manifest at
-`https://raw.githubusercontent.com/tannerln7/ha-addon-petlibro-local/state-agent-releases/state-agent/latest.json`.
+`https://raw.githubusercontent.com/tannerln7/Petlibro-Home-Assistant/state-agent-releases/state-agent/latest.json`.
 The add-on and State Agent use the signed manifest/update transaction documented
 in the [State Agent README](../state-agent/README.md). Add-on updates follow
 normal Home Assistant add-on updates.

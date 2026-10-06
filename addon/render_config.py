@@ -15,7 +15,7 @@ from string import Template
 from urllib.parse import urlencode, urlsplit
 
 DEFAULT_STATE_AGENT_MANIFEST_URL = (
-    "https://raw.githubusercontent.com/tannerln7/ha-addon-petlibro-local/"
+    "https://raw.githubusercontent.com/tannerln7/Petlibro-Home-Assistant/"
     "state-agent-releases/state-agent/latest.json"
 )
 
