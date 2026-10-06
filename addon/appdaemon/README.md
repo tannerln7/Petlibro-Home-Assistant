@@ -44,6 +44,13 @@ ID while preserving every existing record; deletion is not exposed. The
 post-ack snapshot must prove the intended collection transition before Home
 Assistant accepts it.
 
+If reconciliation finds stock-app plan IDs outside Home Assistant's canonical
+1-9 range, the coordinator can assign free IDs in feeder record order. This is
+not a best-effort conversion: it runs as a serialized, acknowledged, verified
+persistent write only when every known record field can round-trip through the
+MQTT plan schema. Unsupported raw values or opaque bytes cause a logged refusal
+and leave the feeder unchanged.
+
 ## Source map
 
 Key modules under [`src`](src):

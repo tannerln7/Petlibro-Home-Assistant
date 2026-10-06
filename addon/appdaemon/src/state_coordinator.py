@@ -114,6 +114,39 @@ class PlanOperation(enum.Enum):
 
 
 @dataclass(frozen=True)
+class PlanIdMapping:
+    """One feeder-record identity change made during canonicalization."""
+
+    record_index: int
+    source_id: int
+    target_id: int
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "record_index": self.record_index,
+            "source_id": self.source_id,
+            "target_id": self.target_id,
+        }
+
+
+@dataclass(frozen=True)
+class PlanIdNormalization:
+    """A losslessly representable complete plan-collection rewrite."""
+
+    baseline: tuple[FeederPlan, ...]
+    normalized: tuple[FeederPlan, ...]
+    mapping: tuple[PlanIdMapping, ...]
+
+
+class PlanIdNormalizationRefused(ValueError):
+    """Raised when canonical IDs cannot be assigned without known data loss."""
+
+    def __init__(self, message: str, mapping: tuple[PlanIdMapping, ...] = ()):
+        super().__init__(message)
+        self.mapping = mapping
+
+
+@dataclass(frozen=True)
 class PlanCollectionPredicate:
     baseline: tuple[FeederPlan, ...]
     expected: tuple[FeederPlan, ...]
@@ -222,6 +255,78 @@ class PlanCollectionPredicate:
 
 
 @dataclass(frozen=True)
+class PlanIdNormalizationPredicate:
+    """Verify an ID-only rewrite preserved every known persistent plan field."""
+
+    normalization: PlanIdNormalization
+
+    def __post_init__(self):
+        baseline = self.normalization.baseline
+        expected = self.normalization.normalized
+        mapping = self.normalization.mapping
+        if not mapping or len(baseline) != len(expected):
+            raise ValueError("feeding-plan normalization is empty or misaligned")
+
+        mapping_by_index = {entry.record_index: entry for entry in mapping}
+        if len(mapping_by_index) != len(mapping):
+            raise ValueError("feeding-plan normalization has duplicate record indexes")
+        if any(index < 0 or index >= len(baseline) for index in mapping_by_index):
+            raise ValueError("feeding-plan normalization has an invalid record index")
+        if len({plan.id for plan in expected}) != len(expected) or any(
+            plan.id not in range(1, 10) for plan in expected
+        ):
+            raise ValueError(
+                "feeding-plan normalization did not produce unique IDs 1-9"
+            )
+
+        for index, (before, after) in enumerate(zip(baseline, expected)):
+            if _plan_preservation_fingerprint(before, include_id=False) != (
+                _plan_preservation_fingerprint(after, include_id=False)
+            ):
+                raise ValueError("feeding-plan normalization mutated plan content")
+            if index in mapping_by_index:
+                entry = mapping_by_index[index]
+                if before.id != entry.source_id or after.id != entry.target_id:
+                    raise ValueError(
+                        "feeding-plan normalization mapping is inconsistent"
+                    )
+                if before.id == after.id:
+                    raise ValueError("feeding-plan normalization mapping is redundant")
+                if replace(before, id=after.id, sync_time=after.sync_time) != after:
+                    raise ValueError(
+                        "feeding-plan normalization changed more than ID and sync time"
+                    )
+            elif before != after:
+                raise ValueError(
+                    "feeding-plan normalization changed an unmapped record"
+                )
+
+    def matches(self, truth: FeederTruth) -> bool:
+        actual = truth.plans.semantic_records
+        expected = self.normalization.normalized
+        if truth.plans.count != len(expected) or len(actual) != len(expected):
+            return False
+
+        actual_by_id = {plan.id: plan for plan in actual}
+        if len(actual_by_id) != len(actual):
+            return False
+        if set(actual_by_id) != {plan.id for plan in expected}:
+            return False
+
+        return all(
+            _plan_preservation_fingerprint(actual_by_id[plan.id])
+            == _plan_preservation_fingerprint(plan)
+            for plan in expected
+        )
+
+    def expected_description(self) -> str:
+        return _plan_collection_description(self.normalization.normalized)
+
+    def actual_description(self, truth: FeederTruth) -> str:
+        return _plan_collection_description(truth.plans.semantic_records)
+
+
+@dataclass(frozen=True)
 class PersistentWriteRequest:
     control: str
     target: object
@@ -232,6 +337,11 @@ class PersistentWriteRequest:
     requires_fresh_preflight: bool = False
     raw_settings_diagnostics: bool = False
     plan_patch: PlanPatch | None = None
+    plan_id_normalization: PlanIdNormalization | None = None
+
+    def __post_init__(self):
+        if self.plan_patch is not None and self.plan_id_normalization is not None:
+            raise ValueError("a write cannot patch and normalize plans together")
 
 
 @dataclass
@@ -273,6 +383,9 @@ class FeederStateCoordinator:
         truth_sink: Callable[[FeederTruth], None],
         availability_sink: Callable[[bool], None],
         verified_truth_store: Callable[[FeederTruth], None] | None = None,
+        plan_collection_publisher: (
+            Callable[[tuple[FeederPlan, ...]], CommandReceipt] | None
+        ) = None,
     ):
         self.ad = ad
         self.state_agent = state_agent
@@ -280,6 +393,7 @@ class FeederStateCoordinator:
         self.truth_sink = truth_sink
         self.availability_sink = availability_sink
         self.verified_truth_store = verified_truth_store
+        self.plan_collection_publisher = plan_collection_publisher
 
         self.state = FeederState.DISCONNECTED
         self.mqtt_connected = False
@@ -461,7 +575,7 @@ class FeederStateCoordinator:
             deadline=now + self.ACK_TIMEOUT_SECONDS,
             predicate=request.predicate,
         )
-        self._transition(FeederState.PENDING_WRITE, "user-originated write")
+        self._transition(FeederState.PENDING_WRITE, "persistent write")
         self.logger.info(
             "persistent feeder write pending",
             control=request.control,
@@ -525,6 +639,28 @@ class FeederStateCoordinator:
                     truth.plans,
                     count=len(expected_plans),
                     semantic_records=expected_plans,
+                ),
+            )
+        elif request.plan_id_normalization is not None:
+            normalization = request.plan_id_normalization
+            if truth.plans.semantic_records != normalization.baseline:
+                self._complete_failed_write(
+                    "feeding-plan truth changed before ID normalization"
+                )
+                return
+            try:
+                validate_lossless_plan_normalization(normalization.baseline)
+                pending.predicate = PlanIdNormalizationPredicate(normalization)
+            except ValueError as exc:
+                self._complete_failed_write(str(exc))
+                return
+            pending.baseline_truth = truth
+            publisher_truth = replace(
+                truth,
+                plans=replace(
+                    truth.plans,
+                    count=len(normalization.normalized),
+                    semantic_records=normalization.normalized,
                 ),
             )
         else:
@@ -699,11 +835,53 @@ class FeederStateCoordinator:
             self.availability_sink(False)
             return
         self._transition(FeederState.READY, "reconciliation complete")
-        self.availability_sink(True)
         self.logger.info(
             "feeder reconciliation complete", core_rev=value.revisions.core_rev
         )
+        self._maybe_normalize_plan_ids(value)
+        self.availability_sink(True)
         self._start_next_write()
+
+    def _maybe_normalize_plan_ids(self, truth: FeederTruth) -> bool:
+        try:
+            normalization = build_plan_id_normalization(
+                truth.plans.semantic_records
+            )
+        except PlanIdNormalizationRefused as exc:
+            self.logger.warning(
+                "automatic feeding-plan ID normalization refused",
+                reason=str(exc),
+                mapping=[entry.to_dict() for entry in exc.mapping],
+            )
+            return False
+
+        if not normalization.mapping:
+            return False
+        mapping = [entry.to_dict() for entry in normalization.mapping]
+        publisher = self.plan_collection_publisher
+        if publisher is None:
+            self.logger.warning(
+                "automatic feeding-plan ID normalization unavailable",
+                reason="plan collection publisher is not configured",
+                mapping=mapping,
+            )
+            return False
+
+        self.logger.info(
+            "automatic feeding-plan ID normalization pending",
+            mapping=mapping,
+        )
+        request = PersistentWriteRequest(
+            control="food.plan_id_normalization",
+            target=normalization.mapping,
+            publisher=lambda current: publisher(
+                current.plans.semantic_records
+            ),
+            predicate=None,
+            command_summary="FEEDING_PLAN_SERVICE canonical ID collection",
+            plan_id_normalization=normalization,
+        )
+        return self.request_persistent_write(request)
 
     def _handle_write_preflight(self, value: object) -> None:
         pending = self.pending_write
@@ -744,6 +922,7 @@ class FeederStateCoordinator:
             self.pending_write = None
             self._transition(FeederState.READY, "write verified")
             self.availability_sink(True)
+            self._maybe_normalize_plan_ids(value)
             self._start_next_write()
             return
         self._retry_verification("persisted feeder state did not match target")
@@ -763,6 +942,7 @@ class FeederStateCoordinator:
             self._schedule_verification(pending.retry_count)
             return
         actual_truth = pending.last_observed_truth
+        failed_plan_id_normalization = pending.request.plan_id_normalization is not None
         self._transition(FeederState.DIVERGED, reason)
         if actual_truth is not None:
             self._log_raw_settings_diff(pending, actual_truth)
@@ -790,6 +970,8 @@ class FeederStateCoordinator:
                 return
             self._transition(FeederState.READY, "feeder truth applied after divergence")
             self.availability_sink(True)
+            if not failed_plan_id_normalization:
+                self._maybe_normalize_plan_ids(actual_truth)
             self._start_next_write()
         else:
             self._complete_failed_write(reason, degraded=api_failure)
@@ -834,6 +1016,8 @@ class FeederStateCoordinator:
             self._transition(FeederState.READY, "plan snapshot restored state API")
             self.availability_sink(True)
         self._finish_plan_snapshots(value.plans.semantic_records)
+        if projection_ok and self.state == FeederState.READY:
+            self._maybe_normalize_plan_ids(value)
 
     def _handle_agent_failure(self, purpose: str, result: _AgentCallResult) -> None:
         self.state_api_healthy = False
@@ -1009,6 +1193,126 @@ def _numeric_or_none(value: object) -> bool:
     return value is None or (
         isinstance(value, (int, float)) and not isinstance(value, bool)
     )
+
+
+def build_plan_id_normalization(
+    plans: tuple[FeederPlan, ...],
+) -> PlanIdNormalization:
+    """Return a deterministic, lossless mapping to canonical HA IDs 1 through 9."""
+
+    if len(plans) > 9:
+        raise PlanIdNormalizationRefused(
+            "more than nine feeding plans cannot be represented by Home Assistant"
+        )
+    ids = [plan.id for plan in plans]
+    if len(ids) != len(set(ids)):
+        raise PlanIdNormalizationRefused("feeding plans contain duplicate IDs")
+
+    used_ids = {plan.id for plan in plans if 1 <= plan.id <= 9}
+    available_ids = iter(sorted(set(range(1, 10)) - used_ids))
+    mapping = tuple(
+        PlanIdMapping(index, plan.id, next(available_ids))
+        for index, plan in enumerate(plans)
+        if plan.id not in range(1, 10)
+    )
+    if not mapping:
+        return PlanIdNormalization(plans, plans, ())
+
+    if any(
+        plans[entry.record_index].sync_time >= 0xFFFFFFFFFFFFFFFF
+        for entry in mapping
+    ):
+        raise PlanIdNormalizationRefused(
+            "feeding-plan sync_time cannot be advanced safely", mapping
+        )
+
+    try:
+        validate_lossless_plan_normalization(plans)
+    except ValueError as exc:
+        raise PlanIdNormalizationRefused(str(exc), mapping) from None
+
+    mapping_by_index = {entry.record_index: entry for entry in mapping}
+    now_ms = int(time.time() * 1000)
+    normalized = tuple(
+        (
+            replace(
+                plan,
+                id=mapping_by_index[index].target_id,
+                sync_time=max(plan.sync_time + 1, now_ms + index),
+            )
+            if index in mapping_by_index
+            else plan
+        )
+        for index, plan in enumerate(plans)
+    )
+    result = PlanIdNormalization(plans, normalized, mapping)
+    # Validate the generated rewrite as well as its source collection. This
+    # catches accidental future changes to the transform before MQTT sees it.
+    PlanIdNormalizationPredicate(result)
+    return result
+
+
+def validate_lossless_plan_normalization(plans: tuple[FeederPlan, ...]) -> None:
+    """Reject complete rewrites that cannot preserve the known record content."""
+
+    validate_plan_transport_fields(plans)
+    zero_opaque_tail = "00" * 10
+    for plan in plans:
+        if plan.opaque_hex != zero_opaque_tail:
+            raise ValueError(
+                f"feeding plan {plan.id} has an opaque tail that MQTT cannot preserve"
+            )
+        if plan.one_shot_raw not in {0, 1}:
+            raise ValueError(
+                f"feeding plan {plan.id} has unsupported one_shot_raw value"
+            )
+        if plan.one_shot != bool(plan.one_shot_raw):
+            raise ValueError(
+                f"feeding plan {plan.id} has inconsistent one-shot fields"
+            )
+        if plan.one_shot != (not plan.days_raw):
+            raise ValueError(
+                f"feeding plan {plan.id} cannot round-trip one-shot semantics"
+            )
+        if plan.execution_state != 0:
+            raise ValueError(
+                f"feeding plan {plan.id} has a non-idle execution_state"
+            )
+        if plan.time_utc != f"{plan.hour_utc:02d}:{plan.minute:02d}":
+            raise ValueError(
+                f"feeding plan {plan.id} has inconsistent UTC time fields"
+            )
+        if tuple(sorted(plan.days_raw)) != plan.days_raw:
+            raise ValueError(
+                f"feeding plan {plan.id} has weekday ordering MQTT cannot preserve"
+            )
+        expected_days = tuple(Weekday(day).name.lower() for day in plan.days_raw)
+        if plan.days != expected_days:
+            raise ValueError(
+                f"feeding plan {plan.id} has inconsistent weekday fields"
+            )
+
+
+def _plan_preservation_fingerprint(
+    plan: FeederPlan, *, include_id: bool = True
+) -> tuple[object, ...]:
+    """Known persistent record content, excluding runtime and regenerated sync data."""
+
+    values: tuple[object, ...] = (
+        plan.hour_utc,
+        plan.minute,
+        plan.one_shot,
+        plan.one_shot_raw,
+        plan.time_utc,
+        plan.days_raw,
+        plan.days,
+        plan.portions,
+        plan.enable_audio_raw,
+        plan.audio_times,
+        plan.skip_end_time,
+        plan.opaque_hex,
+    )
+    return (plan.id, *values) if include_id else values
 
 
 def build_patched_plan_collection(
