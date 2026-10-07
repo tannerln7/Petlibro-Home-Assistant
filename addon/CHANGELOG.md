@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.11-beta.1
+
+- Replace the experimental Petlibro ACK-mode matrix with firmware-backed
+  AV ACK/NACK windows, independent reliable-control acknowledgement, timing
+  probe feedback, and wrap-safe receive tracking. Stop interpreting FRAMEINFO
+  `onlineNum` or media family markers as HD/SD selectors.
+
 ## 0.3.10
 
 - Normalize stock-app feeding-plan IDs into canonical Home Assistant slots 1-9

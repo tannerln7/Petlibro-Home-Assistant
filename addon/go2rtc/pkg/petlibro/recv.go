@@ -54,22 +54,12 @@ func (c *Client) handleEncryptedDatagram(raw []byte) {
 // can never acknowledge data that was not actually received.
 func (c *Client) initACKTracking(watermark uint64) {
 	c.ackMu.Lock()
-	if c.ackMode == "" {
-		c.ackMode = ackModeHigh
-	}
-	if c.ackLagWindow == 0 {
-		c.ackLagWindow = defaultACKLagWindow
-	}
-	if c.ackInterval == 0 {
-		c.ackInterval = defaultACKInterval
-	}
 	c.ackPendingWarn = 32
+	c.ackReportedExt = watermark
 	c.ackWatermarkExt = watermark
+	c.ackHighExt = watermark
 	c.ackSeenRanges = nil
 	c.ackSeenPending = 0
-	c.ackLastPrev = uint16(watermark)
-	c.ackLastCurrent = uint16(watermark)
-	c.ackHaveLast = true
 	c.stats.ackWatermark.Store(watermark)
 	c.stats.ackSeenPending.Store(0)
 	c.stats.ackSeenRanges.Store(0)
@@ -89,6 +79,10 @@ func (c *Client) markACKReceived(subExt uint64) {
 	c.ackMu.Lock()
 	defer c.ackMu.Unlock()
 
+	if subExt > c.ackHighExt {
+		c.ackHighExt = subExt
+		c.stats.ackHigh.Store(subExt)
+	}
 	if subExt <= c.ackWatermarkExt {
 		c.stats.ackDuplicateOrOld.Add(1)
 		return
@@ -131,7 +125,7 @@ func (c *Client) markACKReceived(subExt uint64) {
 			c.ackGapStarted = time.Now()
 		}
 		if c.verbose && !c.traceACK && c.ackSeenPending >= c.ackPendingWarn {
-			log.Warn().Uint64("watermark", c.ackWatermarkExt).Uint64("high", c.stats.ackHigh.Load()).
+			log.Warn().Uint64("watermark", c.ackWatermarkExt).Uint64("high", c.ackHighExt).
 				Uint64("pending", c.ackSeenPending).Int("ranges", len(c.ackSeenRanges)).
 				Msg("petlibro ACK receive gap stalled")
 			c.ackPendingWarn *= 2
@@ -187,85 +181,129 @@ func (c *Client) contiguousAckExt() uint64 {
 	return watermark
 }
 
-type ackFields struct {
-	prev         uint16
-	current      uint16
-	prevRole     string
-	currentRole  string
-	watermarkExt uint64
-	highExt      uint64
-	lagWindow    uint64
-	seenPending  uint64
-	shouldSend   bool
+type ackWindow struct {
+	baseExt       uint64
+	highExt       uint64
+	contiguousExt uint64
+	missing       []uint16
+	seenPending   uint64
 }
 
-// nextACKFields maps the tracked receive state onto innerAck's two sequence
-// fields. Their wire positions are known (avPrev at bytes 8..9 and avCurr at
-// bytes 10..11), but their full protocol semantics remain under test. Hybrid
-// deliberately places the contiguous and observed-high positions in those
-// fields so live dumps can show how the camera reacts to that pair.
-func (c *Client) nextACKFields() ackFields {
-	c.ackMu.Lock()
-	state := ackFields{
-		watermarkExt: c.ackWatermarkExt,
-		seenPending:  c.ackSeenPending,
-		lagWindow:    c.ackLagWindow,
+// ackWindowLocked reports a complete description of (base, high]. Base is the
+// contiguous position advanced by the previous successful report, not the
+// current receive watermark. AF203 explicitly retires non-NACKed entries in
+// this interval, and its native builder likewise uses a prior receive position
+// at +8. Keeping the two positions separate ensures newly contiguous packets,
+// including a recovered hole, are positively acknowledged once.
+//
+// If the bounded NACK array fills, high stops immediately before the first
+// unrepresentable hole; advancing farther would tell AF203 to discard that
+// packet from its resend queue.
+func (c *Client) ackWindowLocked() ackWindow {
+	w := ackWindow{
+		baseExt: c.ackReportedExt, highExt: c.ackHighExt,
+		contiguousExt: c.ackWatermarkExt, seenPending: c.ackSeenPending,
 	}
-	lastPrev := c.ackLastPrev
-	lastCurrent := c.ackLastCurrent
-	haveLast := c.ackHaveLast
-	c.ackMu.Unlock()
+	if w.highExt-w.baseExt > 0xffff {
+		w.highExt = w.baseExt + 0xffff
+	}
+	rangeIndex := 0
+	for seq := w.baseExt + 1; seq <= w.highExt; seq++ {
+		// markACKReceived removes ranges as they join the contiguous prefix,
+		// so positions through the current watermark are implicitly seen.
+		if seq <= c.ackWatermarkExt {
+			continue
+		}
+		for rangeIndex < len(c.ackSeenRanges) && c.ackSeenRanges[rangeIndex].last < seq {
+			rangeIndex++
+		}
+		seen := rangeIndex < len(c.ackSeenRanges) &&
+			c.ackSeenRanges[rangeIndex].first <= seq && seq <= c.ackSeenRanges[rangeIndex].last
+		if seen {
+			continue
+		}
+		if len(w.missing) == maxTransportNACKs {
+			w.highExt = seq - 1
+			break
+		}
+		w.missing = append(w.missing, uint16(seq-w.baseExt))
+	}
+	return w
+}
 
-	state.highExt = c.stats.ackHigh.Load()
-	laggedHigh := state.watermarkExt + state.lagWindow
-	if laggedHigh < state.watermarkExt || laggedHigh > state.highExt {
-		laggedHigh = state.highExt
+// markTransportACKSent commits only the contiguous position represented by a
+// successfully written report. It never advances beyond the packet's high
+// endpoint (which may have been truncated by the wire-span or NACK limits),
+// and a receive hole cannot be skipped because ackWatermarkExt cannot cross it.
+func (c *Client) markTransportACKSent(w ackWindow) {
+	c.ackMu.Lock()
+	reported := w.contiguousExt
+	if reported > w.highExt {
+		reported = w.highExt
 	}
-	pairChanged := func() bool {
-		return !haveLast || state.prev != lastPrev || state.current != lastCurrent
+	if reported > c.ackReportedExt {
+		c.ackReportedExt = reported
 	}
-	switch c.ackMode {
-	case ackModeContig:
-		state.prev = c.avPrevSubWire
-		state.current = uint16(state.watermarkExt)
-		state.prevRole = "previous_sent_avCurr"
-		state.currentRole = "contiguous_watermark"
-		state.shouldSend = state.watermarkExt >= 0x4000 && state.current != c.avPrevSubWire
-	case ackModeHybrid, ackModePrevContigCurrHigh:
-		state.prev = uint16(state.watermarkExt)
-		state.current = uint16(state.highExt)
-		state.prevRole = "contiguous_watermark"
-		state.currentRole = "highest_observed"
-		state.shouldSend = state.highExt >= 0x4000 && pairChanged()
-	case ackModeHybridRev:
-		state.prev = uint16(state.highExt)
-		state.current = uint16(state.watermarkExt)
-		state.prevRole = "highest_observed"
-		state.currentRole = "contiguous_watermark"
-		state.shouldSend = state.highExt >= 0x4000 && pairChanged()
-	case ackModeLagHigh:
-		state.prev = c.avPrevSubWire
-		state.current = uint16(laggedHigh)
-		state.prevRole = "previous_sent_avCurr"
-		state.currentRole = "min(highest_observed,contiguous_watermark+ack_lag_window)"
-		state.shouldSend = laggedHigh >= 0x4000 && state.current != c.avPrevSubWire
-	case ackModeLagHybrid:
-		state.prev = uint16(state.watermarkExt)
-		state.current = uint16(laggedHigh)
-		state.prevRole = "contiguous_watermark"
-		state.currentRole = "min(highest_observed,contiguous_watermark+ack_lag_window)"
-		state.shouldSend = laggedHigh >= 0x4000 && pairChanged()
-	default: // high and prev-sent-curr-high preserve the original flow behavior
-		state.prev = c.avPrevSubWire
-		state.current = uint16(state.highExt)
-		state.prevRole = "previous_sent_avCurr"
-		state.currentRole = "highest_observed"
-		state.shouldSend = state.highExt >= 0x4000 && state.current != c.avPrevSubWire
+	c.ackMu.Unlock()
+}
+
+func (c *Client) nextTransportACK(ordinal, tick uint16) (transportACK, ackWindow) {
+	c.ackMu.Lock()
+	defer c.ackMu.Unlock()
+	w := c.ackWindowLocked()
+	a := c.transportACKLocked(ordinal, uint16(w.baseExt), uint16(w.highExt), w.missing, tick)
+	return a, w
+}
+
+func (c *Client) nextTransportACKForRange(ordinal, base, high uint16, missing []uint16, tick uint16) transportACK {
+	c.ackMu.Lock()
+	defer c.ackMu.Unlock()
+	return c.transportACKLocked(ordinal, base, high, missing, tick)
+}
+
+func (c *Client) transportACKLocked(ordinal, base, high uint16, missing []uint16, tick uint16) transportACK {
+	a := transportACK{
+		Ordinal: ordinal, AVBase: base, AVHigh: high,
+		ReliableRecvACK: c.reliableRecvACK, Missing: missing,
+		SendCount: c.ackSendCount, Tick: tick,
 	}
-	if c.ackRepeatUnchanged && state.highExt >= 0x4000 {
-		state.shouldSend = true
+	c.ackSendCount++
+	return a
+}
+
+func (c *Client) acceptReliableControl(seq uint16) {
+	c.ackMu.Lock()
+	defer c.ackMu.Unlock()
+
+	if !c.reliableRecvSet {
+		c.reliableRecvACK = seq
+		c.reliableRecvSet = true
+		c.stats.reliableRecvACK.Store(uint64(seq))
+		return
 	}
-	return state
+
+	delta := uint16(seq - c.reliableRecvACK)
+	if delta == 0 || delta >= 0x8000 {
+		return // duplicate, old, or outside the unambiguous forward half-space
+	}
+	if delta != 1 {
+		if c.reliableSeen == nil {
+			c.reliableSeen = make(map[uint16]struct{})
+		}
+		c.reliableSeen[seq] = struct{}{}
+		return
+	}
+
+	c.reliableRecvACK = seq
+	for {
+		next := c.reliableRecvACK + 1
+		if _, ok := c.reliableSeen[next]; !ok {
+			break
+		}
+		delete(c.reliableSeen, next)
+		c.reliableRecvACK = next
+	}
+	c.stats.reliableRecvACK.Store(uint64(c.reliableRecvACK))
 }
 
 // recvLoop runs two goroutines: a tight reader that does nothing but
@@ -367,8 +405,8 @@ func (c *Client) dumpStats() {
 		delta = countersSnapshot{
 			bytesIn:      cur.bytesIn - c.prevStats.bytesIn,
 			pktsIn:       cur.pktsIn - c.prevStats.pktsIn,
-			mainFrags:    cur.mainFrags - c.prevStats.mainFrags,
-			subFrags:     cur.subFrags - c.prevStats.subFrags,
+			keyFrags:     cur.keyFrags - c.prevStats.keyFrags,
+			interFrags:   cur.interFrags - c.prevStats.interFrags,
 			audioFrags:   cur.audioFrags - c.prevStats.audioFrags,
 			otherFrags:   cur.otherFrags - c.prevStats.otherFrags,
 			vidFrags:     cur.vidFrags - c.prevStats.vidFrags,
@@ -381,14 +419,12 @@ func (c *Client) dumpStats() {
 			recvTimeouts: cur.recvTimeouts - c.prevStats.recvTimeouts,
 			readerDrops:  cur.readerDrops - c.prevStats.readerDrops,
 			emitDrops:    cur.emitDrops - c.prevStats.emitDrops,
-			dualStreamIL: cur.dualStreamIL - c.prevStats.dualStreamIL,
 
 			fragIdxGap:                 cur.fragIdxGap - c.prevStats.fragIdxGap,
-			frameNumJumpMain:           cur.frameNumJumpMain - c.prevStats.frameNumJumpMain,
-			frameNumJumpSub:            cur.frameNumJumpSub - c.prevStats.frameNumJumpSub,
+			frameNumJumpKey:            cur.frameNumJumpKey - c.prevStats.frameNumJumpKey,
+			frameNumJumpInter:          cur.frameNumJumpInter - c.prevStats.frameNumJumpInter,
 			expectedDataShortfall:      cur.expectedDataShortfall - c.prevStats.expectedDataShortfall,
 			zeroDataHardDrop:           cur.zeroDataHardDrop - c.prevStats.zeroDataHardDrop,
-			wrongStreamDrop:            cur.wrongStreamDrop - c.prevStats.wrongStreamDrop,
 			strictIDRDrop:              cur.strictIDRDrop - c.prevStats.strictIDRDrop,
 			strictPDrop:                cur.strictPDrop - c.prevStats.strictPDrop,
 			forceDrainFlush:            cur.forceDrainFlush - c.prevStats.forceDrainFlush,
@@ -414,7 +450,14 @@ func (c *Client) dumpStats() {
 			frameInfoUnexpected:        cur.frameInfoUnexpected - c.prevStats.frameInfoUnexpected,
 			frameInfoCodec:             cur.frameInfoCodec,
 			frameInfoFlag:              cur.frameInfoFlag,
-			frameInfoByte4:             cur.frameInfoByte4,
+			frameInfoOnlineNum:         cur.frameInfoOnlineNum,
+			transportACKReceived:       cur.transportACKReceived - c.prevStats.transportACKReceived,
+			timingProbesReceived:       cur.timingProbesReceived - c.prevStats.timingProbesReceived,
+			timingResponsesSent:        cur.timingResponsesSent - c.prevStats.timingResponsesSent,
+			timingFeedbackReceived:     cur.timingFeedbackReceived - c.prevStats.timingFeedbackReceived,
+			reliableRecvACK:            cur.reliableRecvACK,
+			ackNACKCount:               cur.ackNACKCount,
+			ackSendCount:               cur.ackSendCount,
 
 			ackWatermark:        cur.ackWatermark,
 			ackSeenPending:      cur.ackSeenPending,
@@ -429,22 +472,23 @@ func (c *Client) dumpStats() {
 		}
 	}
 	if c.havePrevStats && cur.ackCurrentLow16 == c.prevStats.ackCurrentLow16 && cur.ackHigh > c.prevStats.ackHigh && !c.ackCurrStallWarned {
-		log.Warn().Str("ackMode", string(c.ackMode)).Uint64("watermark", cur.ackWatermark).
+		log.Warn().Uint64("watermark", cur.ackWatermark).
 			Uint64("high", cur.ackHigh).Uint16("current", uint16(cur.ackCurrentLow16)).
 			Uint64("pending", cur.ackSeenPending).Msg("petlibro ACK current stalled while high advances")
 		c.ackCurrStallWarned = true
 	} else if !c.havePrevStats || cur.ackCurrentLow16 != c.prevStats.ackCurrentLow16 {
 		c.ackCurrStallWarned = false
 	}
-	stalled := delta.mainFrags == 0 && delta.subFrags == 0 && delta.audioFrags == 0 && delta.vidFramesIn == 0
+	stalled := delta.keyFrags == 0 && delta.interFrags == 0 && delta.audioFrags == 0 && delta.vidFramesIn == 0
 	sameStallState := c.stallStatsActive && cur.ackWatermark == c.stallStatsWatermark &&
 		cur.ackHigh == c.stallStatsHigh && cur.ackCurrentLow16 == c.stallStatsCurrent &&
 		cur.ackSeenPending == c.stallStatsPending
 	if stalled && sameStallState {
 		c.stallStatsRepeat++
 		c.stallControlPkts += delta.otherFrags
-		log.Debug().Msgf("stats: stalled repeat=%d in=%d controlOnlyPackets=%d ackMode=%s watermark=0x%x high=0x%x pending=%d sent=%d current=0x%04x",
-			c.stallStatsRepeat, delta.pktsIn, c.stallControlPkts, c.ackMode, cur.ackWatermark, cur.ackHigh, cur.ackSeenPending, delta.ackSent, uint16(cur.ackCurrentLow16))
+		log.Debug().Msgf("stats: stalled repeat=%d in=%d controlOnlyPackets=%d watermark=0x%x high=0x%x pending=%d nacks=%d reliable=0x%04x sent=%d highWire=0x%04x",
+			c.stallStatsRepeat, delta.pktsIn, c.stallControlPkts, cur.ackWatermark, cur.ackHigh, cur.ackSeenPending,
+			cur.ackNACKCount, uint16(cur.reliableRecvACK), delta.ackSent, uint16(cur.ackCurrentLow16))
 		c.prevStats = cur
 		return
 	}
@@ -455,45 +499,38 @@ func (c *Client) dumpStats() {
 	c.stallStatsHigh = cur.ackHigh
 	c.stallStatsCurrent = cur.ackCurrentLow16
 	c.stallStatsPending = cur.ackSeenPending
-	log.Debug().Msgf("stats: in=%d pkts (%d KiB) channels: main=%d sub=%d audio=%d other=%d | video: %d frames in -> %d out (drop %d) | loss: frames=%d idr=%d p=%d missing=%d maxFrame=%d | frag skips: %d (%d frags lost) | forceDrain: %d | qDrops reader=%d emit=%d | dualStreamIL=%d | reasons: fragIdxGap=%d frameNumJumpMain=%d frameNumJumpSub=%d expectedDataShortfall=%d zeroDataHardDrop=%d wrongStreamDrop=%d strictIDRDrop=%d strictPDrop=%d forceDrainFlush=%d forceDrainEntries=%d deferredDrop=%d | mediaHeaders: normal=%d extendedMedia parsed=%d rejected=%d data=%d end=%d rare=%d unknown0c08=%d unknown0c0d=%d candidates=%d seqAssembled=%d seqUnhandled=%d | frameinfo: codec=0x%04x flag=%d onlineNumOrStreamByte=%d changes=%d unexpected=%d | ack: ackMode=%s repeat=%t interval=%s watermark=0x%x high=0x%x avNext=0x%x pending=%d ranges=%d overflow=%d advanced=%d old=%d sent=%d prev=0x%04x current=0x%04x lagWindow=%d",
+	log.Debug().Msgf("stats: in=%d pkts (%d KiB) families: key=%d inter=%d audio=%d other=%d | video: %d frames in -> %d out (drop %d) | loss: frames=%d idr=%d p=%d missing=%d maxFrame=%d | frag skips: %d (%d frags lost) | forceDrain: %d | qDrops reader=%d emit=%d | reasons: fragIdxGap=%d frameNumJumpKey=%d frameNumJumpInter=%d expectedDataShortfall=%d zeroDataHardDrop=%d strictIDRDrop=%d strictPDrop=%d forceDrainFlush=%d forceDrainEntries=%d deferredDrop=%d | mediaHeaders: normal=%d extendedMedia parsed=%d rejected=%d data=%d end=%d rare=%d unknown0c08=%d unknown0c0d=%d candidates=%d seqAssembled=%d seqUnhandled=%d | frameinfo: codec=0x%04x flag=%d onlineNum=%d changes=%d unexpected=%d | transport: ackRx=%d probeRx=%d responseTx=%d feedbackRx=%d watermark=0x%x high=0x%x avNext=0x%x pending=%d ranges=%d nacks=%d overflow=%d advanced=%d duplicate=%d ackTx=%d base=0x%04x highWire=0x%04x reliable=0x%04x sendCount=0x%04x",
 		delta.pktsIn, delta.bytesIn/1024,
-		delta.mainFrags, delta.subFrags, delta.audioFrags, delta.otherFrags,
+		delta.keyFrags, delta.interFrags, delta.audioFrags, delta.otherFrags,
 		delta.vidFramesIn, delta.vidFramesOut, delta.vidDropped,
 		delta.framesWithLoss, delta.idrFramesWithLoss, delta.pFramesWithLoss, delta.missingFragmentsTotal, delta.maxMissingFragmentsInFrame,
 		delta.fragSkips, delta.fragsLost, delta.forceDrains,
-		delta.readerDrops, delta.emitDrops, delta.dualStreamIL,
-		delta.fragIdxGap, delta.frameNumJumpMain, delta.frameNumJumpSub,
-		delta.expectedDataShortfall, delta.zeroDataHardDrop, delta.wrongStreamDrop,
+		delta.readerDrops, delta.emitDrops,
+		delta.fragIdxGap, delta.frameNumJumpKey, delta.frameNumJumpInter,
+		delta.expectedDataShortfall, delta.zeroDataHardDrop,
 		delta.strictIDRDrop, delta.strictPDrop, delta.forceDrainFlush,
 		delta.forceDrainEntries, delta.deferredDrop,
 		delta.normalMediaPackets, delta.extendedMediaParsed, delta.extendedMediaRejected,
 		delta.extendedMediaDataPackets, delta.extendedMediaEndPackets, delta.extendedMediaRarePackets,
 		delta.unknown0c08Remaining, delta.unknown0c0dRemaining, delta.extendedMediaCandidates,
 		delta.sequenceSeenAndAssembled, delta.sequenceSeenButUnhandled,
-		uint16(delta.frameInfoCodec), delta.frameInfoFlag, delta.frameInfoByte4, delta.frameInfoChanges, delta.frameInfoUnexpected,
-		c.ackMode, c.ackRepeatUnchanged, c.ackInterval, delta.ackWatermark, delta.ackHigh, c.avNextObserved.Load(), delta.ackSeenPending,
-		delta.ackSeenRanges, delta.ackTrackingOverflow, delta.ackAdvanced, delta.ackDuplicateOrOld, delta.ackSent,
-		uint16(delta.ackPrevLow16), uint16(delta.ackCurrentLow16), c.ackLagWindow)
+		uint16(delta.frameInfoCodec), delta.frameInfoFlag, delta.frameInfoOnlineNum, delta.frameInfoChanges, delta.frameInfoUnexpected,
+		delta.transportACKReceived, delta.timingProbesReceived, delta.timingResponsesSent, delta.timingFeedbackReceived,
+		delta.ackWatermark, delta.ackHigh, c.avNextObserved.Load(), delta.ackSeenPending,
+		delta.ackSeenRanges, delta.ackNACKCount, delta.ackTrackingOverflow, delta.ackAdvanced, delta.ackDuplicateOrOld, delta.ackSent,
+		uint16(delta.ackPrevLow16), uint16(delta.ackCurrentLow16), uint16(delta.reliableRecvACK), uint16(delta.ackSendCount))
 	c.prevStats = cur
 	c.havePrevStats = true
 }
 
-// maintenanceLoop fires heartbeat, alive, and sliding-window ACK
-// packets on cadences calibrated to the official Petlibro app's
-// behaviour.  Exits on c.done.
+// maintenanceLoop sends the outer session keepalive and type-0x09 receive
+// reports. Type 0x0a is a timing probe, not a periodic heartbeat; probes from
+// the camera are answered reactively by the inner-message dispatcher.
 func (c *Client) maintenanceLoop() {
-	tickBase := time.Now().UnixMilli()
-	tick32 := func() uint32 { return uint32((time.Now().UnixMilli() - tickBase + 0xC000) & 0xFFFFFFFF) }
 	tick16 := func() uint16 { return uint16(time.Now().UnixMilli() & 0xFFFF) }
 
-	hb := time.NewTicker(1 * time.Second)
 	alive := time.NewTicker(1500 * time.Millisecond)
-	interval := c.ackInterval
-	if interval == 0 {
-		interval = defaultACKInterval
-	}
-	ack := time.NewTicker(interval)
-	defer hb.Stop()
+	ack := time.NewTicker(defaultACKInterval)
 	defer alive.Stop()
 	defer ack.Stop()
 
@@ -501,50 +538,39 @@ func (c *Client) maintenanceLoop() {
 		select {
 		case <-c.done:
 			return
-		case <-hb.C:
-			_ = c.sendInner(innerHeartbeat(c.icounter, tick32()))
-			c.icounter++
 		case <-alive.C:
 			_ = c.send(buildAliveC2D(c.nonce))
 		case <-ack.C:
-			fields := c.nextACKFields()
-			if fields.shouldSend {
-				const chanIdx = uint32(3)
-				const subIdx = uint16(0x34)
-				tick := tick16()
-				body := innerAck(c.icounter, fields.prev, fields.current, chanIdx, subIdx, tick)
-				if c.verbose && c.traceACK {
-					log.Trace().
-						Str("ackMode", string(c.ackMode)).
-						Str("avPrevRole", fields.prevRole).
-						Str("avCurrRole", fields.currentRole).
-						Uint16("icounter", c.icounter).
-						Uint16("avPrev", fields.prev).
-						Uint16("avCurr", fields.current).
-						Uint64("ackWatermarkExt", fields.watermarkExt).
-						Uint64("avHighExt", fields.highExt).
-						Uint64("avNextExt", c.avNextObserved.Load()).
-						Uint64("ackSeenPending", fields.seenPending).
-						Uint64("ackLagWindow", fields.lagWindow).
-						Uint32("chanIdx", chanIdx).
-						Uint16("subIdx", subIdx).
-						Uint16("tick16", tick).
-						Hex("body", body).
-						Msg("petlibro ACK send")
-				}
-				err := c.sendInner(body)
-				c.icounter++
-				c.avPrevSubWire = fields.current
-				c.ackMu.Lock()
-				c.ackLastPrev = fields.prev
-				c.ackLastCurrent = fields.current
-				c.ackHaveLast = true
-				c.ackMu.Unlock()
-				c.stats.ackPrevLow16.Store(uint64(fields.prev))
-				c.stats.ackCurrentLow16.Store(uint64(fields.current))
-				if err == nil {
-					c.stats.ackSent.Add(1)
-				}
+			tick := tick16()
+			a, window := c.nextTransportACK(c.icounter, tick)
+			body := a.marshal()
+			if c.verbose && c.traceACK {
+				log.Trace().
+					Uint16("ordinal", a.Ordinal).
+					Uint16("avBase", a.AVBase).
+					Uint16("avHigh", a.AVHigh).
+					Uint64("ackReportedBaseExt", window.baseExt).
+					Uint64("ackWatermarkExt", window.contiguousExt).
+					Uint64("avHighExt", window.highExt).
+					Uint64("avNextExt", c.avNextObserved.Load()).
+					Uint64("ackSeenPending", window.seenPending).
+					Interface("missingOffsets", a.Missing).
+					Uint16("reliableRecvACK", a.ReliableRecvACK).
+					Uint16("sendCount", a.SendCount).
+					Uint16("tick16", tick).
+					Msg("petlibro transport ACK send")
+			}
+			err := c.sendInner(body)
+			if err == nil {
+				c.markTransportACKSent(window)
+			}
+			c.icounter++
+			c.stats.ackPrevLow16.Store(uint64(a.AVBase))
+			c.stats.ackCurrentLow16.Store(uint64(a.AVHigh))
+			c.stats.ackNACKCount.Store(uint64(len(a.Missing)))
+			c.stats.ackSendCount.Store(uint64(a.SendCount))
+			if err == nil {
+				c.stats.ackSent.Add(1)
 			}
 		}
 	}

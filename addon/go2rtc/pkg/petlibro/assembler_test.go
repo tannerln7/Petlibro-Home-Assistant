@@ -114,15 +114,15 @@ func TestWrapSeqAdvanceToNoRegress(t *testing.T) {
 // Petlibro firmware appends. Layout per stripFragmentMetadataTrailer's
 // docstring:
 //
-//	<slice bytes ...> <codec_id 1B = 0x4e> <00 b1 00 streamID> <00*7> <ts:4 LE>
-func makeTrailerPayload(slice []byte, isIDR bool, streamID byte, ts uint32) []byte {
+//	<slice bytes ...> <codec_id 1B = 0x4e> <00 b1 00 onlineNum> <00*7> <ts:4 LE>
+func makeTrailerPayload(slice []byte, isIDR bool, onlineNum byte, ts uint32) []byte {
 	out := append([]byte{}, slice...)
 	out = append(out, CodecH264) // codec_id 0x4e
 	b1 := byte(0x00)             // P-frame
 	if isIDR {
 		b1 = 0x01
 	}
-	out = append(out, 0x00, b1, 0x00, streamID)
+	out = append(out, 0x00, b1, 0x00, onlineNum)
 	out = append(out, 0, 0, 0, 0, 0, 0, 0) // 7 zero bytes
 	var tsBytes [4]byte
 	binary.LittleEndian.PutUint32(tsBytes[:], ts)
@@ -131,7 +131,7 @@ func makeTrailerPayload(slice []byte, isIDR bool, streamID byte, ts uint32) []by
 }
 
 // TestStripFragmentMetadataTrailerPositive — a synthetic end-fragment
-// with a valid signature returns stripped bytes, ts, and stream-id.
+// with a valid signature returns stripped bytes, ts, and onlineNum.
 func TestStripFragmentMetadataTrailerPositive(t *testing.T) {
 	slice := []byte{0xAA, 0xBB, 0xCC, 0xDD, 0xEE}
 	p := makeTrailerPayload(slice, true, 0x01, 0xDEADBEEF)
@@ -147,13 +147,13 @@ func TestStripFragmentMetadataTrailerPositive(t *testing.T) {
 		t.Fatalf("ts=0x%x, want 0xDEADBEEF", ts)
 	}
 	if sid != 0x01 {
-		t.Fatalf("streamID=0x%02x, want 0x01", sid)
+		t.Fatalf("onlineNum=0x%02x, want 0x01", sid)
 	}
 }
 
-// TestStripFragmentMetadataTrailerSubStreamID — same shape but with
-// stream-id = 0x02 (SD sub-stream).
-func TestStripFragmentMetadataTrailerSubStreamID(t *testing.T) {
+// TestStripFragmentMetadataTrailerOnlineNumTwo checks another valid
+// online-client count.
+func TestStripFragmentMetadataTrailerOnlineNumTwo(t *testing.T) {
 	slice := []byte{0x01, 0x02, 0x03}
 	p := makeTrailerPayload(slice, false, 0x02, 0x12345678)
 
@@ -162,7 +162,7 @@ func TestStripFragmentMetadataTrailerSubStreamID(t *testing.T) {
 		t.Fatalf("hasTs=false")
 	}
 	if sid != 0x02 {
-		t.Fatalf("streamID=0x%02x, want 0x02 (SD)", sid)
+		t.Fatalf("onlineNum=0x%02x, want 0x02", sid)
 	}
 	if ts != 0x12345678 {
 		t.Fatalf("ts=0x%x, want 0x12345678", ts)
@@ -219,28 +219,14 @@ func TestStripFragmentMetadataTrailerTooShort(t *testing.T) {
 	}
 }
 
-// TestStripFragmentMetadataTrailerStreamIDRange — the prefix accepts
-// exactly stream-id ∈ {0x01, 0x02} (HD main, SD sub).  Earlier
-// 0x01..0x0f was a defensive over-allow with no PCAP evidence;
-// tightening to the observed set catches malformed end-fragments
-// that would otherwise misclassify as valid trailers.
-func TestStripFragmentMetadataTrailerStreamIDRange(t *testing.T) {
-	cases := []struct {
-		sid  byte
-		want bool
-	}{
-		{0x00, false},
-		{0x01, true},
-		{0x02, true},
-		{0x03, false},
-		{0x0f, false},
-		{0x10, false},
-	}
-	for _, c := range cases {
-		p := makeTrailerPayload([]byte{0x99}, true, c.sid, 0)
+// FRAMEINFO byte 4 is onlineNum, so it is not restricted to the values 1/2
+// seen in early captures and does not participate in trailer recognition.
+func TestStripFragmentMetadataTrailerOnlineNumRange(t *testing.T) {
+	for _, onlineNum := range []byte{0, 1, 2, 3, 0x0f, 0x10, 0xff} {
+		p := makeTrailerPayload([]byte{0x99}, true, onlineNum, 0)
 		_, _, _, ok := stripFragmentMetadataTrailer(p)
-		if ok != c.want {
-			t.Errorf("streamID=0x%02x: got ok=%v, want %v", c.sid, ok, c.want)
+		if !ok {
+			t.Errorf("onlineNum=0x%02x was rejected", onlineNum)
 		}
 	}
 }
@@ -293,6 +279,7 @@ func makePkt(f fragSpec) []byte {
 
 	pkt := make([]byte, 0x1C+len(inner))
 	pkt[3] = flagsRecv
+	binary.LittleEndian.PutUint16(pkt[4:], uint16(0x0c+len(inner)))
 	binary.LittleEndian.PutUint16(pkt[8:], msgSessionD2C)
 	copy(pkt[0x1C:], inner)
 	return pkt
@@ -315,6 +302,7 @@ func makeExtendedPkt(f extendedFragSpec) []byte {
 
 	pkt := make([]byte, 0x1C+len(inner))
 	pkt[3] = flagsRecv
+	binary.LittleEndian.PutUint16(pkt[4:], uint16(0x0c+len(inner)))
 	binary.LittleEndian.PutUint16(pkt[8:], msgSessionD2C)
 	copy(pkt[0x1C:], inner)
 	return pkt
@@ -338,7 +326,6 @@ func newTestClient(firstSubWire uint16, quality string) *Client {
 	}
 	c.avNextExt = c.wrap.ext
 	c.avHighExt = c.wrap.ext - 1
-	c.avPrevSubWire = uint16(c.wrap.ext - 1)
 	c.initACKTracking(c.wrap.ext - 1)
 	return c
 }
@@ -373,12 +360,12 @@ func TestExtendedMediaHeaderAssemblyAndACK(t *testing.T) {
 	mainData := []byte{0, 0, 0, 1, 0x65, 0x88, 0x99}
 	mainEnd := makeTrailerPayload([]byte{0xaa, 0xbb}, true, 0x01, 1000)
 	c.parseDatagram(makeExtendedPkt(extendedFragSpec{
-		b1: 0x08, channel: innerChMain, subFlag: 0,
+		b1: 0x08, channel: innerChKey, subFlag: 0,
 		subWire: 0x4000, totalFrags: 2, fragIdx: 0,
 		frameNum: 10, nextFrameLike: 11, payload: mainData,
 	}))
 	c.parseDatagram(makeExtendedPkt(extendedFragSpec{
-		b1: 0x09, channel: innerChMain, subFlag: 1,
+		b1: 0x09, channel: innerChKey, subFlag: 1,
 		subWire: 0x4001, totalFrags: 2, fragIdx: 16,
 		frameNum: 10, nextFrameLike: 11, payload: mainEnd,
 	}))
@@ -386,19 +373,19 @@ func TestExtendedMediaHeaderAssemblyAndACK(t *testing.T) {
 	subData := []byte{0, 0, 0, 1, 0x41, 0x44}
 	subEnd := makeTrailerPayload([]byte{0xcc}, false, 0x01, 1040)
 	c.parseDatagram(makeExtendedPkt(extendedFragSpec{
-		b1: 0x0c, channel: innerChSub, subFlag: 0,
+		b1: 0x0c, channel: innerChInter, subFlag: 0,
 		subWire: 0x4002, totalFrags: 2, fragIdx: 0,
 		frameNum: 11, nextFrameLike: 12, payload: subData,
 	}))
 	c.parseDatagram(makeExtendedPkt(extendedFragSpec{
-		b1: 0x0d, channel: innerChSub, subFlag: 1,
+		b1: 0x0d, channel: innerChInter, subFlag: 1,
 		subWire: 0x4003, totalFrags: 2, fragIdx: 16,
 		frameNum: 11, nextFrameLike: 12, payload: subEnd,
 	}))
 
 	packets := drainAll(c)
 	if len(packets) != 2 {
-		t.Fatalf("emitted %d packets, want one main and one sub AU", len(packets))
+		t.Fatalf("emitted %d packets, want one key-family and one inter-family AU", len(packets))
 	}
 	if !packets[0].IsKeyframe || packets[1].IsKeyframe {
 		t.Fatalf("unexpected keyframe flags: first=%t second=%t", packets[0].IsKeyframe, packets[1].IsKeyframe)
@@ -433,12 +420,12 @@ func TestExtendedMediaRejectDoesNotACK(t *testing.T) {
 	c := newTestClient(0x4000, "hd")
 
 	c.parseDatagram(makeExtendedPkt(extendedFragSpec{
-		b1: 0x08, channel: innerChMain, subFlag: 0,
+		b1: 0x08, channel: innerChKey, subFlag: 0,
 		subWire: 0x4000, totalFrags: 2, fragIdx: 0,
 		frameNum: 10, nextFrameLike: 99, payload: []byte{1, 2, 3},
 	}))
 	c.parseDatagram(makeExtendedPkt(extendedFragSpec{
-		b1: 0x0d, channel: innerChSub, subFlag: 1,
+		b1: 0x0d, channel: innerChInter, subFlag: 1,
 		subWire: 0x4001, totalFrags: 1, fragIdx: 16,
 		frameNum: 11, nextFrameLike: 12, payload: []byte{1, 2, 3},
 	}))
@@ -467,7 +454,7 @@ func TestNormalAudio0c0dIsNotExtended(t *testing.T) {
 	c := newTestClient(0x4000, "hd")
 	payload := append(make([]byte, 8), []byte{0xff, 0xf1, 0x50, 0x80, 0, 0, 0}...)
 	c.parseDatagram(makePkt(fragSpec{
-		channel: innerChSub, sub17: 0, b1: 0x0d,
+		channel: innerChInter, sub17: 0, b1: 0x0d,
 		subWire: 0x4000, totalFrags: 1, fragIdx: 0,
 		paylen: uint16(len(payload)), frameNum: 1, payload: payload,
 	}))
@@ -508,7 +495,7 @@ func TestEndToEndMultiFragmentIDR(t *testing.T) {
 		data := dataFragPayload(byte(0x10+i), 16)
 		wantPayload = append(wantPayload, data...)
 		c.parseDatagram(makePkt(fragSpec{
-			channel:    innerChMain,
+			channel:    innerChKey,
 			b1:         0x00,
 			subWire:    uint16(0x4000 + i),
 			totalFrags: totalFrags,
@@ -526,7 +513,7 @@ func TestEndToEndMultiFragmentIDR(t *testing.T) {
 	wantPayload = append(wantPayload, tail...)
 	end := makeTrailerPayload(tail, true, 0x01, tsMs)
 	c.parseDatagram(makePkt(fragSpec{
-		channel:    innerChMain,
+		channel:    innerChKey,
 		b1:         0x01,
 		sub17:      0x01,
 		subWire:    uint16(0x4000 + 4),
@@ -566,7 +553,7 @@ func TestEndToEndMultiFragmentIDRMonotonicPTS(t *testing.T) {
 		// post-strip AU >= 5 for the emitAU minimum-len gate.
 		for i := 0; i < 2; i++ {
 			c.parseDatagram(makePkt(fragSpec{
-				channel:    innerChMain,
+				channel:    innerChKey,
 				b1:         0x00,
 				subWire:    baseSub + uint16(i),
 				totalFrags: 3,
@@ -578,7 +565,7 @@ func TestEndToEndMultiFragmentIDRMonotonicPTS(t *testing.T) {
 		}
 		end := makeTrailerPayload([]byte{0x99, 0x88, 0x77, 0x66, 0x55}, true, 0x01, tsMs)
 		c.parseDatagram(makePkt(fragSpec{
-			channel:    innerChMain,
+			channel:    innerChKey,
 			b1:         0x01,
 			sub17:      0x01,
 			subWire:    baseSub + 2,
@@ -609,20 +596,16 @@ func TestEndToEndMultiFragmentIDRMonotonicPTS(t *testing.T) {
 	}
 }
 
-// ---------- dual-stream stream-id discrimination -----------------------
+// ---------- FRAMEINFO onlineNum handling -------------------------------
 
-// TestDualStreamSerialised verifies the serialised-not-interleaved
-// assumption: with quality=hd, an HD IDR (stream-id 0x01) immediately
-// followed by an SD IDR (stream-id 0x02) on the same channel must
-// produce ONE emit (the HD one). The SD frame's data fragments are
-// accumulated optimistically and discarded at the end-fragment
-// trailer-streamID check.
-func TestDualStreamSerialised(t *testing.T) {
+// HD quality controls the camera request only. A valid received frame is not
+// dropped because its onlineNum differs from a local quality request.
+func TestOnlineNumDoesNotFilterKeyFrames(t *testing.T) {
 	c := newTestClient(0x4000, "hd")
 
 	hdData := dataFragPayload(0xAA, 16)
 	c.parseDatagram(makePkt(fragSpec{
-		channel:    innerChMain,
+		channel:    innerChKey,
 		b1:         0x00,
 		subWire:    0x4000,
 		totalFrags: 2,
@@ -634,7 +617,7 @@ func TestDualStreamSerialised(t *testing.T) {
 	hdTail := []byte{0x11, 0x22, 0x33, 0x44, 0x55}
 	hdEnd := makeTrailerPayload(hdTail, true, 0x01, 1000)
 	c.parseDatagram(makePkt(fragSpec{
-		channel:    innerChMain,
+		channel:    innerChKey,
 		b1:         0x01,
 		sub17:      0x01,
 		subWire:    0x4001,
@@ -645,12 +628,10 @@ func TestDualStreamSerialised(t *testing.T) {
 		payload:    hdEnd,
 	}))
 
-	// SD IDR right after — same channel (ch=0x05) but stream-id 0x02
-	// in its trailer. Should be discarded by the wantStreamID filter
-	// once the end fragment reveals the stream.
+	// Another IDR follows with a different online-client count.
 	sdData := dataFragPayload(0xBB, 16)
 	c.parseDatagram(makePkt(fragSpec{
-		channel:    innerChMain,
+		channel:    innerChKey,
 		b1:         0x00,
 		subWire:    0x4002,
 		totalFrags: 2,
@@ -662,7 +643,7 @@ func TestDualStreamSerialised(t *testing.T) {
 	sdTail := []byte{0x33, 0x44, 0x55, 0x66, 0x77}
 	sdEnd := makeTrailerPayload(sdTail, true, 0x02, 1100)
 	c.parseDatagram(makePkt(fragSpec{
-		channel:    innerChMain,
+		channel:    innerChKey,
 		b1:         0x01,
 		sub17:      0x01,
 		subWire:    0x4003,
@@ -674,8 +655,8 @@ func TestDualStreamSerialised(t *testing.T) {
 	}))
 
 	pkts := drainAll(c)
-	if len(pkts) != 1 {
-		t.Fatalf("emitted %d packets, want 1 (HD only, SD discarded by trailer-streamID); pkts=%+v", len(pkts), pkts)
+	if len(pkts) != 2 {
+		t.Fatalf("emitted %d packets, want 2 regardless of onlineNum; pkts=%+v", len(pkts), pkts)
 	}
 	want := append(append([]byte{}, hdData...), hdTail...)
 	if string(pkts[0].Payload) != string(want) {
@@ -683,26 +664,13 @@ func TestDualStreamSerialised(t *testing.T) {
 	}
 }
 
-// TestDualStreamFilterSubSingleFragment verifies the single-fragment-
-// on-ch=0x07-with-trailer fast-path filter: a stream-id=0x02 fragment
-// on ch=0x07 when quality=hd must be filtered (no emit). The
-// drainContiguous still advances avNextExt past it so subsequent
-// in-order fragments aren't blocked.
-//
-// Note: a `return` early-exit at the wantStreamID check fires AFTER
-// drainContiguous has already done avNextExt++, so wire-order
-// progression is preserved. The follow-up matching HD fragment
-// therefore reaches emit cleanly.
-func TestDualStreamFilterSubSingleFragment(t *testing.T) {
+func TestHDRequestEmitsInterFramesRegardlessOfOnlineNum(t *testing.T) {
 	c := newTestClient(0x4000, "hd")
 
-	// Single-fragment P-frame on ch=0x07, stream-id 0x02 (SD).
-	// totalFrags=1 means the trailer-bearing fragment IS the whole
-	// frame, and the wantStreamID filter at the top of emit() rejects
-	// it for being the wrong stream.
+	// Single-fragment inter frame with onlineNum=2.
 	sdEnd := makeTrailerPayload([]byte{0x55, 0x66, 0x77, 0x88, 0x99}, false, 0x02, 100)
 	c.parseDatagram(makePkt(fragSpec{
-		channel:    innerChSub,
+		channel:    innerChInter,
 		b1:         0x00,
 		subWire:    0x4000,
 		totalFrags: 1,
@@ -712,10 +680,10 @@ func TestDualStreamFilterSubSingleFragment(t *testing.T) {
 		payload:    sdEnd,
 	}))
 
-	// Then a single-fragment HD P-frame (stream-id 0x01) — should emit.
+	// Then another frame with onlineNum=1.
 	hdEnd := makeTrailerPayload([]byte{0xCC, 0xDD, 0xEE, 0xFF, 0xAA}, false, 0x01, 200)
 	c.parseDatagram(makePkt(fragSpec{
-		channel:    innerChSub,
+		channel:    innerChInter,
 		b1:         0x00,
 		subWire:    0x4001,
 		totalFrags: 1,
@@ -726,15 +694,11 @@ func TestDualStreamFilterSubSingleFragment(t *testing.T) {
 	}))
 
 	pkts := drainAll(c)
-	if len(pkts) != 1 {
-		t.Fatalf("emitted %d packets, want 1 (HD only)", len(pkts))
+	if len(pkts) != 2 {
+		t.Fatalf("emitted %d packets, want 2", len(pkts))
 	}
-	want := []byte{0xCC, 0xDD, 0xEE, 0xFF, 0xAA}
-	if string(pkts[0].Payload) != string(want) {
-		t.Fatalf("payload=%x, want %x (HD P-frame slice bytes)", pkts[0].Payload, want)
-	}
-	if got := c.stats.wrongStreamDrop.Load(); got != 1 {
-		t.Fatalf("wrongStreamDrop=%d, want 1", got)
+	if pkts[0].OnlineNum != 2 || pkts[1].OnlineNum != 1 {
+		t.Fatalf("onlineNum values=%d/%d", pkts[0].OnlineNum, pkts[1].OnlineNum)
 	}
 }
 
@@ -761,7 +725,7 @@ func TestForceDrainDoesNotAdvanceACKWatermark(t *testing.T) {
 	c := newTestClient(0x4000, "hd")
 	send := func(subWire uint16, frameNum uint32) {
 		c.parseDatagram(makePkt(fragSpec{
-			channel: innerChMain, b1: 0x00,
+			channel: innerChKey, b1: 0x00,
 			subWire: subWire, totalFrags: 1, fragIdx: 0,
 			paylen: 8, frameNum: frameNum, payload: dataFragPayload(byte(frameNum), 8),
 		}))
@@ -856,7 +820,7 @@ func TestACKTrackingCapsDisjointRanges(t *testing.T) {
 	}
 }
 
-// TestChannelAsmInterleavedMainAndSub — ch=0x05 IDR and ch=0x07 P-frame
+// TestChannelAsmInterleavedKeyAndInter — ch=0x05 IDR and ch=0x07 P-frame
 // fragments arriving interleaved (in wire order) must NOT corrupt each
 // other: the per-channel `channelAsm` state means each channel can
 // reassemble independently even while the other is mid-frame.
@@ -864,44 +828,44 @@ func TestACKTrackingCapsDisjointRanges(t *testing.T) {
 // This is the regression for the "shared buffer would drop every
 // partial IDR" comment near channelAsm's docstring.
 //
-// Wire sequence: IDR-data on ch=0x05, then sub P-frame on ch=0x07,
+// Wire sequence: IDR data on ch=0x05, then an inter frame on ch=0x07.
 // then IDR-end on ch=0x05. The cross-channel arrival of the ch=0x07
-// sub frame triggers flushMainIDR() which emits the in-progress main
+// The inter frame triggers flushPendingIDR(), which emits the in-progress IDR
 // buffer; we assert both AUs reach the consumer queue (the regression
 // is "shared buffer would drop every partial IDR" — here neither side
 // gets dropped).
-func TestChannelAsmInterleavedMainAndSub(t *testing.T) {
+func TestChannelAsmInterleavedKeyAndInter(t *testing.T) {
 	c := newTestClient(0x4000, "hd")
 
-	// Embed an H.264 NAL-5 (IDR-slice) start code into the main data
+	// Embed an H.264 NAL-5 (IDR-slice) start code into the key-family data
 	// so annexbContainsNALType(au, h264.NALUTypeIFrame) flags this AU
 	// as a keyframe in emitAU. The bytes are: Annex-B start-code 00
 	// 00 00 01, then
 	// NAL header byte 0x65 (forbidden_zero_bit=0, nal_ref_idc=3,
 	// nal_unit_type=5), then a few payload bytes.
-	mainData := []byte{0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE}
+	keyData := []byte{0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE}
 	c.parseDatagram(makePkt(fragSpec{
-		channel: innerChMain, b1: 0x00,
+		channel: innerChKey, b1: 0x00,
 		subWire: 0x4000, totalFrags: 2, fragIdx: 0,
-		paylen: uint16(len(mainData)), frameNum: 100, payload: mainData,
+		paylen: uint16(len(keyData)), frameNum: 100, payload: keyData,
 	}))
 	// P-frame on ch=0x07 arrives between the IDR's data and end —
-	// triggers flushMainIDR() in emit().
-	subEnd := makeTrailerPayload([]byte{0x77, 0x88, 0x99, 0xAA, 0xBB}, false, 0x01, 1500)
+	// triggers flushPendingIDR() in emit().
+	interEnd := makeTrailerPayload([]byte{0x77, 0x88, 0x99, 0xAA, 0xBB}, false, 0x01, 1500)
 	c.parseDatagram(makePkt(fragSpec{
-		channel: innerChSub, b1: 0x00,
+		channel: innerChInter, b1: 0x00,
 		subWire: 0x4001, totalFrags: 1, fragIdx: 0,
-		paylen: uint16(len(subEnd)), frameNum: 200, payload: subEnd,
+		paylen: uint16(len(interEnd)), frameNum: 200, payload: interEnd,
 	}))
-	// IDR's end fragment. mainAsm was reset by the flushMainIDR; this
+	// IDR's end fragment. keyAsm was reset by flushPendingIDR; this
 	// end-fragment now arrives "orphaned" and hits the hard-floor
 	// (expectedData=1, curAUDataCount=0) → dropped. The earlier
-	// flushMainIDR is what carries the IDR through.
-	mainEnd := makeTrailerPayload([]byte{0xEE, 0xDD, 0xCC, 0xBB, 0xAA}, true, 0x01, 1000)
+	// flushPendingIDR is what carries the IDR through.
+	keyEnd := makeTrailerPayload([]byte{0xEE, 0xDD, 0xCC, 0xBB, 0xAA}, true, 0x01, 1000)
 	c.parseDatagram(makePkt(fragSpec{
-		channel: innerChMain, b1: 0x01, sub17: 0x01,
+		channel: innerChKey, b1: 0x01, sub17: 0x01,
 		subWire: 0x4002, totalFrags: 2, fragIdx: 1,
-		paylen: uint16(len(mainEnd)), frameNum: 100, payload: mainEnd,
+		paylen: uint16(len(keyEnd)), frameNum: 100, payload: keyEnd,
 	}))
 
 	pkts := drainAll(c)
@@ -935,13 +899,13 @@ func TestFragIdxGapDetection(t *testing.T) {
 
 	// Data fragment 0 of 3 (subWire 0x4000, fragIdx 0).
 	c.parseDatagram(makePkt(fragSpec{
-		channel: innerChMain, b1: 0x00,
+		channel: innerChKey, b1: 0x00,
 		subWire: 0x4000, totalFrags: 3, fragIdx: 0,
 		paylen: 8, frameNum: 1, payload: dataFragPayload(0x10, 8),
 	}))
 	// Data fragment 2 of 3 (subWire 0x4001, fragIdx 2 — gap from 0→2).
 	c.parseDatagram(makePkt(fragSpec{
-		channel: innerChMain, b1: 0x00,
+		channel: innerChKey, b1: 0x00,
 		subWire: 0x4001, totalFrags: 3, fragIdx: 2,
 		paylen: 8, frameNum: 1, payload: dataFragPayload(0x30, 8),
 	}))
@@ -949,7 +913,7 @@ func TestFragIdxGapDetection(t *testing.T) {
 	// here we just need a trailer-bearing fragment past the data).
 	end := makeTrailerPayload([]byte{0x99, 0x88, 0x77, 0x66, 0x55}, true, 0x01, 50)
 	c.parseDatagram(makePkt(fragSpec{
-		channel: innerChMain, b1: 0x01, sub17: 0x01,
+		channel: innerChKey, b1: 0x01, sub17: 0x01,
 		subWire: 0x4002, totalFrags: 3, fragIdx: 16,
 		paylen: uint16(len(end)), frameNum: 1, payload: end,
 	}))
@@ -978,13 +942,13 @@ func TestPaylenTruncatesPadding(t *testing.T) {
 	// inner has 16 bytes after offset 36, but paylen says only 4 are real.
 	raw := []byte{0xAA, 0xBB, 0xCC, 0xDD /* padding: */, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1}
 	c.parseDatagram(makePkt(fragSpec{
-		channel: innerChMain, b1: 0x00,
+		channel: innerChKey, b1: 0x00,
 		subWire: 0x4000, totalFrags: 2, fragIdx: 0,
 		paylen: 4, frameNum: 1, payload: raw,
 	}))
 	end := makeTrailerPayload([]byte{0x99, 0x88, 0x77, 0x66, 0x55}, true, 0x01, 1)
 	c.parseDatagram(makePkt(fragSpec{
-		channel: innerChMain, b1: 0x01, sub17: 0x01,
+		channel: innerChKey, b1: 0x01, sub17: 0x01,
 		subWire: 0x4001, totalFrags: 2, fragIdx: 1,
 		paylen: uint16(len(end)), frameNum: 1, payload: end,
 	}))

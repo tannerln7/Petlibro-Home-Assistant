@@ -53,7 +53,7 @@ addresses do not get committed. A minimal fixed-address configuration is:
 
 ```yaml
 streams:
-  petlibro_feeder: petlibro://192.168.1.42?uid=PLAF20300000000ABCD0&quality=hd&ack=hybrid&send_delay_ctrl=1&hd_probe_wait_ms=15000
+  petlibro_feeder: petlibro://192.168.1.42?uid=PLAF20300000000ABCD0&quality=hd&send_delay_ctrl=1&hd_probe_wait_ms=15000
 ```
 
 Replace both placeholder values. If the camera and go2rtc are on the same
@@ -61,7 +61,7 @@ broadcast domain, the camera can instead be discovered by UID:
 
 ```yaml
 streams:
-  petlibro_feeder: petlibro://?uid=PLAF20300000000ABCD0&quality=hd&ack=hybrid&send_delay_ctrl=1&hd_probe_wait_ms=15000
+  petlibro_feeder: petlibro://?uid=PLAF20300000000ABCD0&quality=hd&send_delay_ctrl=1&hd_probe_wait_ms=15000
 ```
 
 For a routed camera network, add one or more `subnet=` query parameters, such as

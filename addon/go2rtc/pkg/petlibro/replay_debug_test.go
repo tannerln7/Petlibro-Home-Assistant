@@ -53,7 +53,6 @@ func TestReplayPlainDump(t *testing.T) {
 	}
 	c.avNextExt = c.wrap.ext
 	c.avHighExt = c.wrap.ext - 1
-	c.avPrevSubWire = uint16(c.wrap.ext - 1)
 	c.initACKTracking(c.wrap.ext - 1)
 
 	drainFrames := func() {

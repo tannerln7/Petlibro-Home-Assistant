@@ -50,19 +50,26 @@ func TestDumpAckSummary(t *testing.T) {
 		}
 		records++
 
-		if len(body) != 24 || body[0] != 0x09 || body[2] != 0x0c {
+		if len(body) < 24 || body[0] != 0x09 || body[2] != 0x0c {
 			continue
 		}
 		if firstACK == 0 {
 			firstACK = unixNano
 		}
 		delta := time.Duration(int64(unixNano) - int64(firstACK))
-		t.Logf("ack delta=%s counter=%d avPrev=0x%04x avCurr=0x%04x chanIdx=%d subIdx=0x%04x tick=%d raw=%x",
+		nackCount := binary.LittleEndian.Uint16(body[14:])
+		missing := make([]uint16, 0, nackCount)
+		for offset := 22; len(missing) < int(nackCount) && offset+2 <= len(body); offset += 2 {
+			missing = append(missing, binary.LittleEndian.Uint16(body[offset:]))
+		}
+		t.Logf("ack delta=%s ordinal=%d avBase=0x%04x avHigh=0x%04x reliable=0x%04x nacks=%v state=%d sendCount=%d tick=%d raw=%x",
 			delta,
 			binary.LittleEndian.Uint16(body[4:]),
 			binary.LittleEndian.Uint16(body[8:]),
 			binary.LittleEndian.Uint16(body[10:]),
-			binary.LittleEndian.Uint32(body[12:]),
+			binary.LittleEndian.Uint16(body[12:]),
+			missing,
+			binary.LittleEndian.Uint16(body[16:]),
 			binary.LittleEndian.Uint16(body[18:]),
 			binary.LittleEndian.Uint16(body[20:]),
 			body)

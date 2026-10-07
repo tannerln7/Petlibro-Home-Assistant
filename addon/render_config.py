@@ -49,7 +49,6 @@ DEFAULTS = {
     "devices": [],
     "go2rtc_stream_name": "petlibro_feeder",
     "camera_quality": "hd",
-    "ack_mode": "hybrid",
     "send_delay_ctrl": True,
     "hd_probe_wait_ms": 15000,
     "go2rtc_api_port": 1984,
@@ -295,8 +294,6 @@ def validate(options: dict[str, object]) -> None:
 
     if options["camera_quality"] not in {"hd", "sd"}:
         raise ValueError("camera_quality must be hd or sd")
-    if options["ack_mode"] not in {"high", "contig", "hybrid"}:
-        raise ValueError("ack_mode must be high, contig, or hybrid")
     if options["log_level"] not in {
         "critical",
         "error",
@@ -543,7 +540,6 @@ def render_go2rtc(
         query = {
             "uid": uid,
             "quality": str(options["camera_quality"]),
-            "ack": str(options["ack_mode"]),
             "send_delay_ctrl": "1" if options["send_delay_ctrl"] else "0",
             "hd_probe_wait_ms": str(options["hd_probe_wait_ms"]),
         }

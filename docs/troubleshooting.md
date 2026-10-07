@@ -247,7 +247,6 @@ Start with the validated settings:
 
 ```yaml
 camera_quality: hd
-ack_mode: hybrid
 send_delay_ctrl: true
 hd_probe_wait_ms: 15000
 ```

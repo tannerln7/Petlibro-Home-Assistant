@@ -31,7 +31,6 @@ users configure the same values in the ignored `docker/.env` file.
 | `devices`                              | `DEVICES_JSON`                         | Optional manual device override array                         |
 | `go2rtc_stream_name`                   | `GO2RTC_STREAM_NAME`                   | go2rtc stream and RTSP URL                                    |
 | `camera_quality`                       | `CAMERA_QUALITY`                       | Petlibro URL `quality` query                                  |
-| `ack_mode`                             | `ACK_MODE`                             | Petlibro URL `ack` query                                      |
 | `send_delay_ctrl`                      | `SEND_DELAY_CTRL`                      | Petlibro URL data-delay option                                |
 | `hd_probe_wait_ms`                     | `HD_PROBE_WAIT_MS`                     | Petlibro HD SPS stabilization                                 |
 | `go2rtc_api_port`                      | `GO2RTC_API_PORT`                      | go2rtc API listener                                           |

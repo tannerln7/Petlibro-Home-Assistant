@@ -68,9 +68,6 @@ configuration:
   camera_quality:
     name: Camera quality
     description: Request the HD or SD video stream.
-  ack_mode:
-    name: ACK mode
-    description: Petlibro camera media-window ACK mapping.
   send_delay_ctrl:
     name: Send delay control
     description: Send the AVAPI data-delay control before starting media.

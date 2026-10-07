@@ -12,22 +12,16 @@ streams:
   # Replace the example address and 20-character UID with values from your
   # feeder. The legacy stream-control variant is the default and is the path
   # currently known to transition from the startup SD stream to HD.
-  petlibro_feeder: petlibro://192.168.1.42?uid=PLAF20300000000ABCD0&quality=hd&ack=hybrid&send_delay_ctrl=1&hd_probe_wait_ms=15000
+  petlibro_feeder: petlibro://192.168.1.42?uid=PLAF20300000000ABCD0&quality=hd&send_delay_ctrl=1&hd_probe_wait_ms=15000
 
   # Host discovery is also supported. Provide the camera's subnet when it is
   # not reachable through the process's default broadcast interface.
-  # petlibro_discovered: petlibro://?uid=PLAF20300000000ABCD0&subnet=192.168.1.0/24&quality=hd&ack=hybrid&send_delay_ctrl=1&hd_probe_wait_ms=15000
+  # petlibro_discovered: petlibro://?uid=PLAF20300000000ABCD0&subnet=192.168.1.0/24&quality=hd&send_delay_ctrl=1&hd_probe_wait_ms=15000
 
 # Petlibro URL options:
 #
 #   quality=hd|sd
 #     Select the requested video quality. The default is hd.
-#
-#   ack=high|contig|hybrid
-#     high is the compatibility default. hybrid sends the contiguous receive
-#     watermark and highest observed sequence in the two ACK fields and is the
-#     mode used for current PLAF203 live testing. Additional experimental ACK
-#     modes remain available for protocol diagnostics.
 #
 #   send_delay_ctrl=1
 #     Send the AVAPI data-delay control immediately before IPCAM_START.
@@ -58,5 +52,5 @@ streams:
 #     repository and delete them when no longer needed. dump_plain remains an
 #     alias for dump_d2c_plain.
 #
-# See ../../docs/camera-debugging.md for trace flags, experimental ACK and stream
+# See ../../docs/camera-debugging.md for trace flags, transport and stream
 # controls, dump formats, offline replay, and counter interpretation.

@@ -120,7 +120,6 @@ field from the update.
 | -------------------- | ----------------- | ------------------------------------------------------------------------------------------------ |
 | `go2rtc_stream_name` | `petlibro_feeder` | Compatibility name for a migrated legacy device; discovered devices derive a product/serial name |
 | `camera_quality`     | `hd`              | Requested `hd` or `sd` stream                                                                    |
-| `ack_mode`           | `hybrid`          | Petlibro media-window ACK mapping: `high`, `contig`, or `hybrid`                                 |
 | `send_delay_ctrl`    | `true`            | Sends the AVAPI data-delay control before `IPCAM_START`                                          |
 | `hd_probe_wait_ms`   | `15000`           | Bounded wait for a higher-resolution SPS in HD mode; maximum 60000                               |
 | `go2rtc_api_port`    | `1984`            | Web interface and API TCP port                                                                   |

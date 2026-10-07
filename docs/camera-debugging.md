@@ -15,7 +15,7 @@ log:
   petlibro: debug
 
 streams:
-  petlibro_feeder: petlibro://192.168.1.42?uid=PLAF20300000000ABCD0&quality=hd&ack=hybrid&send_delay_ctrl=1&hd_probe_wait_ms=15000&verbose=1
+  petlibro_feeder: petlibro://192.168.1.42?uid=PLAF20300000000ABCD0&quality=hd&send_delay_ctrl=1&hd_probe_wait_ms=15000&verbose=1
 ```
 
 Replace the placeholder IP and UID. Use one viewer at a time while comparing
@@ -52,27 +52,20 @@ Enable traces one at a time unless full wire correlation is necessary.
 general tuning knobs. Record both the outgoing body and camera response when
 using them.
 
-### ACK/window controls
+### Transport ACK diagnostics
 
-| Option | Default | Effect |
-| --- | --- | --- |
-| `ack=high` | `high` | Uses highest-observed sequence behavior compatible with the original implementation |
-| `ack=contig` | — | Uses only the highest contiguous receive watermark |
-| `ack=hybrid` | — | Sends contiguous watermark and highest observed sequence as the two ACK endpoints |
-| `ack=hybrid-rev` | — | Reverses the hybrid endpoint order |
-| `ack=prev-contig-curr-high` | — | Explicit contiguous/high field-role candidate |
-| `ack=prev-sent-curr-high` | — | Uses the previously sent current value and current high-water value |
-| `ack=lag-high` | — | Caps forward progress near the contiguous watermark |
-| `ack=lag-hybrid` | — | Hybrid candidate with bounded lag |
-| `ack_lag_window=N` | `8` | Sets the packet window used by lag modes; valid range 1 through 65535 |
-| `ack_interval_ms=N` | `25` | Sets maintenance ACK cadence; valid range 1 through 65535 ms |
-| `ack_repeat_unchanged=1` | off | Sends an ACK at every cadence even when its sequence fields did not change |
+The client has one protocol implementation rather than selectable ACK modes.
+Type `0x09` reports the highest contiguous AV sequence as its base, the highest
+advertised receive position as its upper endpoint, and every unresolved packet
+between them as a relative NACK offset. The upper endpoint is reduced when the
+bounded NACK list cannot describe all holes, so an omitted hole is never
+silently acknowledged. Reliable IOCtrl messages use the separate cumulative
+ACK field recovered from AF203 firmware.
 
-The field semantics are inferred, not vendor-confirmed. On the tested PLAF203,
-holding the current/high endpoint behind a hole can exhaust the sender window
-and stall media. `ack=hybrid` is the preferred diagnostic mode because it keeps
-high-water progress while preserving the independent contiguous watermark in
-the other field. Do not interpret `avPrev` as a proven retransmission request.
+With `trace_ack=1`, logs include the extended base/high positions, relative
+NACK offsets, reliable receive ACK, primary ordinal, secondary send counter,
+and low-16 timing value. Normal debug summaries report these as aggregate
+health values without logging every packet.
 
 ## Reading the five-second stats line
 
@@ -87,15 +80,16 @@ ACK state. Focus on these groups:
 | `fragIdxGap` | Fragment indices skipped within a frame |
 | `expectedDataShortfall` | End fragment arrived before all expected data fragments |
 | `zeroDataHardDrop` | A multi-fragment frame ended with no usable data fragments |
-| `wrongStreamDrop` | Frame-info selection byte did not match the requested quality |
 | `strictIDRDrop/strictPDrop` | Frames suppressed by strict GOP policy |
 | `deferredDrop` | Packet arrived after the assembler output cursor had already passed it |
 | `extendedMedia parsed/rejected` | Alternate 44-byte media-header candidates accepted or rejected |
 | `unknown0c08/unknown0c0d` | Remaining unparsed members of the common extended-media families |
 | `seqAssembled/seqUnhandled` | Recognized wire sequences delivered to assembly or seen but not handled |
-| `ack watermark/high/pending` | Highest contiguous receive sequence, highest observed sequence, and unresolved sequences above the watermark |
+| `ack watermark/high/pending/nacks` | Highest contiguous receive sequence, highest observed sequence, unresolved received positions, and holes advertised for retransmission |
+| `reliable/sendCount` | Separate cumulative reliable-control ACK and monotonic type-0x09 send counter |
+| `probeRx/responseTx` | Camera timing probes received and type-0x0b responses sent |
 | `ack ranges/overflow` | Compressed disjoint receive ranges retained above a hole, and positions omitted if the fixed range cap is exhausted |
-| `ack prev/current` | The actual low-16-bit fields most recently sent for the selected ACK mode |
+| `ack base/highWire` | The low-16-bit AV base and upper endpoint most recently sent |
 
 Healthy live behavior is not defined by one number, but these are useful signs:
 

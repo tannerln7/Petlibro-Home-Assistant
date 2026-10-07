@@ -9,7 +9,7 @@ import (
 )
 
 // bootstrap runs the post-LOGIN IOCtrl sequence that primes the
-// camera to start streaming: notice/ack/heartbeat, then SETSTREAMCTRL +
+// camera to start streaming: captured timing feedback/ACK/probe, then SETSTREAMCTRL +
 // standard queries (GET_VIDEOMODE/GETSTREAMCTRL/GETAUDIOOUTFORMAT) +
 // optional SND_DATA_DELAY + IPCAM_START + optional AUDIOSTART, with
 // per-iteration ack collection, ending with the
@@ -22,13 +22,11 @@ import (
 // (pkg/tutk/session16.go:113, builds a 0x00 0x70 control msg).  Petlibro
 // instead drives a fixed bootstrap sequence with a 40 ms ack
 // window per command (vs tutk's blocking 1s+retry model) and
-// terminates with a custom AV-ready 09-ack containing
-// (av_prev=0x3FFF, av_curr=bootstrapAVMax, chan_idx=3, sub=0x34) — no
-// tutk equivalent. The channel IDs (0x1000 for SETSTREAMCTRL,
+// terminates with an AV-ready type-0x09 receive report. The channel IDs (0x1000 for SETSTREAMCTRL,
 // 0x7000 for standard controls + IPCAM_START) are petlibro-specific.
 type bootstrapCmd struct {
-	chanHi  uint16
-	payload []byte
+	channelFamily uint16
+	payload       []byte
 }
 
 func (c *Client) debugIOCtrlResponse(inner []byte) {
@@ -77,28 +75,27 @@ func (c *Client) bootstrapIOCtrls(stream []byte) []bootstrapCmd {
 }
 
 func (c *Client) bootstrap() error {
-	// tick32 returns ms-since-bootstrap-start with a 0xC000 (49152)
-	// offset baked in.  Every outbound 32-bit tick field observed in
-	// captures of the official Petlibro app carries this offset
-	// above the session-relative monotonic clock — matches the SDK
-	// convention of reserving the low 0xC000 range for control-
-	// channel tick values that the camera firmware special-cases
-	// (heartbeat acks, notice flushes).  Replicating it keeps the
-	// camera's parser on its happy path.  tick16 is the wall-clock
-	// low 16 bits and does NOT carry the offset.
+	// Captures of the official client start the bootstrap's 32-bit timing
+	// values near 0xC000. The reason for that offset is not established, so
+	// preserve the observed wire behavior without assigning it SDK semantics.
+	// The type-0x09 field is independently observed as wall-clock ms modulo
+	// 2^16 and therefore does not use this offset.
 	tickBase := time.Now().UnixMilli()
 	tick32 := func() uint32 { return uint32((time.Now().UnixMilli() - tickBase + 0xC000) & 0xFFFFFFFF) }
 	tick16 := func() uint16 { return uint16(time.Now().UnixMilli() & 0xFFFF) }
 
-	// 1. notice + 09-ack of LOGIN_RESP + heartbeat
-	if err := c.sendInner(innerNotice(0, 0x1F, tick32(), 4)); err != nil {
+	// 1. Preserve the captured startup timing exchange. LOGIN_RESP leaves the
+	// reliable receive position at 1 in known-good Petlibro sessions.
+	if err := c.sendInner(innerTimingFeedback(0, 0x1F, tick32(), 4)); err != nil {
 		return err
 	}
-	if err := c.sendInner(innerAck(c.icounter, 0xFFFF, 0xFFFF, 1, 0, tick16())); err != nil {
+	c.acceptReliableControl(1)
+	a := c.nextTransportACKForRange(c.icounter, 0xFFFF, 0xFFFF, nil, tick16())
+	if err := c.sendInner(a.marshal()); err != nil {
 		return err
 	}
 	c.icounter++
-	if err := c.sendInner(innerHeartbeat(c.icounter, tick32())); err != nil {
+	if err := c.sendInner(innerTimingProbe(c.icounter, tick32())); err != nil {
 		return err
 	}
 	c.icounter++
@@ -148,10 +145,8 @@ func (c *Client) bootstrap() error {
 	cmds := c.bootstrapIOCtrls(stream)
 
 	var bootstrapAVMax uint16 = 0x3FFF
-	pendingAck := []uint16{}
-	var maxChanBit uint32 = 1
 	for i, cm := range cmds {
-		if err := c.sendInner(innerData(c.icounter, cm.chanHi, uint16(i), cm.payload)); err != nil {
+		if err := c.sendInner(innerData(c.icounter, cm.channelFamily, uint16(i), cm.payload)); err != nil {
 			return err
 		}
 		c.icounter++
@@ -189,31 +184,18 @@ func (c *Client) bootstrap() error {
 			if inner[0] != 0x0c {
 				continue
 			}
-			csub := binary.LittleEndian.Uint16(inner[18:])
-			chanHi := binary.LittleEndian.Uint16(inner[16:])
-			if csub < 0x4000 {
-				pendingAck = append(pendingAck, csub)
-				switch chanHi {
-				case 0x1000:
-					if maxChanBit < 1 {
-						maxChanBit = 1
-					}
-				case 0x7000:
-					if maxChanBit < 2 {
-						maxChanBit = 2
-					}
-				}
-			} else if csub > bootstrapAVMax {
-				bootstrapAVMax = csub
+			if seq, ok := reliableControlSequence(inner); ok {
+				c.acceptReliableControl(seq)
+			}
+			if media, ok := decodeBootstrapMedia(inner); ok && media.subWire > bootstrapAVMax {
+				bootstrapAVMax = media.subWire
 			}
 		}
-		for _, s := range pendingAck {
-			if err := c.sendInner(innerAck(c.icounter, 0xFFFF, 0xFFFF, maxChanBit, s, tick16())); err != nil {
-				return err
-			}
-			c.icounter++
+		a := c.nextTransportACKForRange(c.icounter, 0xFFFF, 0xFFFF, nil, tick16())
+		if err := c.sendInner(a.marshal()); err != nil {
+			return err
 		}
-		pendingAck = pendingAck[:0]
+		c.icounter++
 	}
 
 	// 3. AV-ready ack. Validate that the camera did not report a
@@ -223,12 +205,12 @@ func (c *Client) bootstrap() error {
 	if bootstrapAVMax < 0x3FFF {
 		return fmt.Errorf("petlibro: bootstrap got AVMax=0x%04x, want >=0x3FFF — camera didn't ack any AV channel", bootstrapAVMax)
 	}
-	if err := c.sendInner(innerAck(c.icounter, 0x3FFF, bootstrapAVMax, 3, 0x34, tick16())); err != nil {
+	a = c.nextTransportACKForRange(c.icounter, 0x3FFF, bootstrapAVMax, nil, tick16())
+	if err := c.sendInner(a.marshal()); err != nil {
 		return err
 	}
 	c.icounter++
 
-	c.avPrevSubWire = bootstrapAVMax
 	if bootstrapAVMax == 0x3FFF {
 		c.wrap = wrapSeq{ext: 0x4000}
 	} else {
@@ -239,8 +221,8 @@ func (c *Client) bootstrap() error {
 	c.avBuffer = make(map[uint64]*pendingFrag)
 	c.initACKTracking(uint64(bootstrapAVMax))
 	if c.verbose {
-		log.Debug().Msgf("petlibro: bootstrap ready commands=%d AVMax=0x%04x avNext=0x%x ackMode=%s streamctrlVariant=%s",
-			len(cmds), bootstrapAVMax, c.avNextExt, c.ackMode, c.streamCtrlVariant)
+		log.Debug().Msgf("petlibro: bootstrap ready commands=%d AVMax=0x%04x avNext=0x%x reliableRecvACK=0x%04x streamctrlVariant=%s",
+			len(cmds), bootstrapAVMax, c.avNextExt, c.reliableRecvACK, c.streamCtrlVariant)
 	}
 	return nil
 }

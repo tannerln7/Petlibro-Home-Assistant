@@ -40,7 +40,7 @@ type Producer struct {
 //
 // URL shape (full grammar lives on pkg/petlibro.Dial):
 //
-//	petlibro://<host>?uid=<UID>[&audio=true][&quality=hd|sd][&ack=<mode>][&ack_interval_ms=25][&ack_repeat_unchanged=1][&send_delay_ctrl=1][&streamctrl_variant=legacy|standard|none][&streamctrl_quality=N][&hd_probe_wait_ms=N][&status_file=<path>][&strict=1][&verbose=1][&trace_ack=1][&trace_frag=1][&trace_frameinfo=1][&trace_packets=1][&dump_plain=<path>][&dump_d2c_plain=<path>][&dump_c2d_plain=<path>]
+//	petlibro://<host>?uid=<UID>[&audio=true][&quality=hd|sd][&send_delay_ctrl=1][&streamctrl_variant=legacy|standard|none][&streamctrl_quality=N][&hd_probe_wait_ms=N][&status_file=<path>][&strict=1][&verbose=1][&trace_ack=1][&trace_frag=1][&trace_frameinfo=1][&trace_packets=1]
 //	petlibro://?uid=<UID>[&subnet=192.168.1.0/24][same options as above]
 //
 // strict=1 — pristine-pixels-over-fluency policy: any IDR with a lost
@@ -256,7 +256,7 @@ func probe(client *Client) ([]*core.Media, []byte, uint32, error) {
 			return
 		}
 		buf := annexb.EncodeToAVCC(firstAU)
-		log.Debug().Msgf("petlibro: probe selected resolution=%dx%d reason=%s quality=%q strict=%t firstAU=%d containsSPS=%t containsPPS=%t containsIDR=%t codec=%q fmtp=%q frameNum=%d channel=%d onlineNumOrStreamByte=%d",
+		log.Debug().Msgf("petlibro: probe selected resolution=%dx%d reason=%s quality=%q strict=%t firstAU=%d containsSPS=%t containsPPS=%t containsIDR=%t codec=%q fmtp=%q frameNum=%d channel=%d onlineNum=%d",
 			selectedWidth, selectedHeight, reason, client.quality, client.strict, len(firstAU),
 			avccContainsNALType(buf, h264.NALUTypeSPS),
 			avccContainsNALType(buf, h264.NALUTypePPS),
@@ -319,7 +319,7 @@ probeLoop:
 				selectedWidth, selectedHeight = width, height
 				selectedFrameNum = pkt.CameraFrameNo
 				selectedChannel = pkt.Channel
-				selectedOnlineNum = pkt.OnlineNumOrStreamByte
+				selectedOnlineNum = pkt.OnlineNum
 				if client.quality == "hd" && client.hdProbeWait > 0 && (width < 1920 || height < 1080) {
 					waitingForHD = true
 					resetTimer(client.hdProbeWait)
@@ -327,9 +327,9 @@ probeLoop:
 					logSelection("first_sps")
 				}
 			} else if waitingForHD && (width != selectedWidth || height != selectedHeight) {
-				log.Debug().Msgf("petlibro: spsChange elapsed=%dms old=%dx%d new=%dx%d frameNum=%d channel=%d onlineNumOrStreamByte=%d",
+				log.Debug().Msgf("petlibro: spsChange elapsed=%dms old=%dx%d new=%dx%d frameNum=%d channel=%d onlineNum=%d",
 					time.Since(probeStarted).Milliseconds(), selectedWidth, selectedHeight, width, height,
-					pkt.CameraFrameNo, pkt.Channel, pkt.OnlineNumOrStreamByte)
+					pkt.CameraFrameNo, pkt.Channel, pkt.OnlineNum)
 				if width > selectedWidth || height > selectedHeight {
 					vcodec = codec
 					firstAU = append(firstAU[:0], pkt.Payload...)
@@ -337,7 +337,7 @@ probeLoop:
 					selectedWidth, selectedHeight = width, height
 					selectedFrameNum = pkt.CameraFrameNo
 					selectedChannel = pkt.Channel
-					selectedOnlineNum = pkt.OnlineNumOrStreamByte
+					selectedOnlineNum = pkt.OnlineNum
 					waitingForHD = false
 					logSelection("hd_wait_satisfied")
 				}

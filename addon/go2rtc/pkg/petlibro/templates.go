@@ -80,10 +80,11 @@ var (
 	qualitySD = []byte{byte(ioctlPetlibroStreamCtrl), 0, 0, 0, 0x02, 0x00, 0x8a, 0x81, 0, 0, 0, 0}
 )
 
-// Inner-cmd "channel" markers at offset 16..17.
+// Inner media-family markers at offset 16. AF203 uses 0x05 for the
+// key/IDR family and 0x07 for inter frames; these are not HD/SD selectors.
 const (
-	innerChMain  byte = 0x05 // AV main stream (keyframes)
-	innerChSub   byte = 0x07 // AV sub stream (P-frames)
+	innerChKey   byte = 0x05
+	innerChInter byte = 0x07
 	innerChAudio byte = 0x03 // AAC audio
 )
 
@@ -219,64 +220,85 @@ func buildAliveC2D(nonce []byte) []byte {
 // innerData wraps an IOCtrl-style body:
 //
 //	0c 00 0c 00 <cnt:2> 00 00  00 00 00 00 00 00 00 00
-//	<chan_hi:2> <sub:2>  01 00 00 00
-//	<paylen:4>  <sub:4>  00 00 00 00
+//	<channel_family:2> <message_seq:2>  01 00 00 00
+//	<paylen:4>  <message_seq:4>  00 00 00 00
 //	<xor'd payload>
-func innerData(counter, chanHi, subIdx uint16, payload []byte) []byte {
+func innerData(counter, channelFamily, messageSeq uint16, payload []byte) []byte {
 	b := make([]byte, 36+len(payload))
 	b[0] = 0x0c
 	b[2] = 0x0c
 	binary.LittleEndian.PutUint16(b[4:], counter)
-	binary.LittleEndian.PutUint16(b[16:], chanHi)
-	binary.LittleEndian.PutUint16(b[18:], subIdx)
+	binary.LittleEndian.PutUint16(b[16:], channelFamily)
+	binary.LittleEndian.PutUint16(b[18:], messageSeq)
 	b[20] = 0x01
 	binary.LittleEndian.PutUint32(b[24:], uint32(len(payload)))
-	binary.LittleEndian.PutUint32(b[28:], uint32(subIdx))
+	binary.LittleEndian.PutUint32(b[28:], uint32(messageSeq))
 	copy(b[36:], xorBody(payload))
 	return b
 }
 
-// innerAck — sliding-window ACK in AV mode. avPrev and avCurr name the two
-// sequence fields at bytes 8..9 and 10..11; their complete device-side
-// semantics are still being investigated. Bootstrap sends
-// 0x3FFF/bootstrapAVMax, while steady-state high mode sends
-// lastCurrent/highestObserved.
-//
-//	09 00 0c 00 <cnt:2> 00 00 <av_prev:2> <av_curr:2>
-//	<chan_idx:4>  00 00 <sub:2> <tick16:2>  00 00
-func innerAck(counter, avPrev, avCurr uint16, chanIdx uint32, subIdx, tick uint16) []byte {
-	b := make([]byte, 24)
+// transportACK is the Petlibro type-0x09 receive report. AF203's live BBR
+// dispatcher treats every AV sequence in (AVBase, AVHigh] as acknowledged
+// unless its offset from AVBase appears in Missing. ReliableRecvACK belongs
+// to a separate reassembled control-message sequence space.
+type transportACK struct {
+	Ordinal         uint16
+	AVBase          uint16
+	AVHigh          uint16
+	ReliableRecvACK uint16
+	Missing         []uint16
+	State           uint16 // observed session transport state; zero is accepted
+	SendCount       uint16
+	Tick            uint16
+}
+
+func (a transportACK) marshal() []byte {
+	n := 22 + 2*len(a.Missing)
+	if n < 24 {
+		n = 24
+	}
+	b := make([]byte, n)
 	b[0] = 0x09
+	// Captured Petlibro clients use format 0x000c. AF203's internal SDK
+	// builder uses 0x000b, but the camera accepts this newer wire form.
 	b[2] = 0x0c
-	binary.LittleEndian.PutUint16(b[4:], counter)
-	binary.LittleEndian.PutUint16(b[8:], avPrev)
-	binary.LittleEndian.PutUint16(b[10:], avCurr)
-	binary.LittleEndian.PutUint32(b[12:], chanIdx)
-	binary.LittleEndian.PutUint16(b[18:], subIdx)
-	binary.LittleEndian.PutUint16(b[20:], tick)
+	binary.LittleEndian.PutUint16(b[4:], a.Ordinal)
+	binary.LittleEndian.PutUint16(b[8:], a.AVBase)
+	binary.LittleEndian.PutUint16(b[10:], a.AVHigh)
+	binary.LittleEndian.PutUint16(b[12:], a.ReliableRecvACK)
+	binary.LittleEndian.PutUint16(b[14:], uint16(len(a.Missing)))
+	binary.LittleEndian.PutUint16(b[16:], a.State)
+	binary.LittleEndian.PutUint16(b[18:], a.SendCount)
+	binary.LittleEndian.PutUint16(b[20:], a.Tick)
+	for i, offset := range a.Missing {
+		binary.LittleEndian.PutUint16(b[22+2*i:], offset)
+	}
 	return b
 }
 
-// innerNotice — 0b channel-state notice (post-LOGIN).
-func innerNotice(counter, lastRecv uint16, tick32, code uint32) []byte {
+// innerTimingFeedback builds type 0x0b. In the reactive path the timing
+// stamp at +8 is echoed from a type-0x0a probe. The remaining statistics are
+// deliberately zero because their exact SDK meanings are not needed by AF203.
+func innerTimingFeedback(ordinal, lastRecv uint16, timingStamp uint32, metric uint32) []byte {
 	b := make([]byte, 20)
 	b[0] = 0x0b
 	b[2] = 0x0c
-	binary.LittleEndian.PutUint16(b[4:], counter)
+	binary.LittleEndian.PutUint16(b[4:], ordinal)
 	binary.LittleEndian.PutUint16(b[6:], lastRecv)
-	binary.LittleEndian.PutUint32(b[8:], tick32)
-	binary.LittleEndian.PutUint32(b[12:], code)
+	binary.LittleEndian.PutUint32(b[8:], timingStamp)
+	binary.LittleEndian.PutUint32(b[12:], metric)
 	return b
 }
 
-// innerHeartbeat — 0a 08 heartbeat with 32-bit tick.
-func innerHeartbeat(counter uint16, tick32 uint32) []byte {
+// innerTimingProbe builds the captured bootstrap type-0x0a timing probe.
+// Ordinary session liveness is provided by outer message 0x0427 instead.
+func innerTimingProbe(ordinal uint16, timingStamp uint32) []byte {
 	b := make([]byte, 16)
 	b[0] = 0x0a
 	b[1] = 0x08
 	b[2] = 0x0c
-	binary.LittleEndian.PutUint16(b[4:], counter)
-	binary.LittleEndian.PutUint32(b[8:], tick32)
+	binary.LittleEndian.PutUint16(b[4:], ordinal)
+	binary.LittleEndian.PutUint32(b[8:], timingStamp)
 	binary.LittleEndian.PutUint16(b[12:], 0x0032)
 	return b
 }

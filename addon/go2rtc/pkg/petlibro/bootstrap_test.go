@@ -63,7 +63,7 @@ func TestStreamCtrlVariants(t *testing.T) {
 		t.Fatalf("standard SETSTREAMCTRL=% x", standard)
 	}
 	standardClient := &Client{streamCtrlVariant: streamCtrlStandard}
-	if got := standardClient.bootstrapIOCtrls(standard)[0].chanHi; got != 0x7000 {
+	if got := standardClient.bootstrapIOCtrls(standard)[0].channelFamily; got != 0x7000 {
 		t.Fatalf("standard SETSTREAMCTRL channel=0x%04x, want 0x7000", got)
 	}
 	c := &Client{}

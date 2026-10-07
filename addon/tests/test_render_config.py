@@ -173,7 +173,7 @@ class RenderConfigTests(unittest.TestCase):
             registry = (data_dir / "devices.json").read_text(encoding="utf-8")
             self.assertIn("petlibro://192.0.2.100?", go2rtc)
             self.assertNotIn("subnet=", go2rtc)
-            self.assertIn("ack=hybrid", go2rtc)
+            self.assertNotIn("ack=", go2rtc)
             self.assertIn(
                 "status_file=%2Fdata%2Fpetlibro_camera_status_petlibro_feeder.json",
                 go2rtc,

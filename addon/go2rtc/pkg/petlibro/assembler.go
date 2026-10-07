@@ -19,7 +19,7 @@ import (
 // firmware instead labels each fragment with totalFrags (inner[20]),
 // fragIdx (inner[22..23]), and an end-marker fragment whose tail
 // matches the 16-byte stripFragmentMetadataTrailer signature, with two
-// independent channels (innerChMain 0x05 for IDR / innerChSub 0x07 for
+// independent channels (innerChKey 0x05 for IDR / innerChInter 0x07 for
 // P-frames) time-multiplexed in wire order.  The two-channel + trailer-
 // based reassembler in this file has no tutk analog.
 
@@ -73,7 +73,7 @@ func (a *channelAsm) reset() {
 
 // debugFrameEvent records only consequential assembler decisions. It is
 // deliberately gated by verbose so normal streams don't log per-frame noise.
-func (c *Client) debugFrameEvent(reason string, e *pendingFrag, asm *channelAsm, onlineNumOrStreamByte, assumedStream byte, hasTrailer bool, isKeyframe *bool) {
+func (c *Client) debugFrameEvent(reason string, e *pendingFrag, asm *channelAsm, onlineNum byte, hasTrailer bool, isKeyframe *bool) {
 	if !c.verbose || !c.traceFrag {
 		return
 	}
@@ -87,8 +87,7 @@ func (c *Client) debugFrameEvent(reason string, e *pendingFrag, asm *channelAsm,
 		Uint16("expectedFragIdx", asm.expectFragIdx).
 		Uint16("totalFrags", e.totalFrags).
 		Uint16("curAUDataCount", asm.curAUDataCount).
-		Uint8("onlineNumOrStreamByte", onlineNumOrStreamByte).
-		Uint8("assumedStream", assumedStream).
+		Uint8("onlineNum", onlineNum).
 		Bool("hasTrailer", hasTrailer).
 		Uint16("subWire", uint16(e.subExt)).
 		Uint64("subExt", e.subExt)
@@ -98,7 +97,7 @@ func (c *Client) debugFrameEvent(reason string, e *pendingFrag, asm *channelAsm,
 	event.Msg("petlibro frame decision")
 }
 
-func (c *Client) debugFlushMainIDR(reason string, asm *channelAsm, assumedStream byte) {
+func (c *Client) debugFlushPendingIDR(reason string, asm *channelAsm) {
 	if !c.verbose || !c.traceFrag {
 		return
 	}
@@ -110,23 +109,22 @@ func (c *Client) debugFlushMainIDR(reason string, asm *channelAsm, assumedStream
 		Str("reason", reason).
 		Str("quality", c.quality).
 		Bool("strict", c.strict).
-		Uint8("channel", innerChMain).
+		Uint8("channel", innerChKey).
 		Uint32("frameNum", asm.curFrameNum).
 		Uint16("fragIdx", fragIdx).
 		Uint16("expectedFragIdx", asm.expectFragIdx).
 		Uint16("totalFrags", asm.curAUTotal).
 		Uint16("curAUDataCount", asm.curAUDataCount).
-		Uint8("onlineNumOrStreamByte", 0).
-		Uint8("assumedStream", assumedStream).
+		Uint8("onlineNum", 0).
 		Bool("hasTrailer", false).
 		Bool("isKeyframe", true).
 		Msg("petlibro frame decision")
 }
 
 // debugAVFrameInfo decodes the 16-byte trailer only after the strict signature
-// check accepts it. The public TUTK FRAMEINFO_t calls byte 4 onlineNum; this
-// firmware may reuse it as a stream selector, but resolution from SPS remains
-// the ground truth. Normal verbose mode logs only the first trailer and changes.
+// check accepts it. AF203 identifies byte 4 as its online-client count/state;
+// it is not a resolution selector. Normal verbose mode logs only the first
+// trailer and changes.
 func (c *Client) debugAVFrameInfo(e *pendingFrag, p []byte, hasTrailer bool) {
 	if !c.verbose || !hasTrailer || len(p) < 16 {
 		return
@@ -136,10 +134,10 @@ func (c *Client) debugAVFrameInfo(e *pendingFrag, p []byte, hasTrailer bool) {
 	frameFlag := t[2]
 	byte4 := t[4]
 	unexpected := frameFlag > 1 ||
-		(e.channel == innerChMain && frameFlag != 1) ||
-		(e.channel == innerChSub && frameFlag != 0)
+		(e.channel == innerChKey && frameFlag != 1) ||
+		(e.channel == innerChInter && frameFlag != 0)
 	changed := c.frameInfoSeen &&
-		(codecID != c.frameInfoCodec || byte4 != c.frameInfoByte4)
+		(codecID != c.frameInfoCodec || byte4 != c.frameInfoOnlineNum)
 	shouldLog := c.traceFrameInfo || !c.frameInfoSeen || changed || unexpected
 	if changed {
 		c.stats.frameInfoChanges.Add(1)
@@ -150,27 +148,22 @@ func (c *Client) debugAVFrameInfo(e *pendingFrag, p []byte, hasTrailer bool) {
 	c.frameInfoSeen = true
 	c.frameInfoCodec = codecID
 	c.frameInfoFlag = frameFlag
-	c.frameInfoByte4 = byte4
+	c.frameInfoOnlineNum = byte4
 	c.stats.frameInfoCodec.Store(uint64(codecID))
 	c.stats.frameInfoFlag.Store(uint64(frameFlag))
-	c.stats.frameInfoByte4.Store(uint64(byte4))
+	c.stats.frameInfoOnlineNum.Store(uint64(byte4))
 	if !shouldLog {
 		return
-	}
-	assumedStream := byte(1)
-	if c.quality == "sd" {
-		assumedStream = 2
 	}
 	log.Trace().
 		Hex("raw", t).
 		Uint16("codecID", codecID).
 		Uint8("frameFlag", frameFlag).
 		Uint8("camIndex", t[3]).
-		Uint8("onlineNumOrStreamByte", byte4).
+		Uint8("onlineNum", byte4).
 		Uint32("timestamp", binary.LittleEndian.Uint32(t[12:16])).
 		Uint32("frameNum", e.frameNum).
 		Uint8("channel", e.channel).
-		Uint8("assumedStream", assumedStream).
 		Bool("unexpected", unexpected).
 		Uint16("subWire", uint16(e.subExt)).
 		Uint64("subExt", e.subExt).
@@ -230,7 +223,7 @@ func (c *Client) logAVLoss(asm *channelAsm, channel byte, hasTrailer bool, trail
 		missingCount = 1
 	}
 	c.stats.framesWithLoss.Add(1)
-	if channel == innerChMain {
+	if channel == innerChKey {
 		c.stats.idrFramesWithLoss.Add(1)
 	} else {
 		c.stats.pFramesWithLoss.Add(1)
@@ -252,7 +245,7 @@ func (c *Client) logAVLoss(asm *channelAsm, channel byte, hasTrailer bool, trail
 		Uint16("totalFrags", asm.curAUTotal).
 		Uint16("receivedFrags", received).
 		Str("missing", compressFragmentRanges(missing)).
-		Bool("isKeyframe", channel == innerChMain).
+		Bool("isKeyframe", channel == innerChKey).
 		Bool("hasTrailer", hasTrailer).
 		Int("actualBytes", len(frameData))
 	if len(trailer) != 0 {
@@ -315,7 +308,7 @@ func decodeExtendedMedia(inner []byte) (m decodedMedia, reason string, ok bool) 
 	m.frameNum = binary.LittleEndian.Uint32(inner[36:40])
 	m.nextFrameLike = binary.LittleEndian.Uint32(inner[40:44])
 
-	if m.channel != innerChMain && m.channel != innerChSub {
+	if m.channel != innerChKey && m.channel != innerChInter {
 		return m, "invalid_channel", false
 	}
 	if m.totalFrags == 0 {
@@ -383,13 +376,13 @@ func decodeNormalMedia(inner []byte) (m decodedMedia, ok bool) {
 		return inner[start:]
 	}
 	switch {
-	case (m.channel == innerChMain || m.channel == innerChSub) &&
+	case (m.channel == innerChKey || m.channel == innerChInter) &&
 		(m.b1 == 0x00 || m.b1 == 0x04 || m.b1 == 0x05):
 		if m.payloadLen == 0 || 36+int(m.payloadLen) > len(inner) {
 			return m, false
 		}
 		m.payload = payloadFrom(36)
-	case (m.channel == innerChMain || m.channel == innerChSub) &&
+	case (m.channel == innerChKey || m.channel == innerChInter) &&
 		m.b1 == 0x01 && m.subFlag == 0x01:
 		m.payload = payloadFrom(36)
 		m.isEnd = true
@@ -397,7 +390,7 @@ func decodeNormalMedia(inner []byte) (m decodedMedia, ok bool) {
 		len(inner) >= 38 && inner[36] == 0xFF && inner[37] == 0xF1:
 		m.isAudio = true
 		m.payload = payloadFrom(36)
-	case m.channel == innerChSub && m.subFlag == 0x00 && m.b1 == 0x0d &&
+	case m.channel == innerChInter && m.subFlag == 0x00 && m.b1 == 0x0d &&
 		len(inner) >= 46 && inner[44] == 0xFF && inner[45] == 0xF1:
 		m.isAudio = true
 		full := payloadFrom(36)
@@ -433,18 +426,110 @@ func (c *Client) traceExtendedMedia(m decodedMedia, accepted bool, reason string
 		Msg("petlibro extendedMedia")
 }
 
+func decodeBootstrapMedia(inner []byte) (decodedMedia, bool) {
+	if len(inner) == 0 || inner[0] != 0x0c {
+		return decodedMedia{}, false
+	}
+	if isExtendedMediaFamily(inner[1]) {
+		if media, _, ok := decodeExtendedMedia(inner); ok {
+			return media, true
+		}
+	}
+	return decodeNormalMedia(inner)
+}
+
+// reliableControlSequence recognizes the IOCtrl/reliable family by its wire
+// structure rather than by sequence magnitude. Media and audio sequence
+// values legitimately cross the old 0x4000 heuristic.
+func reliableControlSequence(inner []byte) (uint16, bool) {
+	if len(inner) < 20 || inner[0] != 0x0c || inner[1]&0x08 != 0 {
+		return 0, false
+	}
+
+	// AVAPI's reliable family appears in two Petlibro forms. Short transport
+	// control packets use a zero high byte and one of the observed family
+	// values below. IOCtrl responses retain the request's 0x1000/0x7000
+	// channel-family word and carry the normal 36-byte IOCtrl envelope. Media
+	// uses channel words 0x0003/0x0005/0x0007 instead, so checking the complete
+	// structure avoids the old and incorrect "sequence < 0x4000" heuristic.
+	channelFamily := binary.LittleEndian.Uint16(inner[16:18])
+	switch channelFamily {
+	case 0x0000, 0x2000, 0x2100, 0x7100, 0x7200:
+		return binary.LittleEndian.Uint16(inner[18:20]), true
+	case 0x1000, 0x7000:
+		// These are the IOCtrl channel families used by PLAF203.
+	default:
+		return 0, false
+	}
+	if len(inner) < 36 || inner[20] != 1 {
+		return 0, false
+	}
+	payloadLen := binary.LittleEndian.Uint32(inner[24:28])
+	if uint64(payloadLen) > uint64(len(inner)-36) {
+		return 0, false
+	}
+	return binary.LittleEndian.Uint16(inner[18:20]), true
+}
+
+func timingProbeResponse(inner []byte) []byte {
+	if len(inner) < 10 || inner[0] != 0x0a || inner[1]&0x08 == 0 {
+		return nil
+	}
+	// Both AF203 and upstream Session25 echo the probe's low-16 timing
+	// stamp at +8. Other response statistics may safely remain zero.
+	return innerTimingFeedback(0, 0, uint32(binary.LittleEndian.Uint16(inner[8:10])), 0)
+}
+
+func (c *Client) handleTransportControl(inner []byte) []byte {
+	switch inner[0] {
+	case 0x09:
+		c.stats.transportACKReceived.Add(1)
+	case 0x0a:
+		response := timingProbeResponse(inner)
+		if response != nil {
+			c.stats.timingProbesReceived.Add(1)
+		}
+		return response
+	case 0x0b:
+		c.stats.timingFeedbackReceived.Add(1)
+	}
+	return nil
+}
+
 // parseDatagram handles one already-decrypted packet.  Splitting the
 // crypto pass from the parser lets tests feed plaintext fixtures
 // straight in without re-encrypting; assembler_test.go relies on it.
 func (c *Client) parseDatagram(pkt []byte) {
-	if len(pkt) < 0x1C+36 || pkt[3] != flagsRecv {
+	if len(pkt) < 0x1C+1 || pkt[3] != flagsRecv {
 		return
 	}
 	if binary.LittleEndian.Uint16(pkt[8:]) != msgSessionD2C {
 		return
 	}
-	inner := pkt[0x1C:]
-	if inner[0] != 0x0c {
+	outerPayloadLen := int(binary.LittleEndian.Uint16(pkt[4:6]))
+	if outerPayloadLen <= 0x0c || outerPayloadLen-0x0c > len(pkt)-0x1c {
+		return
+	}
+	inner := pkt[0x1c : 0x1c+outerPayloadLen-0x0c]
+	switch inner[0] {
+	case 0x09, 0x0a, 0x0b:
+		if response := c.handleTransportControl(inner); response != nil {
+			if err := c.sendInner(response); err == nil {
+				c.stats.timingResponsesSent.Add(1)
+			}
+		}
+		return
+	case 0x0c:
+	default:
+		return
+	}
+	if seq, ok := reliableControlSequence(inner); ok {
+		c.acceptReliableControl(seq)
+		c.debugIOCtrlResponse(inner)
+		c.stats.otherFrags.Add(1)
+		return
+	}
+	if len(inner) < 36 {
 		return
 	}
 
@@ -485,7 +570,6 @@ func (c *Client) parseDatagram(pkt []byte) {
 			return
 		}
 	} else {
-		c.debugIOCtrlResponse(inner)
 		normal, ok := decodeNormalMedia(inner)
 		if !ok {
 			return
@@ -495,10 +579,10 @@ func (c *Client) parseDatagram(pkt []byte) {
 	}
 
 	switch media.channel {
-	case innerChMain:
-		c.stats.mainFrags.Add(1)
-	case innerChSub:
-		c.stats.subFrags.Add(1)
+	case innerChKey:
+		c.stats.keyFrags.Add(1)
+	case innerChInter:
+		c.stats.interFrags.Add(1)
 	case innerChAudio:
 		c.stats.audioFrags.Add(1)
 	default:
@@ -521,7 +605,6 @@ func (c *Client) parseDatagram(pkt []byte) {
 	}
 	if subExt > c.avHighExt {
 		c.avHighExt = subExt
-		c.stats.ackHigh.Store(subExt)
 		c.wrap.advanceTo(media.subWire)
 	}
 	// ACK receipt is tracked before assembler late/drop decisions. A
@@ -620,16 +703,12 @@ func (c *Client) forceDrain() {
 		delete(c.avBuffer, k)
 		c.avNextExt = k + 1
 		c.avNextObserved.Store(c.avNextExt)
-		asm := &c.mainAsm
-		if e.channel == innerChSub {
-			asm = &c.subAsm
+		asm := &c.keyAsm
+		if e.channel == innerChInter {
+			asm = &c.interAsm
 		}
-		_, _, onlineNumOrStreamByte, hasTrailer := stripFragmentMetadataTrailer(e.payload)
-		assumedStream := byte(0x01)
-		if c.quality == "sd" {
-			assumedStream = 0x02
-		}
-		c.debugFrameEvent("force_drain_flush", e, asm, onlineNumOrStreamByte, assumedStream, hasTrailer, nil)
+		_, _, onlineNum, hasTrailer := stripFragmentMetadataTrailer(e.payload)
+		c.debugFrameEvent("force_drain_flush", e, asm, onlineNum, hasTrailer, nil)
 		if c.verbose && !c.traceFrag {
 			key := [2]uint64{uint64(e.channel), uint64(e.frameNum)}
 			i, ok := summaryIndex[key]
@@ -649,7 +728,7 @@ func (c *Client) forceDrain() {
 		log.Trace().Uint8("channel", s.channel).Uint32("frameNum", s.frame).
 			Uint16("totalFrags", s.total).Int("flushedEntries", s.count).
 			Uint16("firstFrag", s.first).Uint16("lastFrag", s.last).
-			Bool("hasTrailer", s.trailer).Bool("isKeyframe", s.channel == innerChMain).
+			Bool("hasTrailer", s.trailer).Bool("isKeyframe", s.channel == innerChKey).
 			Msg("petlibro forceDrain")
 	}
 	if stalled {
@@ -665,9 +744,8 @@ func (c *Client) forceDrain() {
 //   - 1 final "end" fragment with b1=0x01 sub17=0x01, paylen smaller
 //     than 1024, ending in a 16-byte metadata trailer
 //     (codec_id 0x4e + 4-byte variant prefix + 7 zero bytes + 4-byte
-//     ms-ts). Public TUTK names trailer byte 4 onlineNum. Captures
-//     correlate values 1/2 with the selected stream, but that meaning
-//     remains an assumption; SPS dimensions are the codec ground truth.
+//     ms-ts). AF203 identifies FRAMEINFO byte 4 as onlineNum. SPS
+//     dimensions, not this count/state field, identify the resolution.
 //
 // The end fragment is identified by the trailer signature on its
 // payload tail, NOT by fragIdx (which can wrap when N>16 and reuse
@@ -698,75 +776,40 @@ func (c *Client) emit(e *pendingFrag) {
 		c.emitAudioSeq++
 		return
 	}
-	if e.channel != innerChMain && e.channel != innerChSub {
+	if e.channel != innerChKey && e.channel != innerChInter {
 		return
 	}
 	c.stats.vidFrags.Add(1)
 
-	// Stream selection.  The camera can be configured (via its
-	// Petlibro cloud settings; sticky per-camera) to send either HD
-	// only, SD only, or both streams in parallel.  When both are
-	// active, IDR fragments from each stream share ch=0x05 and
-	// P-frame fragments share ch=0x07, with the only reliable
-	// observed discriminator being frame-info byte 4 on each frame's
-	// end-fragment (p[-12]: 0x01 = HD main, 0x02 = SD sub).  Data
-	// fragments (b1=0x00/0x04/0x05) carry no per-fragment discriminator,
-	// so we accumulate them optimistically and discard the buffer
-	// later if the end-fragment reveals the wrong stream.
-	assumedStream := byte(0x01) // observed HD association
-	if c.quality == "sd" {
-		assumedStream = 0x02
-	}
-
-	// ch=0x07 single-fragment P-frames with a trailer can be
-	// discriminated on arrival — drop wrong-stream ones immediately.
-	// We deliberately DON'T also flush the pending ch=0x05 IDR here
-	// (an earlier version did, and that truncated the IDR at its
-	// last fragments when a wrong-stream P-frame arrived between
-	// HD IDR fragments — visible in mpv as "corrupted macroblock
-	// X 66 / X 67" errors on every frame).  Multi-fragment P-frames
-	// (b1=0x00 data + b1=0x01 sub17=0x01 end) reach the in-emit()
-	// end-fragment path below instead and are filtered there.
-	if e.channel == innerChSub && len(e.payload) >= 16 &&
-		e.payload[len(e.payload)-16] == CodecH264 &&
-		e.payload[len(e.payload)-12] != assumedStream {
-		isKeyframe := false
-		_, _, _, hasTrailer := stripFragmentMetadataTrailer(e.payload)
-		c.debugAVFrameInfo(e, e.payload, hasTrailer)
-		c.stats.wrongStreamDrop.Add(1)
-		c.debugFrameEvent("wrong_stream_drop", e, &c.subAsm, e.payload[len(e.payload)-12], assumedStream, hasTrailer, &isKeyframe)
-		return
-	}
-
-	stripped, frameTs, onlineNumOrStreamByte, hasTrailer := stripFragmentMetadataTrailer(e.payload)
+	stripped, frameTs, onlineNum, hasTrailer := stripFragmentMetadataTrailer(e.payload)
 	c.debugAVFrameInfo(e, e.payload, hasTrailer)
 
-	asm := &c.mainAsm
-	if e.channel == innerChSub {
-		asm = &c.subAsm
+	asm := &c.keyAsm
+	if e.channel == innerChInter {
+		asm = &c.interAsm
 	}
 
 	// Frame_num change on THIS channel without having seen the
 	// previous frame's end-fragment.  For ch=0x05 this is normally a
 	// back-to-back IDR where the previous IDR's end-fragment was lost
 	// AND the cross-channel ch=0x07 flush below didn't fire — try to
-	// emit the partial previous IDR via flushMainIDR rather than
+	// emit the partial previous IDR via flushPendingIDR rather than
 	// silently drop it (it might still be decodable with localised
 	// artefacts).  For ch=0x07 it means a P-frame was abandoned mid-
 	// assembly; just reset and count it as a drop.
 	if asm.framePending && e.frameNum != asm.curFrameNum {
-		isKeyframe := e.channel == innerChMain
-		reason := "frame_num_jump_sub"
-		if e.channel == innerChMain {
-			reason = "frame_num_jump_main"
-			c.stats.frameNumJumpMain.Add(1)
+		isKeyframe := e.channel == innerChKey
+		reason := "frame_num_jump_inter"
+		if e.channel == innerChKey {
+			reason = "frame_num_jump_key"
+			c.stats.frameNumJumpKey.Add(1)
 		} else {
-			c.stats.frameNumJumpSub.Add(1)
+			c.stats.frameNumJumpInter.Add(1)
 		}
-		c.debugFrameEvent(reason, e, asm, onlineNumOrStreamByte, assumedStream, hasTrailer, &isKeyframe)
+		c.debugFrameEvent(reason, e, asm, onlineNum, hasTrailer, &isKeyframe)
 		if len(asm.buf) > 0 {
-			if e.channel == innerChMain {
-				c.flushMainIDR(0)
+			if e.channel == innerChKey {
+				c.flushPendingIDR(0)
 			} else {
 				asm.curAUGapped = true
 				c.logAVLoss(asm, e.channel, false, nil, asm.buf)
@@ -796,8 +839,8 @@ func (c *Client) emit(e *pendingFrag) {
 
 	// ch=0x07 arrival: flush any pending ch=0x05 IDR first (its end
 	// fragment never came on this firmware), then process this P-frame.
-	if e.channel == innerChSub && c.mainAsm.framePending && len(c.mainAsm.buf) > 0 {
-		c.flushMainIDR(frameTs)
+	if e.channel == innerChInter && c.keyAsm.framePending && len(c.keyAsm.buf) > 0 {
+		c.flushPendingIDR(frameTs)
 	}
 
 	if !hasTrailer {
@@ -812,8 +855,8 @@ func (c *Client) emit(e *pendingFrag) {
 				c.stats.fragsLost.Add(1)
 			}
 			asm.curAUGapped = true
-			isKeyframe := e.channel == innerChMain
-			c.debugFrameEvent("frag_idx_gap", e, asm, onlineNumOrStreamByte, assumedStream, hasTrailer, &isKeyframe)
+			isKeyframe := e.channel == innerChKey
+			c.debugFrameEvent("frag_idx_gap", e, asm, onlineNum, hasTrailer, &isKeyframe)
 		}
 		asm.expectFragIdx = e.fragIdx + 1
 		asm.curAUDataCount++
@@ -822,33 +865,6 @@ func (c *Client) emit(e *pendingFrag) {
 		}
 		asm.receivedData[e.fragIdx] = struct{}{}
 		asm.buf = append(asm.buf, e.payload...)
-		return
-	}
-
-	// End-of-frame fragment. First, if the trailer's uncertain byte 4 tells
-	// us this frame is from the WRONG stream (camera dual-streaming
-	// HD+SD on the same channel and we want one but the end-fragment
-	// is the other's), discard the accumulated data fragments — they
-	// belonged to the wrong-stream frame.  This pairs with the
-	// removal of the per-fragment totalFrags filter: data fragments
-	// (b1=0x00) carry no such byte, so we accumulate them
-	// optimistically; the trailer-bearing end-fragment is where we
-	// learn the real stream identity and can correct course.
-	//
-	// Assumption (decision #6): the camera serialises its streams —
-	// sends all of HD's fragments contiguously, then all of SD's —
-	// matching every dual-stream-mode capture we have.  If a future
-	// firmware revision interleaves them within a single AU, the
-	// dualStreamIL counter below climbs and we need per-frame_num
-	// buffering instead.  The log+drop branch is the defensive
-	// fallback per the round-1 review.
-	if onlineNumOrStreamByte != 0 && onlineNumOrStreamByte != assumedStream {
-		c.stats.dualStreamIL.Add(1)
-		c.stats.wrongStreamDrop.Add(1)
-		isKeyframe := e.channel == innerChMain
-		c.debugFrameEvent("wrong_stream_drop", e, asm, onlineNumOrStreamByte, assumedStream, hasTrailer, &isKeyframe)
-		c.stats.vidDropped.Add(1)
-		asm.reset()
 		return
 	}
 
@@ -863,8 +879,8 @@ func (c *Client) emit(e *pendingFrag) {
 		c.stats.fragsLost.Add(lost)
 		c.stats.expectedDataShortfall.Add(1)
 		asm.curAUGapped = true
-		isKeyframe := e.channel == innerChMain
-		c.debugFrameEvent("expected_data_shortfall", e, asm, onlineNumOrStreamByte, assumedStream, hasTrailer, &isKeyframe)
+		isKeyframe := e.channel == innerChKey
+		c.debugFrameEvent("expected_data_shortfall", e, asm, onlineNum, hasTrailer, &isKeyframe)
 	}
 	trailerBytes := e.payload[len(e.payload)-16:]
 	c.logAVLoss(asm, e.channel, true, trailerBytes, asm.buf)
@@ -881,10 +897,10 @@ func (c *Client) emit(e *pendingFrag) {
 		c.stats.fragsLost.Add(uint64(expectedData))
 		c.stats.vidDropped.Add(1)
 		c.stats.zeroDataHardDrop.Add(1)
-		isKeyframe := e.channel == innerChMain
-		c.debugFrameEvent("zero_data_hard_drop", e, asm, onlineNumOrStreamByte, assumedStream, hasTrailer, &isKeyframe)
+		isKeyframe := e.channel == innerChKey
+		c.debugFrameEvent("zero_data_hard_drop", e, asm, onlineNum, hasTrailer, &isKeyframe)
 		asm.reset()
-		if c.strict && e.channel == innerChMain {
+		if c.strict && e.channel == innerChKey {
 			c.gopPoisoned = true
 		}
 		return
@@ -897,7 +913,7 @@ func (c *Client) emit(e *pendingFrag) {
 	// consumers may retain it past the next ReadPacket() call.
 	au := append([]byte(nil), asm.buf...)
 	gapped := asm.curAUGapped
-	wasMain := e.channel == innerChMain
+	wasKey := e.channel == innerChKey
 	asmState := *asm
 	asm.reset()
 
@@ -906,14 +922,14 @@ func (c *Client) emit(e *pendingFrag) {
 		if c.strict {
 			c.gopPoisoned = true
 			c.stats.vidDropped.Add(1)
-			if wasMain {
+			if wasKey {
 				c.stats.strictIDRDrop.Add(1)
 				isKeyframe := true
-				c.debugFrameEvent("gapped_idr_drop", e, &asmState, onlineNumOrStreamByte, assumedStream, hasTrailer, &isKeyframe)
+				c.debugFrameEvent("gapped_idr_drop", e, &asmState, onlineNum, hasTrailer, &isKeyframe)
 			} else {
 				c.stats.strictPDrop.Add(1)
 				isKeyframe := false
-				c.debugFrameEvent("strict_gapped_p_drop", e, &asmState, onlineNumOrStreamByte, assumedStream, hasTrailer, &isKeyframe)
+				c.debugFrameEvent("strict_gapped_p_drop", e, &asmState, onlineNum, hasTrailer, &isKeyframe)
 			}
 			return
 		}
@@ -935,27 +951,27 @@ func (c *Client) emit(e *pendingFrag) {
 		//     ONE gapped P-frame loses one frame; emitting it loses
 		//     the rest of the GOP to cascading decoder errors.
 		c.stats.vidDropped.Add(1)
-		if e.channel != innerChMain {
+		if e.channel != innerChKey {
 			return
 		}
 		isKeyframe := true
-		c.debugFrameEvent("gapped_idr_emit", e, &asmState, onlineNumOrStreamByte, assumedStream, hasTrailer, &isKeyframe)
+		c.debugFrameEvent("gapped_idr_emit", e, &asmState, onlineNum, hasTrailer, &isKeyframe)
 	}
 	c.pendingFrameTs = frameTs
 	c.havePendingTs = true
 	// In strict mode only, drop P-frames in a poisoned GOP until the
 	// next clean IDR.  In non-strict (default), let them through.
-	if c.strict && c.gopPoisoned && !wasMain {
+	if c.strict && c.gopPoisoned && !wasKey {
 		c.stats.vidDropped.Add(1)
 		c.stats.strictPDrop.Add(1)
 		isKeyframe := false
-		c.debugFrameEvent("strict_gop_poisoned_drop", e, &asmState, onlineNumOrStreamByte, assumedStream, hasTrailer, &isKeyframe)
+		c.debugFrameEvent("strict_gop_poisoned_drop", e, &asmState, onlineNum, hasTrailer, &isKeyframe)
 		return
 	}
-	c.emitAU(au, e.frameNum, e.channel, onlineNumOrStreamByte)
+	c.emitAU(au, e.frameNum, e.channel, onlineNum)
 }
 
-// flushMainIDR emits the accumulated ch=0x05 IDR buffer in the
+// flushPendingIDR emits the accumulated ch=0x05 IDR buffer in the
 // fallback case where we never received its b1=0x01 sub17=0x01
 // end-fragment — either it was lost on the wire, or this camera
 // firmware variant doesn't send one and we noticed an unrelated
@@ -968,31 +984,27 @@ func (c *Client) emit(e *pendingFrag) {
 // Strict mode (?strict=1) drops the truncated IDR and poisons the
 // GOP — pristine pixels at the cost of a multi-second freeze until
 // the next clean IDR.  Non-strict mode (default) emits it anyway.
-func (c *Client) flushMainIDR(nextPFrameTs uint32) {
-	if len(c.mainAsm.buf) == 0 {
-		c.mainAsm.reset()
+func (c *Client) flushPendingIDR(nextPFrameTs uint32) {
+	if len(c.keyAsm.buf) == 0 {
+		c.keyAsm.reset()
 		return
 	}
-	au := append([]byte(nil), c.mainAsm.buf...)
-	midGapped := c.mainAsm.curAUGapped
+	au := append([]byte(nil), c.keyAsm.buf...)
+	midGapped := c.keyAsm.curAUGapped
 	tailMissing := false
-	if c.mainAsm.curAUTotal > 0 && c.mainAsm.curAUDataCount+1 < c.mainAsm.curAUTotal {
+	if c.keyAsm.curAUTotal > 0 && c.keyAsm.curAUDataCount+1 < c.keyAsm.curAUTotal {
 		tailMissing = true
 		c.stats.fragSkips.Add(1)
-		c.stats.fragsLost.Add(uint64(c.mainAsm.curAUTotal - 1 - c.mainAsm.curAUDataCount))
+		c.stats.fragsLost.Add(uint64(c.keyAsm.curAUTotal - 1 - c.keyAsm.curAUDataCount))
 		c.stats.expectedDataShortfall.Add(1)
-		assumedStream := byte(0x01)
-		if c.quality == "sd" {
-			assumedStream = 0x02
-		}
-		c.debugFlushMainIDR("flush_main_idr_tail_missing", &c.mainAsm, assumedStream)
+		c.debugFlushPendingIDR("flush_key_idr_tail_missing", &c.keyAsm)
 	}
 	if midGapped || tailMissing {
-		c.mainAsm.curAUGapped = true
-		c.logAVLoss(&c.mainAsm, innerChMain, false, nil, au)
+		c.keyAsm.curAUGapped = true
+		c.logAVLoss(&c.keyAsm, innerChKey, false, nil, au)
 	}
-	asmState := c.mainAsm
-	c.mainAsm.reset()
+	asmState := c.keyAsm
+	c.keyAsm.reset()
 	if c.strict && (midGapped || tailMissing) {
 		// Strict mode: drop the IDR if anything was lost — pristine
 		// pixels over fluency.  Cascading inter-frame errors are
@@ -1001,11 +1013,7 @@ func (c *Client) flushMainIDR(nextPFrameTs uint32) {
 		c.gopPoisoned = true
 		c.stats.vidDropped.Add(1)
 		c.stats.strictIDRDrop.Add(1)
-		assumedStream := byte(0x01)
-		if c.quality == "sd" {
-			assumedStream = 0x02
-		}
-		c.debugFlushMainIDR("gapped_idr_drop", &asmState, assumedStream)
+		c.debugFlushPendingIDR("gapped_idr_drop", &asmState)
 		return
 	}
 	if midGapped {
@@ -1017,11 +1025,7 @@ func (c *Client) flushMainIDR(nextPFrameTs uint32) {
 		c.stats.vidDropped.Add(1)
 	}
 	if midGapped || tailMissing {
-		assumedStream := byte(0x01)
-		if c.quality == "sd" {
-			assumedStream = 0x02
-		}
-		c.debugFlushMainIDR("gapped_idr_emit", &asmState, assumedStream)
+		c.debugFlushPendingIDR("gapped_idr_emit", &asmState)
 	}
 	// Guard the unsigned underflow: the camera clock at boot starts
 	// near zero, and a P-frame whose ts is < 40 ms would naively
@@ -1031,11 +1035,11 @@ func (c *Client) flushMainIDR(nextPFrameTs uint32) {
 		c.pendingFrameTs = nextPFrameTs - 40
 		c.havePendingTs = true
 	}
-	c.emitAU(au, asmState.curFrameNum, innerChMain, 0)
+	c.emitAU(au, asmState.curFrameNum, innerChKey, 0)
 }
 
 // emitAU finalises one access unit and queues it for the consumer.
-func (c *Client) emitAU(au []byte, cameraFrameNum uint32, channel, onlineNumOrStreamByte byte) {
+func (c *Client) emitAU(au []byte, cameraFrameNum uint32, channel, onlineNum byte) {
 	if len(au) < 5 {
 		return
 	}
@@ -1063,10 +1067,6 @@ func (c *Client) emitAU(au []byte, cameraFrameNum uint32, channel, onlineNumOrSt
 		c.stats.vidDropped.Add(1)
 		c.stats.strictPDrop.Add(1)
 		if c.verbose && c.traceFrag {
-			assumedStream := byte(0x01)
-			if c.quality == "sd" {
-				assumedStream = 0x02
-			}
 			log.Trace().
 				Str("reason", "strict_gop_poisoned_drop").
 				Str("quality", c.quality).
@@ -1077,8 +1077,7 @@ func (c *Client) emitAU(au []byte, cameraFrameNum uint32, channel, onlineNumOrSt
 				Uint16("expectedFragIdx", 0).
 				Uint16("totalFrags", 0).
 				Uint16("curAUDataCount", 0).
-				Uint8("onlineNumOrStreamByte", 0).
-				Uint8("assumedStream", assumedStream).
+				Uint8("onlineNum", 0).
 				Bool("hasTrailer", false).
 				Bool("isKeyframe", false).
 				Bool("frameContextAvailable", false).
@@ -1118,14 +1117,14 @@ func (c *Client) emitAU(au []byte, cameraFrameNum uint32, channel, onlineNumOrSt
 	c.lastEmitTs = pts
 
 	c.queuePacket(&Packet{
-		Codec:                 CodecH264,
-		Payload:               au,
-		FrameNo:               c.emitSeq,
-		CameraFrameNo:         cameraFrameNum,
-		Channel:               channel,
-		OnlineNumOrStreamByte: onlineNumOrStreamByte,
-		Timestamp:             pts,
-		IsKeyframe:            isKey,
+		Codec:         CodecH264,
+		Payload:       au,
+		FrameNo:       c.emitSeq,
+		CameraFrameNo: cameraFrameNum,
+		Channel:       channel,
+		OnlineNum:     onlineNum,
+		Timestamp:     pts,
+		IsKeyframe:    isKey,
 	})
 	c.emitSeq++
 	c.stats.vidFramesOut.Add(1)
@@ -1142,15 +1141,9 @@ func (c *Client) emitAU(au []byte, cameraFrameNum uint32, channel, onlineNumOrSt
 // codec_id is 0x4e (= CodecH264) for video.  Byte 1 of the variant
 // prefix is 0x00 for P-frames and 0x01 for IDR keyframes.  Byte 3
 // (last byte of the variant prefix) is named onlineNum by the public
-// TUTK FRAMEINFO_t. On captured PLAF203 traffic it correlates with:
-//
-//	0x01 = main stream (HD on this camera, 1920x1080)
-//	0x02 = sub stream  (SD on this camera, 640x360)
-//
-// When the camera is in dual-stream mode it sends BOTH streams on
-// the same channels and the configured Quality option picks which
-// one to keep — see the assumedStream filter at the top of emit(). This
-// is deliberately logged as an uncertain interpretation, not protocol fact.
+// TUTK FRAMEINFO_t. AF203 names the corresponding source value gOnlineNum;
+// it is an online AV-client count/state and can legitimately be values other
+// than 1 or 2. Resolution is learned from the H.264 SPS.
 //
 // Stripping only 15 trailer bytes would leave the 0x4e codec_id in
 // the slice tail; decoders read it as a stray NAL-14 prefix and bail
@@ -1159,20 +1152,16 @@ func (c *Client) emitAU(au []byte, cameraFrameNum uint32, channel, onlineNumOrSt
 //
 // Callers should only invoke this on the frame's end fragment (whose
 // tail unambiguously matches the signature) — in mid-frame fragments
-// a coincidental match could shear real slice bytes.  84 fixed bits
-// of signature put coincidental matches in the 1-in-2^84 zone.
-func stripFragmentMetadataTrailer(p []byte) (stripped []byte, ts uint32, onlineNumOrStreamByte byte, hasTs bool) {
+// a coincidental match could shear real slice bytes. The codec, frame flag,
+// camera index, and seven reserved zero bytes remain a strong signature;
+// onlineNum is intentionally not part of it.
+func stripFragmentMetadataTrailer(p []byte) (stripped []byte, ts uint32, onlineNum byte, hasTs bool) {
 	if len(p) < 16 {
 		return p, 0, 0, false
 	}
 	t := p[len(p)-15:] // 15-byte trailer right after the codec_id byte
-	// onlineNum range: every PCAP frame observed has byte 4
-	// ∈ {0x01, 0x02}.  The wider 0x01..0x0f acceptance that earlier
-	// versions used was a defensive over-allow with no evidence
-	// behind it — tightening it catches malformed end-fragments that
-	// would otherwise be misclassified as valid trailers.
 	prefixOK := t[0] == 0x00 && (t[1] == 0x00 || t[1] == 0x01) &&
-		t[2] == 0x00 && (t[3] == 0x01 || t[3] == 0x02)
+		t[2] == 0x00
 	zerosOK := t[4] == 0 && t[5] == 0 && t[6] == 0 && t[7] == 0 &&
 		t[8] == 0 && t[9] == 0 && t[10] == 0
 	codecIDOK := p[len(p)-16] == CodecH264

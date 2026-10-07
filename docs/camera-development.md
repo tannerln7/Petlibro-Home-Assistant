@@ -54,24 +54,26 @@ Preserve these boundaries when modifying the implementation:
   before assembly or drop decisions.
 - Received positions above an ACK hole are stored as consecutive ranges rather
   than one map entry per packet. The range count is capped; `overflow` in the
-  five-second ACK stats reports positions omitted after that cap without
-  changing the ACK fields sent on the wire.
+  five-second ACK stats reports positions omitted after that cap. The type-0x09
+  upper endpoint is also bounded by NACK-list capacity, so an unrepresentable
+  hole is never silently acknowledged.
 - The receive loop decrypts each D2C datagram once. Plaintext capture records
   the same bytes passed to `parseDatagram`.
 - Normal and extended media headers feed the same assembly path only after
   structural validation. Rejected candidates must not create false evidence of
   successful assembly.
-- Main video (`0x05`), sub video (`0x07`), and audio (`0x03`) keep independent
-  frame-assembly state.
+- Key/IDR-family video (`0x05`), inter-frame video (`0x07`), and audio (`0x03`)
+  keep independent frame-assembly state.
 - The regular reorder drain cadence is 100 ms and the force-drain buffer
   threshold is 8 entries. Change either only as an isolated, measured
   experiment.
 - `strict=1` changes damaged-GOP output policy; it must not change packet
   classification, receive tracking, or ACK semantics.
 
-The two ACK sequence fields are still described by observed behavior rather
-than a complete vendor specification. Keep field-role names and logs explicit
-instead of collapsing them into an assumed cumulative-ACK abstraction.
+The AV ACK base/high interval and relative NACK list are established from the
+AF203 resend dispatcher. The reserved field at +6, transport state at +16, and
+some type-0x0b statistics remain only partially understood; keep their names
+and zero/default behavior conservative.
 
 ## Media header layouts
 
@@ -91,8 +93,8 @@ The PLAF203 also emits an extended 44-byte layout in inner families `0c08`,
 | `40` | 4 | `nextFrameLike` (meaning not proven) |
 | `44` | variable | Payload followed by optional frame-info bytes |
 
-Treat names such as `nextFrameLike` and `onlineNumOrStreamByte` as deliberate
-uncertainty markers until captures prove stronger semantics.
+`nextFrameLike` remains an uncertainty marker. FRAMEINFO byte 4 is `onlineNum`
+(the AF203 online AV-client count/state), not an HD/SD stream selector.
 
 ## Tests
 

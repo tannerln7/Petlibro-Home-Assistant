@@ -124,8 +124,8 @@ func TestDumpPacketSummary(t *testing.T) {
 			}
 		})
 		logSortedCounts(t, "D2C", counts)
-		t.Logf("D2C media sequence discontinuities=%d frame-number discontinuities main=%d sub=%d audio=%d",
-			seqGaps, frameGaps[innerChMain], frameGaps[innerChSub], frameGaps[innerChAudio])
+		t.Logf("D2C media sequence discontinuities=%d frame-number discontinuities key=%d inter=%d audio=%d",
+			seqGaps, frameGaps[innerChKey], frameGaps[innerChInter], frameGaps[innerChAudio])
 		t.Logf("D2C extendedMediaCandidates=%d extendedMediaParsed=%d extendedMediaRejected=%d unknown0c08Remaining=%d unknown0c0dRemaining=%d",
 			extendedCandidates, extendedParsed, extendedRejected, unknown0c08, unknown0c0d)
 		if seqStarted {
@@ -139,7 +139,7 @@ func TestDumpPacketSummary(t *testing.T) {
 }
 
 func TestPacketSummaryClassifiers(t *testing.T) {
-	ack := innerAck(3, 0x4000, 0x4010, 3, 0x34, 9)
+	ack := (transportACK{Ordinal: 3, AVBase: 0x4000, AVHigh: 0x4010, Tick: 9}).marshal()
 	if got := classifyC2D(ack); got != "ack" {
 		t.Fatalf("ACK classified as %q", got)
 	}
@@ -156,12 +156,12 @@ func TestPacketSummaryClassifiers(t *testing.T) {
 		t.Fatal("legacy lost-position candidate was not recognized")
 	}
 	extended := makeExtendedPkt(extendedFragSpec{
-		b1: 0x08, channel: innerChMain, subFlag: 0,
+		b1: 0x08, channel: innerChKey, subFlag: 0,
 		subWire: 0x4000, totalFrags: 2, fragIdx: 0,
 		frameNum: 1, nextFrameLike: 2, payload: []byte{1, 2, 3},
 	})
 	class, sub, channel, frame, media := classifyD2C(extended)
-	if class != "extended_media_data_ch0x05_b1_0x08" || !media || sub != 0x4000 || channel != innerChMain || frame != 1 {
+	if class != "extended_media_data_ch0x05_b1_0x08" || !media || sub != 0x4000 || channel != innerChKey || frame != 1 {
 		t.Fatalf("extended packet classification=%q sub=0x%x channel=0x%x frame=%d media=%t", class, sub, channel, frame, media)
 	}
 }
@@ -176,14 +176,14 @@ func classifyC2D(body []byte) string {
 		}
 		return "login"
 	}
-	if len(body) == 24 && body[0] == 0x09 {
+	if len(body) >= 24 && body[0] == 0x09 {
 		return "ack"
 	}
 	if len(body) >= 1 && body[0] == 0x0a {
-		return "heartbeat"
+		return "timing_probe"
 	}
 	if len(body) >= 1 && body[0] == 0x0b {
-		return "notice"
+		return "timing_feedback"
 	}
 	if len(body) >= 40 && body[0] == 0x0c {
 		n := int(binary.LittleEndian.Uint32(body[24:28]))
@@ -240,7 +240,7 @@ func classifyD2C(pkt []byte) (string, uint16, byte, uint32, bool) {
 			class := fmt.Sprintf("extended_media_%s_ch0x%02x_b1_0x%02x", kind, m.channel, m.b1)
 			if _, _, online, hasTrailer := stripFragmentMetadataTrailer(m.payload); hasTrailer {
 				t := m.payload[len(m.payload)-16:]
-				class += fmt.Sprintf("_frameinfo_codec0x%04x_flag%d_byte4_%d", binary.LittleEndian.Uint16(t), t[2], online)
+				class += fmt.Sprintf("_frameinfo_codec0x%04x_flag%d_onlineNum_%d", binary.LittleEndian.Uint16(t), t[2], online)
 			}
 			return class, m.subWire, m.channel, m.frameNum, true
 		}
@@ -252,14 +252,14 @@ func classifyD2C(pkt []byte) (string, uint16, byte, uint32, bool) {
 		ch := inner[16]
 		sub := binary.LittleEndian.Uint16(inner[18:20])
 		frame := binary.LittleEndian.Uint32(inner[28:32])
-		if ch == innerChMain || ch == innerChSub || ch == innerChAudio {
+		if ch == innerChKey || ch == innerChInter || ch == innerChAudio {
 			class := fmt.Sprintf("media_ch0x%02x_b1_0x%02x", ch, inner[1])
 			paylen := int(binary.LittleEndian.Uint16(inner[24:26]))
 			if paylen >= 16 && 36+paylen <= len(inner) {
 				payload := inner[36 : 36+paylen]
 				if _, _, online, ok := stripFragmentMetadataTrailer(payload); ok {
 					t := payload[len(payload)-16:]
-					class += fmt.Sprintf("_frameinfo_codec0x%04x_flag%d_byte4_%d", binary.LittleEndian.Uint16(t), t[2], online)
+					class += fmt.Sprintf("_frameinfo_codec0x%04x_flag%d_onlineNum_%d", binary.LittleEndian.Uint16(t), t[2], online)
 				}
 			}
 			return class, sub, ch, frame, true
