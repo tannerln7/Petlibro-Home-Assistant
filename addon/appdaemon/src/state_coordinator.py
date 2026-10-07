@@ -111,6 +111,7 @@ class PlanPatch:
 class PlanOperation(enum.Enum):
     UPDATE = "update"
     CREATE = "create"
+    DELETE = "delete"
 
 
 @dataclass(frozen=True)
@@ -185,11 +186,24 @@ class PlanCollectionPredicate:
             if not set(baseline_by_id).issubset(expected_by_id):
                 raise ValueError("feeding-plan create removed an existing plan")
 
+        elif self.operation is PlanOperation.DELETE:
+            if self.target_plan_id not in baseline_by_id:
+                raise ValueError("feeding-plan delete target does not exist")
+
+            if self.target_plan_id in expected_by_id:
+                raise ValueError("feeding-plan delete target remains present")
+
+            if set(expected_by_id) != set(baseline_by_id) - {self.target_plan_id}:
+                raise ValueError("feeding-plan delete changed other plan IDs")
+
         else:
             raise ValueError(f"unsupported feeding-plan operation: {self.operation}")
 
         for plan_id, baseline_plan in baseline_by_id.items():
             expected_plan = expected_by_id.get(plan_id)
+
+            if self.operation is PlanOperation.DELETE and plan_id == self.target_plan_id:
+                continue
 
             if expected_plan is None:
                 raise ValueError("existing feeding plan disappeared")
@@ -337,11 +351,22 @@ class PersistentWriteRequest:
     requires_fresh_preflight: bool = False
     raw_settings_diagnostics: bool = False
     plan_patch: PlanPatch | None = None
+    plan_delete_id: int | None = None
     plan_id_normalization: PlanIdNormalization | None = None
 
     def __post_init__(self):
-        if self.plan_patch is not None and self.plan_id_normalization is not None:
-            raise ValueError("a write cannot patch and normalize plans together")
+        plan_operations = sum(
+            operation is not None
+            for operation in (
+                self.plan_patch,
+                self.plan_delete_id,
+                self.plan_id_normalization,
+            )
+        )
+        if plan_operations > 1:
+            raise ValueError("a write cannot combine feeding-plan operations")
+        if self.plan_delete_id is not None and not 1 <= self.plan_delete_id <= 9:
+            raise ValueError("feeding-plan delete ID must be between 1 and 9")
 
 
 @dataclass
@@ -633,6 +658,29 @@ class FeederStateCoordinator:
                 target_plan_id=request.plan_patch.plan_id,
                 operation=operation,
             )
+            publisher_truth = replace(
+                truth,
+                plans=replace(
+                    truth.plans,
+                    count=len(expected_plans),
+                    semantic_records=expected_plans,
+                ),
+            )
+        elif request.plan_delete_id is not None:
+            try:
+                expected_plans = build_deleted_plan_collection(
+                    truth.plans.semantic_records, request.plan_delete_id
+                )
+                pending.predicate = PlanCollectionPredicate(
+                    baseline=truth.plans.semantic_records,
+                    expected=expected_plans,
+                    target_plan_id=request.plan_delete_id,
+                    operation=PlanOperation.DELETE,
+                )
+            except ValueError as exc:
+                self._complete_failed_write(str(exc))
+                return
+            pending.baseline_truth = truth
             publisher_truth = replace(
                 truth,
                 plans=replace(
@@ -1355,6 +1403,21 @@ def build_patched_plan_collection(
         )
 
     return tuple(expected)
+
+
+def build_deleted_plan_collection(
+    baseline: tuple[FeederPlan, ...], plan_id: int
+) -> tuple[FeederPlan, ...]:
+    """Remove one existing ID while preserving every remaining feeder record."""
+
+    if not 1 <= plan_id <= 9:
+        raise ValueError("feeding-plan delete ID must be between 1 and 9")
+    if not any(plan.id == plan_id for plan in baseline):
+        raise ValueError(f"feeding plan {plan_id} does not exist")
+
+    expected = tuple(plan for plan in baseline if plan.id != plan_id)
+    validate_plan_transport_fields(expected)
+    return expected
 
 
 def create_plan_from_patch(patch: PlanPatch) -> FeederPlan:

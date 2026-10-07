@@ -123,6 +123,43 @@ def test_plan_command_never_consults_storage_or_retained_state():
     assert request.plan_patch.portions == 12
 
 
+def test_empty_plan_command_requests_verified_deletion_from_fresh_truth():
+    router = object.__new__(command_module.CommandRouter)
+    router.storage = TrapStorage()
+    router.coordinator = CapturingCoordinator()
+    router.logger = Logger()
+    router.backend = backend_module.Backend()
+    router.backend.client = CapturingClient()
+
+    router.plan_handler(3)(
+        "MQTT_MESSAGE",
+        {"payload": "", "retain": False},
+        {},
+    )
+
+    assert len(router.coordinator.requests) == 1
+    request = router.coordinator.requests[0]
+    assert request.requires_fresh_preflight
+    assert request.plan_patch is None
+    assert request.plan_delete_id == 3
+    assert request.target == 3
+
+
+def test_whitespace_plan_command_is_not_treated_as_deletion():
+    router = object.__new__(command_module.CommandRouter)
+    router.coordinator = CapturingCoordinator()
+    router.logger = Logger()
+    router.backend = object()
+
+    router.plan_handler(3)(
+        "MQTT_MESSAGE",
+        {"payload": " ", "retain": False},
+        {},
+    )
+
+    assert router.coordinator.requests == []
+
+
 def test_persistent_setting_command_map_is_unambiguous():
     topics = [spec.topic for spec in SETTING_COMMANDS]
     controls = [spec.control for spec in SETTING_COMMANDS]

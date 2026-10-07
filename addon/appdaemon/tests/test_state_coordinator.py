@@ -22,6 +22,7 @@ from state_coordinator import (
     PlanOperation,
     PlanPatch,
     SettingEqualsPredicate,
+    build_deleted_plan_collection,
     build_plan_id_normalization,
     build_patched_plan_collection,
     validate_plan_transport_fields,
@@ -600,6 +601,111 @@ def test_plan_predicate_rejects_collateral_mutation_and_missing_plan():
         plans=replace(current.plans, count=1, semantic_records=(expected[0],)),
     )
     assert not predicate.matches(missing)
+
+
+def test_plan_delete_predicate_requires_only_target_to_disappear():
+    current = truth()
+    first = current.plans.semantic_records[0]
+    second = replace(
+        first,
+        id=2,
+        hour_utc=19,
+        time_utc="19:00",
+        time_local_candidate="15:00",
+        portions=8,
+    )
+    baseline = (first, second)
+    expected = build_deleted_plan_collection(baseline, 2)
+    predicate = PlanCollectionPredicate(
+        baseline=baseline,
+        expected=expected,
+        target_plan_id=2,
+        operation=PlanOperation.DELETE,
+    )
+
+    matching = replace(
+        current,
+        plans=replace(current.plans, count=1, semantic_records=expected),
+    )
+    assert predicate.matches(matching)
+
+    target_remains = replace(
+        current,
+        plans=replace(current.plans, count=2, semantic_records=baseline),
+    )
+    assert not predicate.matches(target_remains)
+
+    collateral = replace(
+        current,
+        plans=replace(
+            current.plans,
+            count=1,
+            semantic_records=(replace(first, portions=9),),
+        ),
+    )
+    assert not predicate.matches(collateral)
+
+
+def test_plan_delete_runs_through_preflight_ack_and_verified_readback():
+    initial = truth()
+    first = initial.plans.semantic_records[0]
+    second = replace(
+        first,
+        id=2,
+        hour_utc=19,
+        time_utc="19:00",
+        time_local_candidate="15:00",
+        portions=8,
+    )
+    initial = replace(
+        initial,
+        plans=replace(initial.plans, count=2, semantic_records=(first, second)),
+    )
+    preflight = replace(
+        initial,
+        revisions=replace(initial.revisions, core_rev="fnv64:delete-preflight"),
+    )
+    verified = replace(
+        preflight,
+        revisions=replace(preflight.revisions, core_rev="fnv64:delete-verified"),
+        plans=replace(preflight.plans, count=1, semantic_records=(first,)),
+    )
+    coordinator, ad, agent, _logger, _mirrored, _availability = ready_coordinator(
+        FakeAgent([initial, preflight, verified])
+    )
+    sent = []
+    request = PersistentWriteRequest(
+        control="food.plan_2",
+        target=2,
+        publisher=lambda current_truth: (
+            sent.append(current_truth.plans.semantic_records)
+            or CommandReceipt("FEEDING_PLAN_SERVICE", "delete-message")
+        ),
+        predicate=None,
+        requires_fresh_preflight=True,
+        plan_delete_id=2,
+    )
+
+    assert coordinator.request_persistent_write(request)
+    assert agent.core_calls == 2
+    assert sent == [(first,)]
+
+    coordinator.on_mqtt_ack(
+        MqttAck("FEEDING_PLAN_SERVICE", "delete-message", True)
+    )
+    ad.run_next_timer()
+
+    assert coordinator.state == FeederState.READY
+    assert coordinator.latest_revisions().core_rev == "fnv64:delete-verified"
+
+
+def test_plan_delete_can_remove_last_plan_and_rejects_missing_target():
+    current = truth()
+    only_plan = current.plans.semantic_records[0]
+
+    assert build_deleted_plan_collection((only_plan,), only_plan.id) == ()
+    with pytest.raises(ValueError, match="does not exist"):
+        build_deleted_plan_collection((only_plan,), 2)
 
 
 def test_plan_predicate_allows_first_plan_creation():

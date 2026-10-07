@@ -166,7 +166,9 @@ response. If the requested ID exists, it mutates only that record's UTC hour,
 minute, weekday set, portions, derived one-shot flag, and update timestamp. If
 the ID is absent, it appends a new record with safe feeder-field defaults: Meal
 Call disabled, zero audio repetitions, zero skip end time, no opaque tail, and
-idle execution state. Plan deletion is not exposed.
+idle execution state. Clearing a schedule field to an exactly empty value
+deletes that ID from the fresh collection; whitespace, `null`, and malformed
+JSON are rejected rather than interpreted destructively.
 
 For existing records, `enable_audio_raw` passes through as the existing
 `enableAudio` field and must be 0 or 1; `audio_times` and the 64-bit
@@ -177,9 +179,10 @@ readback; the current MQTT schema has no field that exposes it. Runtime
 schedule equality.
 
 After the acknowledgement, verification requires exactly the expected plan
-count and IDs, the requested target update or creation, and byte-semantic
-equivalence of every pre-existing non-target record. An update also requires
-unchanged target opaque fields. `GET_FEEDING_PLAN_EVENT` performs a fresh core
+count and IDs and the requested target update, creation, or deletion. Every
+pre-existing non-target record must remain byte-semantically equivalent. An
+update also requires unchanged target opaque fields. `GET_FEEDING_PLAN_EVENT`
+performs a fresh core
 read. If that read fails, the controller sends no application response rather
 than fabricating a schedule. AF203 firmware ignores the response `code` when a
 `plans` member is present, so even an error response containing `plans: []`

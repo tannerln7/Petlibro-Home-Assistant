@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.10-beta.2
+
+- Delete a feeding plan by clearing its Home Assistant schedule text field.
+  Deletion uses a fresh feeder preflight and the same serialized, acknowledged,
+  and State Agent-verified full-collection write as schedule creation and
+  updates. Only an exactly empty value requests deletion; malformed JSON and
+  whitespace remain invalid commands.
+
 ## 0.3.10-beta.1
 
 - Normalize stock-app feeding-plan IDs into Home Assistant slots 1-9 during

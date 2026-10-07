@@ -40,7 +40,9 @@ overwriting a newer grain event.
 
 Feeding-plan commands always start with a fresh `/v1/core` preflight and send a
 complete collection. They can update an existing slot or create a missing plan
-ID while preserving every existing record; deletion is not exposed. The
+ID while preserving every existing record. Clearing a schedule text field
+deletes that slot by omitting it from the fresh collection; an exactly empty
+value is required so malformed JSON cannot become a destructive command. The
 post-ack snapshot must prove the intended collection transition before Home
 Assistant accepts it.
 

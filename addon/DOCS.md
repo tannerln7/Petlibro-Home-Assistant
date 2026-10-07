@@ -171,7 +171,9 @@ https://raw.githubusercontent.com/tannerln7/Petlibro-Home-Assistant/state-agent-
 The nine **Feeding schedule** text entities accept flat JSON. Each document's
 `id` must match its displayed slot number. Editing an existing ID updates it;
 submitting a valid missing ID creates that plan with conservative defaults for
-feeder-owned metadata. Plan deletion is not exposed.
+feeder-owned metadata. Clear the field completely and save it to delete that
+slot. Only an exactly empty value means delete; whitespace, `null`, and malformed
+JSON are rejected.
 The user-editable fields are `execution_time`, `scheduled_days`, and
 `grain_num`; legacy audio fields are ignored because their meanings are not
 verified. Every edit preflights a fresh full plan collection, carries
@@ -180,7 +182,9 @@ opaque tail in its cloned truth model, and sends the entire collection. The
 post-ack readback requires that opaque tail and all non-target plans to remain
 unchanged. Runtime plan execution state and the regenerated target `syncTime`
 do not cause false divergence. A retained or stored Home Assistant value is
-never used to construct the command.
+never used to construct the command. Deletion likewise starts from fresh feeder
+truth, removes only the selected ID, and verifies that every remaining record
+is unchanged; deleting the last slot sends an authoritative empty collection.
 
 ## Camera metadata publishing
 

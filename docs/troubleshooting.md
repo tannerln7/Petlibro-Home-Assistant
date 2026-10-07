@@ -154,10 +154,13 @@ without logging the schedule contents.
 
 If the slot does not exist in the feeder's `/v1/core` plan collection, a valid
 submission creates it while preserving all existing plans. Existing IDs are
-updated in place. The controller does not expose deletion. A valid change logs
-a pending write, performs a fresh full-state preflight, waits for the matching
-MQTT ack, and then logs `persistent feeder write verified` only after
-`/v1/core` contains the complete expected collection.
+updated in place. To delete an existing plan, clear its schedule text field
+completely and save it. Only a zero-length value requests deletion; whitespace,
+`null`, and malformed JSON are rejected. A valid change logs a pending write,
+performs a fresh full-state preflight, waits for the matching MQTT ack, and then
+logs `persistent feeder write verified` only after `/v1/core` contains the
+complete expected collection. A deletion is accepted only when the target is
+absent and every remaining plan is unchanged.
 
 If the UI restores an older value, that is intentional when verification
 failed: feeder-local truth wins. Look for `feed-plan preflight`, `state API
