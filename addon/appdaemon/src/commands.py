@@ -73,38 +73,41 @@ class CommandRouter:
     def plan_handler(self, plan_slot: int):
         def callback(_eventname: str, data: dict, _kwargs):
             raw_payload = data.get("payload")
-            try:
-                patch = parse_plan_patch(raw_payload, plan_slot)
-            except json.JSONDecodeError as error:
-                self.logger.warning(
-                    "invalid feeding-plan JSON ignored",
-                    reason=error.msg,
-                    line=error.lineno,
-                    column=error.colno,
-                    position=error.pos,
-                    payload_length=(
-                        len(raw_payload) if isinstance(raw_payload, str) else None
-                    ),
-                )
-                return
-            except PlanSlotMismatch as error:
-                self.logger.warning(
-                    "feeding-plan slot/id mismatch ignored",
-                    slot=error.slot,
-                    plan_id=error.plan_id,
-                )
-                return
-            except (KeyError, TypeError, ValueError) as error:
-                self.logger.warning(
-                    "invalid feeding-plan command ignored",
-                    error_type=type(error).__name__,
-                )
-                return
+            deleting = raw_payload == ""
+            patch = None
+            if not deleting:
+                try:
+                    patch = parse_plan_patch(raw_payload, plan_slot)
+                except json.JSONDecodeError as error:
+                    self.logger.warning(
+                        "invalid feeding-plan JSON ignored",
+                        reason=error.msg,
+                        line=error.lineno,
+                        column=error.colno,
+                        position=error.pos,
+                        payload_length=(
+                            len(raw_payload) if isinstance(raw_payload, str) else None
+                        ),
+                    )
+                    return
+                except PlanSlotMismatch as error:
+                    self.logger.warning(
+                        "feeding-plan slot/id mismatch ignored",
+                        slot=error.slot,
+                        plan_id=error.plan_id,
+                    )
+                    return
+                except (KeyError, TypeError, ValueError) as error:
+                    self.logger.warning(
+                        "invalid feeding-plan command ignored",
+                        error_type=type(error).__name__,
+                    )
+                    return
 
             accepted = self.coordinator.request_persistent_write(
                 PersistentWriteRequest(
                     control=f"food.plan_{plan_slot}",
-                    target=patch,
+                    target=plan_slot if deleting else patch,
                     publisher=lambda truth: self.backend.feeding_plans_send(
                         truth.plans.semantic_records
                     ),
@@ -112,13 +115,14 @@ class CommandRouter:
                     command_summary="FEEDING_PLAN_SERVICE full collection",
                     requires_fresh_preflight=True,
                     plan_patch=patch,
+                    plan_delete_id=plan_slot if deleting else None,
                 )
             )
             if accepted:
                 self.logger.debug(
-                    "feeding plan update queued for fresh feeder preflight",
+                    "feeding plan command queued for fresh feeder preflight",
                     slot=plan_slot,
-                    plan_id=patch.plan_id,
+                    operation="delete" if deleting else "upsert",
                 )
 
         callback.__name__ = f"_mqtt_cmd_food_plan_{plan_slot}_cb"

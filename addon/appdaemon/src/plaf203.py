@@ -72,6 +72,9 @@ class Plaf203(adbase.ADBase):
             self._apply_feeder_truth,
             self._coordinator_availability_set,
             self.storage.verified_truth_set,
+            plan_collection_publisher=lambda plans: self.backend.feeding_plans_send(
+                plans
+            ),
         )
         update_options = StateAgentUpdateOptions.from_mapping(
             self.args.get("state_agent_updates")

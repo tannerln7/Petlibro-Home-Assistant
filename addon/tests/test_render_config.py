@@ -27,7 +27,7 @@ class RenderConfigTests(unittest.TestCase):
 
     def test_state_agent_manifest_default_matches_signed_release_feed(self):
         expected = (
-            "https://raw.githubusercontent.com/tannerln7/ha-addon-petlibro-local/"
+            "https://raw.githubusercontent.com/tannerln7/Petlibro-Home-Assistant/"
             "state-agent-releases/state-agent/latest.json"
         )
         self.assertEqual(

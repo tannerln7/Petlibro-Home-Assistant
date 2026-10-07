@@ -51,4 +51,4 @@ LABEL \
     org.opencontainers.image.title="Petlibro Local backend" \
     org.opencontainers.image.description="Local PLAF203 MQTT control and camera streaming backend" \
     org.opencontainers.image.licenses="MIT" \
-    org.opencontainers.image.source="https://github.com/tannerln7/ha-addon-petlibro-local"
+    org.opencontainers.image.source="https://github.com/tannerln7/Petlibro-Home-Assistant"

@@ -7,7 +7,7 @@ from ha_entities import HomeAssistantStatePublisher
 from petlibro_logging import PetlibroLogger
 from protocol import Code, GetFeedingPlanEventIn, MessageId, Timestamp
 from state_agent import FeederTruth
-from state_coordinator import CommandReceipt
+from state_coordinator import CommandReceipt, build_plan_id_normalization
 from settings_map import SETTING_COMMANDS
 from telemetry import TelemetryPublisher
 from test_state_agent import core_payload
@@ -121,6 +121,43 @@ def test_plan_command_never_consults_storage_or_retained_state():
     assert request.plan_patch.plan_id == 1
     assert request.plan_patch.days_raw == (1, 3, 5)
     assert request.plan_patch.portions == 12
+
+
+def test_empty_plan_command_requests_verified_deletion_from_fresh_truth():
+    router = object.__new__(command_module.CommandRouter)
+    router.storage = TrapStorage()
+    router.coordinator = CapturingCoordinator()
+    router.logger = Logger()
+    router.backend = backend_module.Backend()
+    router.backend.client = CapturingClient()
+
+    router.plan_handler(3)(
+        "MQTT_MESSAGE",
+        {"payload": "", "retain": False},
+        {},
+    )
+
+    assert len(router.coordinator.requests) == 1
+    request = router.coordinator.requests[0]
+    assert request.requires_fresh_preflight
+    assert request.plan_patch is None
+    assert request.plan_delete_id == 3
+    assert request.target == 3
+
+
+def test_whitespace_plan_command_is_not_treated_as_deletion():
+    router = object.__new__(command_module.CommandRouter)
+    router.coordinator = CapturingCoordinator()
+    router.logger = Logger()
+    router.backend = object()
+
+    router.plan_handler(3)(
+        "MQTT_MESSAGE",
+        {"payload": " ", "retain": False},
+        {},
+    )
+
+    assert router.coordinator.requests == []
 
 
 def test_persistent_setting_command_map_is_unambiguous():
@@ -246,6 +283,31 @@ def test_mqtt_plan_adapter_serializes_full_collection_protocol_metadata():
     disabled_truth = FeederTruth.from_dict(core_payload(enable_audio_raw=0))
     backend.feeding_plans_send(disabled_truth.plans.semantic_records)
     assert backend.client.plan_messages[2]["plans"][0]["enableAudio"] is False
+
+
+def test_mqtt_plan_adapter_preserves_known_fields_during_id_normalization():
+    backend = backend_module.Backend()
+    backend.client = CapturingClient()
+    truth = FeederTruth.from_dict(core_payload())
+    source = replace(
+        truth.plans.semantic_records[0],
+        id=1_648_218,
+        opaque_hex="00" * 10,
+        skip_end_time=1_700_000_100_000,
+    )
+    normalization = build_plan_id_normalization((source,))
+
+    backend.feeding_plans_send(normalization.normalized)
+
+    message = backend.client.plan_messages[0]["plans"][0]
+    assert message["planId"] == 1
+    assert message["executionTime"] == source.time_utc
+    assert message["repeatDay"] == [1, 2, 3, 4, 5, 6, 7]
+    assert message["grainNum"] == source.portions
+    assert message["enableAudio"] is bool(source.enable_audio_raw)
+    assert message["audioTimes"] == source.audio_times
+    assert message["skipEndTime"] == source.skip_end_time
+    assert message["syncTime"] > source.sync_time
 
 
 def test_mqtt_plan_adapter_rejects_unknown_enable_audio_raw_value():

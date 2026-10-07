@@ -92,7 +92,7 @@ listeners directly to the Internet.
 
 ## Recommended installation
 
-1. Add `https://github.com/tannerln7/ha-addon-petlibro-local` to the Home
+1. Add `https://github.com/tannerln7/Petlibro-Home-Assistant` to the Home
    Assistant app/add-on repository list and install **Petlibro Local backend**.
 2. Create a broker account for the add-on and enter it in the add-on
    configuration. Leave the add-on stopped until bootstrap is ready.
@@ -167,6 +167,7 @@ Camera sessions are lazy and begin when a consumer opens the generated stream.
 
 - [Architecture](docs/architecture.md)
 - [Development guide](docs/development.md)
+- [Release process](docs/release-process.md)
 - [Contributing](CONTRIBUTING.md)
 - [Camera backend development](docs/camera-development.md)
 - [Camera diagnostics](docs/camera-debugging.md)

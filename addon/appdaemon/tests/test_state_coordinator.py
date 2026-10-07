@@ -1,6 +1,7 @@
 from collections import deque
 from dataclasses import replace
 
+import pytest
 from state_agent import (
     FeederTruth,
     RevisionSnapshot,
@@ -15,9 +16,14 @@ from state_coordinator import (
     PendingStage,
     PersistentWriteRequest,
     PlanCollectionPredicate,
+    PlanIdMapping,
+    PlanIdNormalizationPredicate,
+    PlanIdNormalizationRefused,
     PlanOperation,
     PlanPatch,
     SettingEqualsPredicate,
+    build_deleted_plan_collection,
+    build_plan_id_normalization,
     build_patched_plan_collection,
     validate_plan_transport_fields,
 )
@@ -87,6 +93,30 @@ def truth(**kwargs):
     return FeederTruth.from_dict(core_payload(**kwargs))
 
 
+def truth_with_plan_ids(*plan_ids):
+    current = truth()
+    template = replace(
+        current.plans.semantic_records[0],
+        opaque_hex="00" * 10,
+    )
+    plans = tuple(
+        replace(
+            template,
+            id=plan_id,
+            hour_utc=(10 + index) % 24,
+            time_utc=f"{(10 + index) % 24:02d}:00",
+            time_local_candidate=f"{(6 + index) % 24:02d}:00",
+            portions=3 + index,
+            sync_time=template.sync_time + index,
+        )
+        for index, plan_id in enumerate(plan_ids)
+    )
+    return replace(
+        current,
+        plans=replace(current.plans, count=len(plans), semantic_records=plans),
+    )
+
+
 def ready_coordinator(agent=None):
     ad = FakeAD()
     agent = agent or FakeAgent([truth()])
@@ -103,6 +133,272 @@ def ready_coordinator(agent=None):
     coordinator.on_feeder_connected()
     assert coordinator.state == FeederState.READY
     return coordinator, ad, agent, logger, mirrored, availability
+
+
+def test_plan_id_normalization_maps_opaque_ids_in_record_order_to_free_slots():
+    current = truth_with_plan_ids(1_648_218, 3, 9_900_001)
+    baseline = current.plans.semantic_records
+
+    result = build_plan_id_normalization(baseline)
+
+    assert result.mapping == (
+        PlanIdMapping(record_index=0, source_id=1_648_218, target_id=1),
+        PlanIdMapping(record_index=2, source_id=9_900_001, target_id=2),
+    )
+    assert tuple(plan.id for plan in result.normalized) == (1, 3, 2)
+    assert result.normalized[1] is baseline[1]
+    for mapping in result.mapping:
+        before = baseline[mapping.record_index]
+        after = result.normalized[mapping.record_index]
+        assert replace(before, id=after.id, sync_time=after.sync_time) == after
+        assert after.sync_time > before.sync_time
+
+
+def test_plan_id_normalization_is_noop_for_already_canonical_collection():
+    # No rewrite means an otherwise unrepresentable opaque tail is never touched.
+    plans = truth().plans.semantic_records
+
+    result = build_plan_id_normalization(plans)
+
+    assert result.mapping == ()
+    assert result.normalized is plans
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda plan: replace(plan, opaque_hex="01" + "00" * 9), "opaque tail"),
+        (lambda plan: replace(plan, one_shot_raw=2), "one_shot_raw"),
+        (
+            lambda plan: replace(
+                plan, days_raw=tuple(reversed(plan.days_raw))
+            ),
+            "weekday ordering",
+        ),
+        (lambda plan: replace(plan, time_utc="09:59"), "UTC time"),
+        (
+            lambda plan: replace(plan, execution_state=1),
+            "non-idle execution_state",
+        ),
+        (
+            lambda plan: replace(plan, sync_time=0xFFFFFFFFFFFFFFFF),
+            "sync_time cannot be advanced",
+        ),
+    ],
+)
+def test_plan_id_normalization_refuses_collections_that_cannot_round_trip(
+    mutate, message
+):
+    current = truth_with_plan_ids(1_648_218)
+    plans = (mutate(current.plans.semantic_records[0]),)
+
+    with pytest.raises(PlanIdNormalizationRefused, match=message) as error:
+        build_plan_id_normalization(plans)
+
+    assert error.value.mapping == (
+        PlanIdMapping(record_index=0, source_id=1_648_218, target_id=1),
+    )
+
+
+def test_plan_id_normalization_refuses_more_than_nine_records():
+    plans = truth_with_plan_ids(*range(100, 110)).plans.semantic_records
+
+    with pytest.raises(PlanIdNormalizationRefused, match="more than nine"):
+        build_plan_id_normalization(plans)
+
+
+def test_plan_id_normalization_verification_allows_only_runtime_readback_changes():
+    current = truth_with_plan_ids(1_648_218)
+    normalization = build_plan_id_normalization(current.plans.semantic_records)
+    predicate = PlanIdNormalizationPredicate(normalization)
+    expected = normalization.normalized[0]
+    runtime_changed = replace(
+        expected,
+        execution_state=7,
+        sync_time=expected.sync_time + 100,
+        time_local_candidate="05:00",
+    )
+    matching = replace(
+        current,
+        plans=replace(
+            current.plans,
+            count=1,
+            semantic_records=(runtime_changed,),
+        ),
+    )
+
+    assert predicate.matches(matching)
+    assert not predicate.matches(
+        replace(
+            matching,
+            plans=replace(
+                matching.plans,
+                semantic_records=(replace(runtime_changed, portions=99),),
+            ),
+        )
+    )
+
+
+def test_reconciliation_normalizes_ids_through_serialized_verified_write():
+    initial = truth_with_plan_ids(1_648_218)
+    agent = FakeAgent([initial])
+    ad = FakeAD()
+    logger = FakeLogger()
+    mirrored = []
+    availability = []
+    sent = []
+
+    coordinator = FeederStateCoordinator(
+        ad,
+        agent,
+        logger,
+        mirrored.append,
+        availability.append,
+        plan_collection_publisher=lambda plans: (
+            sent.append(plans)
+            or CommandReceipt("FEEDING_PLAN_SERVICE", "normalize-message")
+        ),
+    )
+    coordinator.on_feeder_connected()
+
+    assert coordinator.state == FeederState.PENDING_WRITE
+    assert coordinator.pending_write.request.control == "food.plan_id_normalization"
+    assert coordinator.pending_write.request.target == (
+        PlanIdMapping(record_index=0, source_id=1_648_218, target_id=1),
+    )
+    assert tuple(plan.id for plan in sent[0]) == (1,)
+    mapping_log = next(
+        fields["mapping"]
+        for _level, message, fields in logger.records
+        if message == "automatic feeding-plan ID normalization pending"
+    )
+    assert mapping_log == [
+        {"record_index": 0, "source_id": 1_648_218, "target_id": 1}
+    ]
+
+    verified = replace(
+        initial,
+        revisions=replace(initial.revisions, core_rev="fnv64:normalized"),
+        plans=replace(initial.plans, semantic_records=sent[0]),
+    )
+    agent.cores.append(verified)
+    coordinator.on_mqtt_ack(
+        MqttAck("FEEDING_PLAN_SERVICE", "normalize-message", True)
+    )
+    ad.run_next_timer()
+
+    assert coordinator.state == FeederState.READY
+    assert coordinator.latest_truth().plans.by_id(1) is not None
+    assert mirrored[-1].plans.by_id(1) is not None
+    assert availability[-1] is True
+
+
+def test_failed_plan_id_normalization_does_not_retry_indefinitely():
+    initial = truth_with_plan_ids(1_648_218)
+    unchanged = replace(
+        initial,
+        revisions=replace(initial.revisions, core_rev="fnv64:unchanged"),
+    )
+    agent = FakeAgent([initial, unchanged, unchanged, unchanged, unchanged])
+    ad = FakeAD()
+    sent = []
+    coordinator = FeederStateCoordinator(
+        ad,
+        agent,
+        FakeLogger(),
+        lambda _truth: None,
+        lambda _available: None,
+        plan_collection_publisher=lambda plans: (
+            sent.append(plans)
+            or CommandReceipt("FEEDING_PLAN_SERVICE", "normalize-message")
+        ),
+    )
+    coordinator.on_feeder_connected()
+    coordinator.on_mqtt_ack(
+        MqttAck("FEEDING_PLAN_SERVICE", "normalize-message", True)
+    )
+
+    for _ in range(4):
+        ad.run_next_timer()
+
+    assert coordinator.state == FeederState.READY
+    assert coordinator.pending_write is None
+    assert len(sent) == 1
+    assert coordinator.latest_truth().plans.by_id(1_648_218) is not None
+
+
+def test_reconciliation_refuses_unsafe_plan_normalization_without_writing():
+    initial = truth()
+    unsafe = replace(
+        initial,
+        plans=replace(
+            initial.plans,
+            semantic_records=(
+                replace(initial.plans.semantic_records[0], id=1_648_218),
+            ),
+        ),
+    )
+    sent = []
+    logger = FakeLogger()
+    coordinator = FeederStateCoordinator(
+        FakeAD(),
+        FakeAgent([unsafe]),
+        logger,
+        lambda _truth: None,
+        lambda _available: None,
+        plan_collection_publisher=lambda plans: sent.append(plans),
+    )
+
+    coordinator.on_feeder_connected()
+
+    assert coordinator.state == FeederState.READY
+    assert coordinator.latest_truth().plans.by_id(1_648_218) is not None
+    assert sent == []
+    refusal = next(
+        fields
+        for _level, message, fields in logger.records
+        if message == "automatic feeding-plan ID normalization refused"
+    )
+    assert "opaque tail" in refusal["reason"]
+    assert refusal["mapping"] == [
+        {"record_index": 0, "source_id": 1_648_218, "target_id": 1}
+    ]
+
+
+def test_fresh_plan_snapshot_triggers_future_oem_id_normalization_after_callback():
+    initial = truth()
+    future_oem_truth = truth_with_plan_ids(8_765_432)
+    future_oem_truth = replace(
+        future_oem_truth,
+        revisions=replace(
+            future_oem_truth.revisions,
+            core_rev="fnv64:future-oem-plan",
+        ),
+    )
+    agent = FakeAgent([initial, future_oem_truth])
+    events = []
+    coordinator = FeederStateCoordinator(
+        FakeAD(),
+        agent,
+        FakeLogger(),
+        lambda _truth: None,
+        lambda _available: None,
+        plan_collection_publisher=lambda plans: (
+            events.append(("normalization", plans))
+            or CommandReceipt("FEEDING_PLAN_SERVICE", "normalization-message")
+        ),
+    )
+    coordinator.on_feeder_connected()
+
+    coordinator.request_plan_snapshot(
+        lambda plans: events.append(("snapshot", plans))
+    )
+
+    assert events[0][0] == "snapshot"
+    assert events[0][1][0].id == 8_765_432
+    assert events[1][0] == "normalization"
+    assert events[1][1][0].id == 1
+    assert coordinator.state == FeederState.PENDING_WRITE
 
 
 def test_startup_reconciles_before_ready_and_mirrors_feeder_truth():
@@ -305,6 +601,111 @@ def test_plan_predicate_rejects_collateral_mutation_and_missing_plan():
         plans=replace(current.plans, count=1, semantic_records=(expected[0],)),
     )
     assert not predicate.matches(missing)
+
+
+def test_plan_delete_predicate_requires_only_target_to_disappear():
+    current = truth()
+    first = current.plans.semantic_records[0]
+    second = replace(
+        first,
+        id=2,
+        hour_utc=19,
+        time_utc="19:00",
+        time_local_candidate="15:00",
+        portions=8,
+    )
+    baseline = (first, second)
+    expected = build_deleted_plan_collection(baseline, 2)
+    predicate = PlanCollectionPredicate(
+        baseline=baseline,
+        expected=expected,
+        target_plan_id=2,
+        operation=PlanOperation.DELETE,
+    )
+
+    matching = replace(
+        current,
+        plans=replace(current.plans, count=1, semantic_records=expected),
+    )
+    assert predicate.matches(matching)
+
+    target_remains = replace(
+        current,
+        plans=replace(current.plans, count=2, semantic_records=baseline),
+    )
+    assert not predicate.matches(target_remains)
+
+    collateral = replace(
+        current,
+        plans=replace(
+            current.plans,
+            count=1,
+            semantic_records=(replace(first, portions=9),),
+        ),
+    )
+    assert not predicate.matches(collateral)
+
+
+def test_plan_delete_runs_through_preflight_ack_and_verified_readback():
+    initial = truth()
+    first = initial.plans.semantic_records[0]
+    second = replace(
+        first,
+        id=2,
+        hour_utc=19,
+        time_utc="19:00",
+        time_local_candidate="15:00",
+        portions=8,
+    )
+    initial = replace(
+        initial,
+        plans=replace(initial.plans, count=2, semantic_records=(first, second)),
+    )
+    preflight = replace(
+        initial,
+        revisions=replace(initial.revisions, core_rev="fnv64:delete-preflight"),
+    )
+    verified = replace(
+        preflight,
+        revisions=replace(preflight.revisions, core_rev="fnv64:delete-verified"),
+        plans=replace(preflight.plans, count=1, semantic_records=(first,)),
+    )
+    coordinator, ad, agent, _logger, _mirrored, _availability = ready_coordinator(
+        FakeAgent([initial, preflight, verified])
+    )
+    sent = []
+    request = PersistentWriteRequest(
+        control="food.plan_2",
+        target=2,
+        publisher=lambda current_truth: (
+            sent.append(current_truth.plans.semantic_records)
+            or CommandReceipt("FEEDING_PLAN_SERVICE", "delete-message")
+        ),
+        predicate=None,
+        requires_fresh_preflight=True,
+        plan_delete_id=2,
+    )
+
+    assert coordinator.request_persistent_write(request)
+    assert agent.core_calls == 2
+    assert sent == [(first,)]
+
+    coordinator.on_mqtt_ack(
+        MqttAck("FEEDING_PLAN_SERVICE", "delete-message", True)
+    )
+    ad.run_next_timer()
+
+    assert coordinator.state == FeederState.READY
+    assert coordinator.latest_revisions().core_rev == "fnv64:delete-verified"
+
+
+def test_plan_delete_can_remove_last_plan_and_rejects_missing_target():
+    current = truth()
+    only_plan = current.plans.semantic_records[0]
+
+    assert build_deleted_plan_collection((only_plan,), only_plan.id) == ()
+    with pytest.raises(ValueError, match="does not exist"):
+        build_deleted_plan_collection((only_plan,), 2)
 
 
 def test_plan_predicate_allows_first_plan_creation():

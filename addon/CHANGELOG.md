@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.10
+
+- Normalize stock-app feeding-plan IDs into canonical Home Assistant slots 1-9
+  during fresh reconciliation while preserving all other plan fields. Rewrites
+  use the normal serialized MQTT acknowledgement and fresh State Agent readback
+  path so existing schedules are not mutated collaterally.
+- Fail closed when feeding-plan normalization cannot prove a lossless
+  round-trip, including nonzero opaque tails and unsupported raw values, and
+  avoid indefinite retry loops after failed normalization attempts.
+- Add feeding-plan deletion by clearing a Home Assistant schedule text field.
+  An exactly empty value removes only the matching plan from fresh feeder-owned
+  state and writes the complete remaining collection through the same
+  acknowledged and State Agent-verified transaction used for schedule creation
+  and updates. Malformed JSON, whitespace, `null`, and other non-empty values
+  remain invalid commands.
+- Add separate stable (`main`) and development (`develop`) add-on release
+  channels with fail-closed SemVer validation and immutable versioned images.
+  Development builds never update `latest`; stable releases publish both the
+  exact version and `latest`.
+
 ## 0.3.9
 
 - Prevent a failed State Agent plan read from clearing feeder schedules. The

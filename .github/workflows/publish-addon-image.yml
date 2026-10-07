@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - main
+      - develop
     paths:
       - .github/workflows/publish-addon-image.yml
       - addon/**
+      - scripts/addon_release.py
       - state-agent/release-public-key.hex
   workflow_dispatch:
 
@@ -20,13 +22,14 @@ concurrency:
 jobs:
   prepare:
     name: Prepare image build
-    if: github.repository == 'tannerln7/ha-addon-petlibro-local'
+    if: github.repository == 'tannerln7/Petlibro-Home-Assistant'
     runs-on: ubuntu-latest
     outputs:
       architectures: ${{ steps.info.outputs.architectures }}
       build_matrix: ${{ steps.matrix.outputs.matrix }}
       description: ${{ steps.normalize.outputs.description }}
       image_name: ${{ steps.normalize.outputs.image_name }}
+      image_tags: ${{ steps.release.outputs.image_tags }}
       name: ${{ steps.normalize.outputs.name }}
       registry_prefix: ${{ steps.normalize.outputs.registry_prefix }}
       url: ${{ steps.normalize.outputs.url }}
@@ -81,6 +84,28 @@ jobs:
 
           echo "Normalized image: ${registry_prefix}/<arch>-${image_name}:${version}"
 
+      - name: Validate release channel
+        id: release
+        env:
+          RELEASE_BRANCH: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ steps.normalize.outputs.version }}
+        run: |
+          python3 scripts/addon_release.py \
+            --branch "$RELEASE_BRANCH" \
+            --version "$RELEASE_VERSION" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Reject an existing immutable version tag
+        env:
+          IMAGE: ${{ steps.normalize.outputs.registry_prefix }}/${{ steps.normalize.outputs.image_name }}
+          VERSION: ${{ steps.normalize.outputs.version }}
+        run: |
+          set -euo pipefail
+          if docker buildx imagetools inspect "${IMAGE}:${VERSION}" >/dev/null 2>&1; then
+            echo "::error::Image tag ${IMAGE}:${VERSION} already exists; increment addon/config.yaml instead of overwriting a release"
+            exit 1
+          fi
+
       - name: Prepare build matrix
         id: matrix
         uses: home-assistant/builder/actions/prepare-multi-arch-matrix@4de35182ce1e329181bffcbcc84d33db5e2c7e10 # 2026.06.0
@@ -114,9 +139,7 @@ jobs:
           context: .
           file: ./addon/Dockerfile
           image: ${{ matrix.image }}
-          image-tags: |
-            ${{ needs.prepare.outputs.version }}
-            latest
+          image-tags: ${{ needs.prepare.outputs.image_tags }}
           labels: |
             io.hass.type=app
             io.hass.name=${{ needs.prepare.outputs.name }}
@@ -141,7 +164,5 @@ jobs:
           architectures: ${{ needs.prepare.outputs.architectures }}
           container-registry-password: ${{ secrets.GITHUB_TOKEN }}
           image-name: ${{ needs.prepare.outputs.image_name }}
-          image-tags: |
-            ${{ needs.prepare.outputs.version }}
-            latest
+          image-tags: ${{ needs.prepare.outputs.image_tags }}
           registry-prefix: ${{ needs.prepare.outputs.registry_prefix }}

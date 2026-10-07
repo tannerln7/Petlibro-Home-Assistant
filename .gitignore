@@ -60,6 +60,7 @@ capture/
 /captures/
 /research/
 /reverse-engineering/
+/camera-testing/
 *.pcap.zst
 *.pcapng.zst
 *.gpr

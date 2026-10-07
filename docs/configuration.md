@@ -103,7 +103,7 @@ has these fields:
 ```yaml
 state_agent_updates:
   enabled: true
-  manifest_url: https://raw.githubusercontent.com/tannerln7/ha-addon-petlibro-local/state-agent-releases/state-agent/latest.json
+  manifest_url: https://raw.githubusercontent.com/tannerln7/Petlibro-Home-Assistant/state-agent-releases/state-agent/latest.json
   check_on_connect: true
   check_interval_hours: 24
 ```
@@ -140,13 +140,35 @@ falling back to retained MQTT, Home Assistant, or AppDaemon storage.
 
 ### Feeding-plan edits
 
-Plan IDs range from 1 through 9. Before every command the controller performs
-a fresh `/v1/core` preflight and builds one full-collection MQTT payload from
-that response. If the requested ID exists, it mutates only that record's UTC
-hour, minute, weekday set, portions, derived one-shot flag, and update
-timestamp. If the ID is absent, it appends a new record with safe feeder-field
-defaults: Meal Call disabled, zero audio repetitions, zero skip end time, no
-opaque tail, and idle execution state. Plan deletion is not exposed.
+Home Assistant exposes plan IDs 1 through 9. Stock Petlibro software may create
+the same records with large opaque IDs. During reconciliation, the controller
+reserves every existing ID already in the 1-9 range, then maps noncanonical
+records in feeder record order to the lowest free IDs. The proposed mapping is
+logged explicitly and is executed through the same serialized MQTT
+acknowledgement and State Agent readback path as a user-originated persistent
+write. A successful readback must contain the mapped IDs and preserve every
+known persistent field.
+
+Automatic normalization is deliberately fail-closed. It is refused for more
+than nine or duplicate records, unsupported raw flag values, inconsistent
+derived fields, a non-idle runtime execution state, noncanonical weekday
+ordering, or any nonzero ten-byte opaque tail. The MQTT plan schema cannot
+carry that tail or execution state, so rewriting such a record cannot be
+demonstrated safe. Refusal leaves feeder truth unchanged and is reported in the
+add-on log with the proposed mapping and reason. Runtime `execution_state`,
+derived local time, and the firmware update marker `sync_time` may differ on
+readback if feeder activity begins after the command; normalization regenerates
+`sync_time` only for records whose IDs change.
+
+Before every Home Assistant plan command the controller performs a fresh
+`/v1/core` preflight and builds one full-collection MQTT payload from that
+response. If the requested ID exists, it mutates only that record's UTC hour,
+minute, weekday set, portions, derived one-shot flag, and update timestamp. If
+the ID is absent, it appends a new record with safe feeder-field defaults: Meal
+Call disabled, zero audio repetitions, zero skip end time, no opaque tail, and
+idle execution state. Clearing a schedule field to an exactly empty value
+deletes that ID from the fresh collection; whitespace, `null`, and malformed
+JSON are rejected rather than interpreted destructively.
 
 For existing records, `enable_audio_raw` passes through as the existing
 `enableAudio` field and must be 0 or 1; `audio_times` and the 64-bit
@@ -157,9 +179,10 @@ readback; the current MQTT schema has no field that exposes it. Runtime
 schedule equality.
 
 After the acknowledgement, verification requires exactly the expected plan
-count and IDs, the requested target update or creation, and byte-semantic
-equivalence of every pre-existing non-target record. An update also requires
-unchanged target opaque fields. `GET_FEEDING_PLAN_EVENT` performs a fresh core
+count and IDs and the requested target update, creation, or deletion. Every
+pre-existing non-target record must remain byte-semantically equivalent. An
+update also requires unchanged target opaque fields. `GET_FEEDING_PLAN_EVENT`
+performs a fresh core
 read. If that read fails, the controller sends no application response rather
 than fabricating a schedule. AF203 firmware ignores the response `code` when a
 `plans` member is present, so even an error response containing `plans: []`

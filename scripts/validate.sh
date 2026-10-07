@@ -12,7 +12,7 @@ export NO_PROXY="127.0.0.1,localhost${NO_PROXY:+,${NO_PROXY}}"
 export no_proxy="127.0.0.1,localhost${no_proxy:+,${no_proxy}}"
 
 mapfile -t python_sources < <(
-    find addon installer state-agent/tests \
+    find addon installer scripts state-agent/tests \
         -type f -name '*.py' \
         -not -path '*/__pycache__/*' \
         -print | sort
