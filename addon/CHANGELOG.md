@@ -1,16 +1,13 @@
 # Changelog
 
-## 0.3.11-beta.2
-
-- Enable go2rtc API CORS responses so Home Assistant frontends on a different
-  HTTPS origin can consume the feeder stream through WebRTC.
-
-## 0.3.11-beta.1
+## 0.3.11
 
 - Replace the experimental Petlibro ACK-mode matrix with firmware-backed
   AV ACK/NACK windows, independent reliable-control acknowledgement, timing
   probe feedback, and wrap-safe receive tracking. Stop interpreting FRAMEINFO
   `onlineNum` or media family markers as HD/SD selectors.
+- Enable go2rtc API CORS responses so Home Assistant frontends on a different
+  HTTPS origin can consume the feeder stream through WebRTC.
 
 ## 0.3.10
 
