@@ -56,7 +56,7 @@ Preserve these boundaries when modifying the implementation:
   before assembly or drop decisions.
 - Received positions above an ACK hole are stored as consecutive ranges rather
   than one map entry per packet. The range count is capped; `overflow` in the
-  five-second ACK stats reports positions omitted after that cap. The type-0x09
+  TRACE transport diagnostics report positions omitted after that cap. The type-0x09
   upper endpoint is also bounded by NACK-list capacity, so an unrepresentable
   hole is never silently acknowledged.
 - The receive loop decrypts each D2C datagram once. Plaintext capture records
@@ -162,7 +162,8 @@ of build artifacts.
 
 1. Reproduce the behavior from a fixed config and record all Petlibro query
    parameters.
-2. Enable `verbose=1` before enabling high-volume trace flags.
+2. Enable `verbose=1` for component diagnostics. Enable high-volume protocol
+   flags separately and only for a bounded reproduction.
 3. Capture D2C and C2D plaintext only when packet-level evidence is needed.
 4. Run a bounded viewer test and save both go2rtc and viewer timestamps.
 5. Replay the same D2C dump after each parser/assembler change.
@@ -170,7 +171,8 @@ of build artifacts.
    visual playback.
 7. Remove or securely retain dumps outside the repository.
 
-For HD tests, record both the first SPS and any later camera SPS-epoch line.
+For HD tests, record both the selected startup SPS and any later codec-change
+line. Repeated identical SPS units are intentionally TRACE-only.
 The adapter waits up to 15 seconds when an HD request begins below 1920x1080;
 the camera can transition later, so the first advertised resolution alone does
 not prove that stream control failed. This bound preserves the former packaged
@@ -192,7 +194,9 @@ When adding a Petlibro URL parameter:
    transport diagnostic (`Dial()`); do not expose protocol hypotheses.
 2. Keep the default compatible unless the change is intentionally behavioral.
 3. Add a focused parsing or behavior test.
-4. Log the effective value under `verbose=1` when it affects protocol behavior.
+4. Log the effective value at the appropriate component level when it affects
+   protocol behavior; never include credentials, camera identifiers, or raw
+   payloads.
 5. Document user-facing options in `go2rtc.example.yaml` and stable behavior in
    the module reference.
 6. Put experimental diagnostics in the debugging guide instead of expanding

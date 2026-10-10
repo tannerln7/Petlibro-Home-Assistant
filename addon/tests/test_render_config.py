@@ -407,7 +407,7 @@ class RenderConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "log_level"):
             render_config.validate(options)
 
-    def test_debug_is_bounded_and_trace_enables_targeted_protocol_traces(self):
+    def test_trace_is_bounded_and_protocol_tracing_is_explicit(self):
         with tempfile.TemporaryDirectory() as temporary:
             data_dir = Path(temporary)
             options = self.options(devices=[self.manual_device()])
@@ -420,6 +420,14 @@ class RenderConfigTests(unittest.TestCase):
             self.assertFalse((data_dir / ".verbose_logs").exists())
 
             options["log_level"] = "trace"
+            self.render_all(options, data_dir)
+            go2rtc = (data_dir / "go2rtc.yaml").read_text(encoding="utf-8")
+            self.assertNotIn("trace_packets=1", go2rtc)
+            self.assertNotIn("trace_ack=1", go2rtc)
+            self.assertIn('streams: "debug"', go2rtc)
+            self.assertIn('webrtc: "debug"', go2rtc)
+
+            options["camera_protocol_tracing"] = True
             self.render_all(options, data_dir)
             go2rtc = (data_dir / "go2rtc.yaml").read_text(encoding="utf-8")
             self.assertIn("trace_packets=1", go2rtc)

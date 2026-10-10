@@ -35,7 +35,7 @@ Core options:
 | `quality` | no | `hd` | Requests and selects `hd` or `sd` video |
 | `audio` | no | `false` | Requests AAC audio when `true` or `1` |
 | `strict` | no | `false` | Drops damaged IDRs and dependent GOP frames instead of emitting a gapped IDR |
-| `verbose` | no | `false` | Enables compact bootstrap, probe, health, and ACK diagnostics |
+| `verbose` | no | `false` | Enables compact bootstrap, readiness, codec, and health diagnostics |
 
 The tracked [`go2rtc.example.yaml`](../../go2rtc.example.yaml) contains a
 recommended PLAF203 configuration. Trace and capture options are documented in the

@@ -1,5 +1,5 @@
 name: Petlibro Local backend
-version: "0.3.12-beta.1"
+version: "0.3.12-beta.2"
 slug: petlibro_local
 description: Local PLAF203 MQTT control and camera streaming backend
 url: https://github.com/tannerln7/Petlibro-Home-Assistant
@@ -60,6 +60,7 @@ options:
   camera_metadata_interval_seconds: 30
   log_level: info
   verbose_logs: false
+  camera_protocol_tracing: false
   enable_debug_dumps: false
 schema:
   mqtt_host: str
@@ -103,4 +104,5 @@ schema:
   camera_metadata_interval_seconds: int(5,300)
   log_level: list(critical|error|warning|info|debug|trace)
   verbose_logs: bool
+  camera_protocol_tracing: bool
   enable_debug_dumps: bool

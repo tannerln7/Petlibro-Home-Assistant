@@ -179,7 +179,8 @@ func inputWebRTC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Trace().Msgf("[webrtc] WHIP offer\n%s", offer)
+	log.Trace().Uint32("stream_id", stream.ID()).Int("sdp_bytes", len(offer)).
+		Msg("[webrtc] WHIP offer received")
 
 	pc, err := PeerConnection(false)
 	if err != nil {
@@ -207,7 +208,8 @@ func inputWebRTC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Trace().Msgf("[webrtc] WHIP answer\n%s", answer)
+	log.Trace().Uint32("stream_id", stream.ID()).Uint32("producer_id", prod.ID).
+		Int("sdp_bytes", len(answer)).Msg("[webrtc] WHIP answer created")
 
 	id := strconv.FormatInt(time.Now().UnixNano(), 36)
 	sessions[id] = prod

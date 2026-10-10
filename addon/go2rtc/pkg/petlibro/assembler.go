@@ -78,6 +78,7 @@ func (c *Client) debugFrameEvent(reason string, e *pendingFrag, asm *channelAsm,
 		return
 	}
 	event := log.Trace().
+		Str("physical_session_id", c.sessionID).
 		Str("reason", reason).
 		Str("quality", c.quality).
 		Bool("strict", c.strict).
@@ -106,6 +107,7 @@ func (c *Client) debugFlushPendingIDR(reason string, asm *channelAsm) {
 		fragIdx = asm.expectFragIdx - 1
 	}
 	log.Trace().
+		Str("physical_session_id", c.sessionID).
 		Str("reason", reason).
 		Str("quality", c.quality).
 		Bool("strict", c.strict).
@@ -156,7 +158,7 @@ func (c *Client) debugAVFrameInfo(e *pendingFrag, p []byte, hasTrailer bool) {
 		return
 	}
 	log.Trace().
-		Hex("raw", t).
+		Str("physical_session_id", c.sessionID).
 		Uint16("codecID", codecID).
 		Uint8("frameFlag", frameFlag).
 		Uint8("camIndex", t[3]).
@@ -239,6 +241,7 @@ func (c *Client) logAVLoss(asm *channelAsm, channel byte, hasTrailer bool, trail
 		return
 	}
 	event := log.Trace().
+		Str("physical_session_id", c.sessionID).
 		Uint32("frameNum", asm.curFrameNum).
 		Uint8("channel", channel).
 		Str("quality", c.quality).
@@ -247,10 +250,8 @@ func (c *Client) logAVLoss(asm *channelAsm, channel byte, hasTrailer bool, trail
 		Str("missing", compressFragmentRanges(missing)).
 		Bool("isKeyframe", channel == innerChKey).
 		Bool("hasTrailer", hasTrailer).
-		Int("actualBytes", len(frameData))
-	if len(trailer) != 0 {
-		event = event.Hex("trailerBytes", trailer)
-	}
+		Int("actualBytes", len(frameData)).
+		Int("trailerBytes", len(trailer))
 	event.Msg("petlibro avloss")
 }
 
@@ -411,6 +412,7 @@ func (c *Client) traceExtendedMedia(m decodedMedia, accepted bool, reason string
 		return
 	}
 	log.Trace().
+		Str("physical_session_id", c.sessionID).
 		Str("type", fmt.Sprintf("0c%02x", m.b1)).
 		Bool("accepted", accepted).
 		Uint8("channel", m.channel).
@@ -617,7 +619,8 @@ func (c *Client) parseDatagram(pkt []byte) {
 		return // late dup
 	}
 	if c.verbose && c.tracePackets {
-		log.Trace().Uint8("innerType", inner[0]).Uint8("b1", media.b1).Uint8("channel", media.channel).
+		log.Trace().Str("physical_session_id", c.sessionID).
+			Uint8("innerType", inner[0]).Uint8("b1", media.b1).Uint8("channel", media.channel).
 			Bool("extended", media.extended).
 			Uint16("subWire", media.subWire).Uint64("subExt", subExt).Uint32("frameNum", media.frameNum).
 			Uint16("fragIdx", media.fragIdx).Uint16("totalFrags", media.totalFrags).
@@ -725,7 +728,8 @@ func (c *Client) forceDrain() {
 		c.emit(e)
 	}
 	for _, s := range summaries {
-		log.Trace().Uint8("channel", s.channel).Uint32("frameNum", s.frame).
+		log.Trace().Str("physical_session_id", c.sessionID).
+			Uint8("channel", s.channel).Uint32("frameNum", s.frame).
 			Uint16("totalFrags", s.total).Int("flushedEntries", s.count).
 			Uint16("firstFrag", s.first).Uint16("lastFrag", s.last).
 			Bool("hasTrailer", s.trailer).Bool("isKeyframe", s.channel == innerChKey).
@@ -1051,6 +1055,7 @@ func (c *Client) emitAU(au []byte, cameraFrameNum uint32, channel, onlineNum byt
 		c.stats.strictPDrop.Add(1)
 		if c.verbose && c.traceFrag {
 			log.Trace().
+				Str("physical_session_id", c.sessionID).
 				Str("reason", "strict_gop_poisoned_drop").
 				Str("quality", c.quality).
 				Bool("strict", c.strict).

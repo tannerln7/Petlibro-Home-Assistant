@@ -41,7 +41,8 @@ func (c *Client) debugIOCtrlResponse(inner []byte) {
 	body := xorBody(inner[36 : 36+paylen])
 	id := binary.LittleEndian.Uint32(body)
 	if id == ioctlGetStreamCtrlResp || id == ioctlSetStreamCtrlResp {
-		log.Debug().Uint32("ioctl", id).Hex("body", body).Msg("petlibro STREAMCTRL response")
+		log.Trace().Str("physical_session_id", c.sessionID).Uint32("ioctl", id).
+			Int("body_length", len(body)).Msg("petlibro STREAMCTRL response received")
 	}
 }
 
@@ -77,6 +78,8 @@ func (c *Client) sendBootstrapCommand(cm bootstrapCmd, ordinal uint16) error {
 	c.icounter++
 	if cm.startsMedia {
 		c.mediaStartSent.Store(true)
+		log.Debug().Str("physical_session_id", c.sessionID).
+			Msg("petlibro IPCAM_START datagram written")
 	}
 	return nil
 }
@@ -127,8 +130,8 @@ func (c *Client) bootstrap() error {
 	// streaming HD + SD with the SD IDR sometimes winning probe and
 	// breaking decoding.
 	stream := streamControlForQuality(c.quality)
-	log.Debug().Msgf("petlibro: bootstrap SETSTREAMCTRL quality=%q chan=0x1000 body=% x", c.quality, stream)
-	log.Debug().Msgf("petlibro: bootstrap IPCAM_START body=% x", ioctlBody12(ioctlStart))
+	log.Debug().Str("physical_session_id", c.sessionID).Str("quality", c.quality).
+		Msg("petlibro bootstrap stream quality selected")
 	cmds := c.bootstrapIOCtrls(stream)
 
 	var bootstrapAVMax uint16 = 0x3FFF
@@ -207,8 +210,10 @@ func (c *Client) bootstrap() error {
 	c.avBuffer = make(map[uint64]*pendingFrag)
 	c.initACKTracking(uint64(bootstrapAVMax))
 	if c.verbose {
-		log.Debug().Msgf("petlibro: bootstrap ready commands=%d AVMax=0x%04x avNext=0x%x reliableRecvACK=0x%04x",
-			len(cmds), bootstrapAVMax, c.avNextExt, c.reliableRecvACK)
+		log.Trace().Str("physical_session_id", c.sessionID).Int("commands", len(cmds)).
+			Uint16("av_max", bootstrapAVMax).Uint64("av_next", c.avNextExt).
+			Uint16("reliable_receive_ack", c.reliableRecvACK).
+			Msg("petlibro bootstrap transport state initialized")
 	}
 	return nil
 }

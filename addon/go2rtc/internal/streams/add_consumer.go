@@ -104,7 +104,11 @@ func (s *Stream) AddConsumer(cons core.Consumer) (err error) {
 
 	s.mu.Lock()
 	s.consumers = append(s.consumers, cons)
+	consumerCount := len(s.consumers)
 	s.mu.Unlock()
+	log.Debug().Uint32("stream_id", s.id).Uint32("consumer_id", connectionID(cons)).
+		Str("consumer_type", connectionType(cons)).Int("consumer_count", consumerCount).
+		Msg("[streams] consumer attached")
 
 	// there may be duplicates, but that's not a problem
 	for _, prod := range prodStarts {

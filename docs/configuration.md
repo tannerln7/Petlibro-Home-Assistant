@@ -39,6 +39,7 @@ users configure the same values in the ignored `docker/.env` file.
 | `camera_metadata_interval_seconds`     | `CAMERA_METADATA_INTERVAL_SECONDS`     | Retained state/availability heartbeat and staleness basis     |
 | `log_level`                            | `LOG_LEVEL`                            | Petlibro application logging threshold                        |
 | `verbose_logs`                         | `VERBOSE_LOGS`                         | Deprecated compatibility switch                               |
+| `camera_protocol_tracing`              | `CAMERA_PROTOCOL_TRACING`              | Explicit Petlibro ACK/fragment/packet metadata tracing        |
 | `enable_debug_dumps`                   | `ENABLE_DEBUG_DUMPS`                   | Decrypted protocol dump output                                |
 
 See [the add-on option guide](../addon/DOCS.md) for defaults and
@@ -299,14 +300,18 @@ does not log the UID or raw result.
 
 `log_level` accepts `critical`, `error`, `warning`, `info`, `debug`, and
 `trace`; the default is `info`. `debug` is intended for ongoing troubleshooting
-and excludes raw MQTT payloads and per-packet camera traces. `trace` enables
-those high-volume diagnostics and should normally be used only for a short
-reproduction. The legacy `verbose_logs=true` setting migrates the normal
+and includes correlated component lifecycle and compact camera health. `trace`
+adds implementation-level decisions, but does not automatically enable raw
+MQTT payloads, decrypted media, or the high-volume Petlibro protocol flags.
+Set `camera_protocol_tracing=true` only for a bounded reproduction that needs
+ACK, fragment, FRAMEINFO, and packet-metadata detail. The legacy
+`verbose_logs=true` setting migrates the normal
 `info` setting to `debug`; set it to `false` after choosing `log_level`.
 
 `enable_debug_dumps` does not follow `log_level`. It separately records
 decrypted C2D and D2C protocol data under `/data`; treat those files as
-sensitive.
+sensitive. Dump files bypass normal centralized log sanitation and may contain
+authentication/session material, device identifiers, and camera media.
 
 ## Camera metadata topics
 

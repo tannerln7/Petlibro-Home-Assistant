@@ -182,6 +182,24 @@ class CameraMetadataPublisherTests(unittest.TestCase):
         self.assertIn("[WARNING]", self.ad.logs[-1])
         self.assertEqual("WARNING", self.ad.log_levels[-1])
 
+    def test_stale_inactive_status_is_expected(self):
+        stale = self.current - datetime.timedelta(minutes=10)
+        stale_text = stale.isoformat().replace("+00:00", "Z")
+        for status in ("offline", "idle"):
+            with self.subTest(status=status):
+                self.status_file.write_text(
+                    json.dumps(runtime_status(stale_text, status=status)),
+                    encoding="utf-8",
+                )
+                self.publisher.poll()
+                state_messages = [
+                    json.loads(payload)
+                    for topic, payload, _kwargs in self.mqtt.published
+                    if topic.endswith("/state")
+                ]
+                self.assertEqual(status, state_messages[-1]["status"])
+        self.assertEqual([], self.ad.logs)
+
     def test_start_and_stop_manage_timer_and_offline_state(self):
         self.write_status()
         self.publisher.start()

@@ -6,6 +6,7 @@ package petlibro
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/aac"
 	"github.com/AlexxIT/go2rtc/pkg/core"
@@ -22,8 +23,13 @@ type Producer struct {
 }
 
 func NewProducer(rawURL string) (*Producer, error) {
-	camera, err := OpenCamera(rawURL)
+	producerID := core.NewID()
+	startedAt := time.Now()
+	log.Debug().Uint32("producer_id", producerID).Msg("petlibro producer construction started")
+	camera, err := openCamera(rawURL, producerID)
 	if err != nil {
+		log.Debug().Uint32("producer_id", producerID).Err(err).
+			Dur("elapsed", time.Since(startedAt)).Msg("petlibro producer construction failed")
 		return nil, err
 	}
 
@@ -50,20 +56,30 @@ func NewProducer(rawURL string) (*Producer, error) {
 		})
 	}
 
-	return &Producer{
+	producer := &Producer{
 		Connection: core.Connection{
-			ID: core.NewID(), FormatName: "petlibro",
+			ID: producerID, FormatName: "petlibro",
 			Protocol: camera.Protocol(), RemoteAddr: camera.RemoteAddr().String(),
 			Source: rawURL, Medias: medias, Transport: camera,
 		},
 		camera: camera,
-	}, nil
+	}
+	log.Debug().Uint32("producer_id", producerID).Str("camera_adapter_id", camera.id).
+		Str("physical_session_id", camera.transport.SessionID()).Int("media_count", len(medias)).
+		Dur("elapsed", time.Since(startedAt)).Msg("petlibro producer media description ready")
+	return producer, nil
 }
 
 func (p *Producer) Start() error {
+	log.Debug().Uint32("producer_id", p.ID).Str("camera_adapter_id", p.camera.id).
+		Str("physical_session_id", p.camera.transport.SessionID()).Msg("petlibro producer media forwarding started")
+	videoStarted, audioStarted := false, false
 	for {
 		unit, err := p.camera.Read()
 		if err != nil {
+			log.Debug().Uint32("producer_id", p.ID).Str("camera_adapter_id", p.camera.id).
+				Str("physical_session_id", p.camera.transport.SessionID()).Err(err).
+				Msg("petlibro producer media forwarding ended")
 			return err
 		}
 		if unit == nil {
@@ -109,6 +125,16 @@ func (p *Producer) Start() error {
 		for _, receiver := range p.Receivers {
 			if receiver.Codec.Name == name {
 				receiver.WriteRTP(packet)
+				p.camera.recordForwarded(unit.Codec)
+				if unit.Codec == MediaH264 && !videoStarted {
+					videoStarted = true
+					log.Debug().Uint32("producer_id", p.ID).Str("physical_session_id", p.camera.transport.SessionID()).
+						Bool("keyframe", unit.Keyframe).Msg("petlibro producer forwarded first video access unit")
+				} else if unit.Codec == MediaAAC && !audioStarted {
+					audioStarted = true
+					log.Debug().Uint32("producer_id", p.ID).Str("physical_session_id", p.camera.transport.SessionID()).
+						Msg("petlibro producer forwarded first audio access unit")
+				}
 				break
 			}
 		}

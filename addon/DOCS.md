@@ -200,22 +200,24 @@ for payload fields and offline behavior.
 
 ## Diagnostics
 
-| Option               | Default | Description                                                                    |
-| -------------------- | ------- | ------------------------------------------------------------------------------ |
-| `log_level`          | `info`  | `critical`, `error`, `warning`, `info`, `debug`, or `trace`                    |
-| `verbose_logs`       | `false` | Deprecated compatibility key; `true` migrates normal `info` logging to `debug` |
-| `enable_debug_dumps` | `false` | Writes decrypted C2D/D2C protocol dumps under `/data`                          |
+| Option                    | Default | Description                                                                    |
+| ------------------------- | ------- | ------------------------------------------------------------------------------ |
+| `log_level`               | `info`  | `critical`, `error`, `warning`, `info`, `debug`, or `trace`                    |
+| `verbose_logs`            | `false` | Deprecated compatibility key; `true` migrates normal `info` logging to `debug` |
+| `camera_protocol_tracing` | `false` | Adds high-volume Petlibro ACK, fragment, FRAMEINFO, and packet metadata         |
+| `enable_debug_dumps`      | `false` | Writes decrypted C2D/D2C protocol dumps under `/data`                          |
 
-`info` contains operational milestones. `debug` adds bounded resolver stats,
-registry changes, camera metadata transitions, and five-second go2rtc summaries
-without raw MQTT payloads. `trace` enables raw MQTT messages and the existing
-targeted packet, ACK, fragment, and frame-info traces and can be extremely
-noisy. AppDaemon itself remains at info level so its scheduler and state engine
-do not overwhelm application diagnostics.
+`info` contains quiet operational milestones. `debug` adds correlated camera,
+producer, consumer, resolver, registry, and compact health events. `trace` adds
+implementation decisions and MQTT metadata, but not raw payloads. Enable
+`camera_protocol_tracing` together with `trace` only for a bounded reproduction
+that needs detailed Petlibro protocol metadata. AppDaemon itself remains at info
+level so its scheduler and state engine do not overwhelm application diagnostics.
 
-Debug dumps are independent of logging and may contain device and session
-data. Disable the option and delete the files after collecting the evidence
-needed for diagnosis.
+Debug dumps are independent of logging and bypass normal log sanitation. They
+may contain authentication/session material, identifiers, and camera media.
+Disable the option and delete the files after collecting the evidence needed
+for diagnosis.
 
 ## Network exposure
 

@@ -122,11 +122,9 @@ func asyncHandler(tr *ws.Transport, msg *ws.Message) (err error) {
 	if name := query.Get("src"); name != "" {
 		stream, _ = streams.GetOrPatch(query)
 		mode = core.ModePassiveConsumer
-		log.Debug().Str("src", name).Msg("[webrtc] new consumer")
 	} else if name = query.Get("dst"); name != "" {
 		stream = streams.Get(name)
 		mode = core.ModePassiveProducer
-		log.Debug().Str("src", name).Msg("[webrtc] new producer")
 	}
 
 	if stream == nil {
@@ -171,9 +169,13 @@ func asyncHandler(tr *ws.Transport, msg *ws.Message) (err error) {
 	conn.Mode = mode
 	conn.Protocol = "ws"
 	conn.UserAgent = tr.Request.UserAgent()
+	log.Debug().Uint32("stream_id", stream.ID()).Uint32("webrtc_connection_id", conn.ID).
+		Str("mode", mode.String()).Msg("[webrtc] peer connection created")
 	conn.Listen(func(msg any) {
 		switch msg := msg.(type) {
 		case pion.PeerConnectionState:
+			log.Debug().Uint32("stream_id", stream.ID()).Uint32("webrtc_connection_id", conn.ID).
+				Str("state", msg.String()).Msg("[webrtc] peer connection state changed")
 			if msg != pion.PeerConnectionStateClosed {
 				return
 			}
@@ -191,12 +193,15 @@ func asyncHandler(tr *ws.Transport, msg *ws.Message) (err error) {
 			_ = sendAnswer.Wait()
 
 			s := msg.ToJSON().Candidate
-			log.Trace().Str("candidate", s).Msg("[webrtc] local ")
+			log.Trace().Uint32("stream_id", stream.ID()).Uint32("webrtc_connection_id", conn.ID).
+				Str("candidate_type", msg.Typ.String()).Str("protocol", msg.Protocol.String()).
+				Msg("[webrtc] local ICE candidate available")
 			tr.Write(&ws.Message{Type: "webrtc/candidate", Value: s})
 		}
 	})
 
-	log.Trace().Msgf("[webrtc] offer:\n%s", offer.SDP)
+	log.Trace().Uint32("stream_id", stream.ID()).Uint32("webrtc_connection_id", conn.ID).
+		Int("sdp_bytes", len(offer.SDP)).Msg("[webrtc] offer received")
 
 	// 1. SetOffer, so we can get remote client codecs
 	if err = conn.SetOffer(offer.SDP); err != nil {
@@ -212,13 +217,16 @@ func asyncHandler(tr *ws.Transport, msg *ws.Message) (err error) {
 			_ = conn.Close()
 			return err
 		}
+		log.Debug().Uint32("stream_id", stream.ID()).Uint32("consumer_id", conn.ID).
+			Msg("[webrtc] consumer attached to stream")
 	case core.ModePassiveProducer:
 		stream.AddProducer(conn)
 	}
 
 	// 3. Exchange SDP without waiting all candidates
 	answer, err := conn.GetAnswer()
-	log.Trace().Msgf("[webrtc] answer\n%s", answer)
+	log.Trace().Uint32("stream_id", stream.ID()).Uint32("webrtc_connection_id", conn.ID).
+		Int("sdp_bytes", len(answer)).Msg("[webrtc] answer created")
 
 	if err != nil {
 		log.Error().Err(err).Caller().Send()
@@ -251,9 +259,13 @@ func ExchangeSDP(stream *streams.Stream, offer, desc, userAgent string) (answer 
 	conn.FormatName = desc
 	conn.UserAgent = userAgent
 	conn.Protocol = "http"
+	log.Debug().Uint32("stream_id", stream.ID()).Uint32("webrtc_connection_id", conn.ID).
+		Msg("[webrtc] HTTP peer connection created")
 	conn.Listen(func(msg any) {
 		switch msg := msg.(type) {
 		case pion.PeerConnectionState:
+			log.Debug().Uint32("stream_id", stream.ID()).Uint32("webrtc_connection_id", conn.ID).
+				Str("state", msg.String()).Msg("[webrtc] peer connection state changed")
 			if msg != pion.PeerConnectionStateClosed {
 				return
 			}
@@ -266,7 +278,8 @@ func ExchangeSDP(stream *streams.Stream, offer, desc, userAgent string) (answer 
 	})
 
 	// 1. SetOffer, so we can get remote client codecs
-	log.Trace().Msgf("[webrtc] offer:\n%s", offer)
+	log.Trace().Uint32("stream_id", stream.ID()).Uint32("webrtc_connection_id", conn.ID).
+		Int("sdp_bytes", len(offer)).Msg("[webrtc] offer received")
 
 	if err = conn.SetOffer(offer); err != nil {
 		log.Warn().Err(err).Caller().Send()
@@ -282,6 +295,8 @@ func ExchangeSDP(stream *streams.Stream, offer, desc, userAgent string) (answer 
 			_ = conn.Close()
 			return
 		}
+		log.Debug().Uint32("stream_id", stream.ID()).Uint32("consumer_id", conn.ID).
+			Msg("[webrtc] consumer attached to stream")
 	} else {
 		conn.Mode = core.ModePassiveProducer
 
@@ -289,7 +304,8 @@ func ExchangeSDP(stream *streams.Stream, offer, desc, userAgent string) (answer 
 	}
 
 	answer, err = conn.GetCompleteAnswer(GetCandidates(), FilterCandidate)
-	log.Trace().Msgf("[webrtc] answer\n%s", answer)
+	log.Trace().Uint32("stream_id", stream.ID()).Uint32("webrtc_connection_id", conn.ID).
+		Int("sdp_bytes", len(answer)).Msg("[webrtc] answer created")
 
 	if err != nil {
 		log.Error().Err(err).Caller().Send()

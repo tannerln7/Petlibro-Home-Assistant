@@ -20,11 +20,10 @@
 package petlibro
 
 import (
-	"net/url"
-
 	"github.com/AlexxIT/go2rtc/internal/app"
 	"github.com/AlexxIT/go2rtc/internal/streams"
 	"github.com/AlexxIT/go2rtc/pkg/core"
+	"github.com/AlexxIT/go2rtc/pkg/creds"
 	"github.com/AlexxIT/go2rtc/pkg/petlibro"
 )
 
@@ -36,23 +35,8 @@ func Init() {
 	// internal/ being loaded.
 	petlibro.SetLogger(log)
 	streams.HandleFunc("petlibro", func(rawURL string) (core.Producer, error) {
-		log.Debug().Msgf("petlibro: dial %s", redactSourceURL(rawURL))
+		creds.RegisterEndpointSecrets(rawURL)
+		log.Debug().Str("source", rawURL).Msg("petlibro source dial requested")
 		return petlibro.NewProducer(rawURL)
 	})
-}
-
-func redactSourceURL(rawURL string) string {
-	parsed, err := url.Parse(rawURL)
-	if err != nil || parsed.Scheme != "petlibro" {
-		return "petlibro://<redacted-invalid-url>"
-	}
-	query, err := url.ParseQuery(parsed.RawQuery)
-	if err != nil {
-		return "petlibro://<redacted-invalid-url>"
-	}
-	if _, ok := query["uid"]; ok {
-		query.Set("uid", "REDACTED")
-	}
-	parsed.RawQuery = query.Encode()
-	return parsed.String()
 }

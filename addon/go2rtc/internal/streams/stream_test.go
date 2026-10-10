@@ -40,3 +40,15 @@ func TestTempate(t *testing.T) {
 	require.Equal(t, stream1, stream2)
 	require.Equal(t, "ffmpeg:rtsp://example.com#video=copy", stream1.producers[0].url)
 }
+
+func TestStreamCorrelationIDsAreStableAndDistinct(t *testing.T) {
+	first := NewStream("test:one")
+	second := NewStream("test:two")
+
+	require.NotZero(t, first.ID())
+	require.NotEqual(t, first.ID(), second.ID())
+	require.Len(t, first.producers, 1)
+	require.NotZero(t, first.producers[0].id)
+	require.Equal(t, first.ID(), first.producers[0].streamID)
+	require.NotEqual(t, first.producers[0].id, second.producers[0].id)
+}

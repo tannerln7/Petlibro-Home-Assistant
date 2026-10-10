@@ -97,6 +97,13 @@ type Packet struct {
 
 // Client is one LAN session against a Petlibro camera.
 type Client struct {
+	sessionID      string
+	adapterID      string
+	producerID     uint32
+	startupAttempt int
+	connectedAt    time.Time
+	established    atomic.Bool
+
 	conn  *net.UDPConn
 	cam   *net.UDPAddr
 	uid   string
@@ -167,6 +174,7 @@ type Client struct {
 	stats         counters
 	prevStats     countersSnapshot
 	havePrevStats bool
+	lastStatsAt   time.Time
 
 	// forceDrain stall tracking.  If avHighExt hasn't advanced for
 	// forceDrainStallTicks consecutive force-drain ticks and the
@@ -450,7 +458,7 @@ func (c *counters) snapshot() countersSnapshot {
 // positionally and goes through Nebula/relay if the port is 10001 —
 // neither applies here. Petlibro is LAN-only; dialTransport parses connection
 // and diagnostic options while camera.go supplies normalized media intent.
-func dialTransport(rawURL, quality string, audio bool) (*Client, error) {
+func dialTransport(rawURL, quality string, audio bool, correlation cameraCorrelation) (*Client, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("petlibro: bad url: %w", err)
@@ -546,6 +554,11 @@ func dialTransport(rawURL, quality string, audio bool) (*Client, error) {
 		}
 	}
 	c := &Client{
+		sessionID:      newSessionID(),
+		adapterID:      correlation.adapterID,
+		producerID:     correlation.producerID,
+		startupAttempt: correlation.startupAttempt,
+		connectedAt:    time.Now(),
 		conn:           udp,
 		cam:            cam,
 		uid:            uid,
@@ -564,21 +577,39 @@ func dialTransport(rawURL, quality string, audio bool) (*Client, error) {
 		d2cPlainDump:   d2cPlainDump,
 		c2dPlainDump:   c2dPlainDump,
 	}
+	log.Debug().Str("physical_session_id", c.sessionID).
+		Str("camera_adapter_id", c.adapterID).Uint32("producer_id", c.producerID).
+		Int("startup_attempt", c.startupAttempt).Str("quality", c.quality).
+		Bool("audio", c.audio).Msg("petlibro transport connection started")
 	if c.verbose {
-		log.Debug().Msgf("petlibro: debug config quality=%s strict=%t traces ack=%t frag=%t frameinfo=%t packets=%t",
-			c.quality, c.strict,
-			c.traceACK, c.traceFrag, c.traceFrameInfo, c.tracePackets)
+		log.Debug().Str("physical_session_id", c.sessionID).
+			Bool("strict", c.strict).Bool("trace_ack", c.traceACK).
+			Bool("trace_frag", c.traceFrag).Bool("trace_frameinfo", c.traceFrameInfo).
+			Bool("trace_packets", c.tracePackets).Msg("petlibro transport diagnostics configured")
 	}
+	log.Debug().Str("physical_session_id", c.sessionID).Msg("petlibro handshake started")
 	if err := c.handshake(); err != nil {
+		log.Debug().Str("physical_session_id", c.sessionID).Err(err).Msg("petlibro handshake failed")
 		clearDiscoveryCache(uid, q["subnet"])
 		_ = c.Close()
 		return nil, err
 	}
+	log.Debug().Str("physical_session_id", c.sessionID).
+		Dur("elapsed", time.Since(c.connectedAt)).Msg("petlibro handshake completed")
+	log.Debug().Str("physical_session_id", c.sessionID).Msg("petlibro AV bootstrap started")
 	if err := c.bootstrap(); err != nil {
+		log.Debug().Str("physical_session_id", c.sessionID).Err(err).Msg("petlibro AV bootstrap failed")
 		clearDiscoveryCache(uid, q["subnet"])
 		_ = c.Close()
 		return nil, err
 	}
+	c.established.Store(true)
+	log.Debug().Str("physical_session_id", c.sessionID).
+		Dur("elapsed", time.Since(c.connectedAt)).Msg("petlibro AV bootstrap completed")
+	log.Info().Str("physical_session_id", c.sessionID).
+		Str("camera_adapter_id", c.adapterID).Uint32("producer_id", c.producerID).
+		Str("quality", c.quality).Bool("audio", c.audio).
+		Msg("petlibro physical viewing session established")
 
 	go c.recvLoop()
 	go c.maintenanceLoop()
@@ -620,7 +651,11 @@ func (c *Client) send(p []byte) error {
 
 func (c *Client) dumpC2DInner(body []byte) {
 	if c.verbose && c.tracePackets {
-		log.Trace().Int("len", len(body)).Hex("plain", body).Msg("petlibro C2D inner")
+		event := log.Trace().Str("physical_session_id", c.sessionID).Int("plain_length", len(body))
+		if len(body) >= 2 {
+			event = event.Uint16("inner_type", binary.LittleEndian.Uint16(body))
+		}
+		event.Msg("petlibro C2D packet metadata")
 	}
 	if c.c2dPlainDump != nil {
 		record := make([]byte, 12+len(body))
@@ -680,18 +715,33 @@ func (c *Client) recvOne(timeout time.Duration) ([]byte, error) {
 // wyze's pattern.
 func (c *Client) Close() error {
 	c.closeOnce.Do(func() {
+		started := c.established.Load()
+		log.Debug().Str("physical_session_id", c.sessionID).
+			Bool("established", started).Msg("petlibro transport shutdown started")
 		if c.done != nil {
 			close(c.done)
 		}
+		stopAttempted := false
+		stopWritten := false
 		if c.mediaStartSent.Swap(false) {
+			stopAttempted = true
 			c.innerMu.Lock()
 			body := innerData(c.icounter, 0x7000, 0, ioctlBody12(ioctlStop))
 			c.icounter++
 			c.closeErr = c.sendInner(body)
 			c.innerMu.Unlock()
+			stopWritten = c.closeErr == nil
+			if c.closeErr != nil {
+				log.Warn().Str("physical_session_id", c.sessionID).Err(c.closeErr).
+					Msg("petlibro IPCAM_STOP datagram write failed")
+			} else {
+				log.Debug().Str("physical_session_id", c.sessionID).
+					Msg("petlibro IPCAM_STOP datagram written")
+			}
 		}
 		if c.conn != nil {
 			_ = c.conn.Close()
+			log.Trace().Str("physical_session_id", c.sessionID).Msg("petlibro UDP socket closed")
 		}
 		c.d2cDumpMu.Lock()
 		if c.d2cPlainDump != nil {
@@ -703,12 +753,22 @@ func (c *Client) Close() error {
 			_ = c.c2dPlainDump.Close()
 		}
 		c.c2dDumpMu.Unlock()
+		event := log.Debug()
+		if started {
+			event = log.Info()
+		}
+		event.Str("physical_session_id", c.sessionID).
+			Str("camera_adapter_id", c.adapterID).Uint32("producer_id", c.producerID).
+			Bool("stop_attempted", stopAttempted).Bool("stop_datagram_written", stopWritten).
+			Dur("uptime", time.Since(c.connectedAt)).
+			Msg("petlibro physical viewing session closed")
 	})
 	return c.closeErr
 }
 
 func (c *Client) RemoteAddr() net.Addr             { return c.cam }
 func (c *Client) Protocol() string                 { return "petlibro+udp" }
+func (c *Client) SessionID() string                { return c.sessionID }
 func (c *Client) packets() <-chan *Packet          { return c.frames }
 func (c *Client) doneSignal() <-chan struct{}      { return c.done }
 func (c *Client) healthSnapshot() countersSnapshot { return c.stats.snapshot() }

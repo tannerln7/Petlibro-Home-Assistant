@@ -29,7 +29,12 @@ func (c *Client) handleEncryptedDatagram(raw []byte) {
 	// read syscall instead of inside the read loop itself.
 	pkt := tutk.ReverseTransCodePartial(nil, raw)
 	if c.verbose && c.tracePackets {
-		log.Trace().Int("wireLen", len(raw)).Hex("plain", pkt).Msg("petlibro D2C packet")
+		event := log.Trace().Str("physical_session_id", c.sessionID).
+			Int("wire_length", len(raw)).Int("plain_length", len(pkt))
+		if len(pkt) >= 10 {
+			event = event.Uint16("message_type", binary.LittleEndian.Uint16(pkt[8:10]))
+		}
+		event.Msg("petlibro D2C packet metadata")
 	}
 	if c.d2cPlainDump != nil {
 		record := make([]byte, 4+len(pkt))
@@ -110,7 +115,8 @@ func (c *Client) markACKReceived(subExt uint64) {
 		c.ackSeenPending -= advanced
 		c.stats.ackAdvanced.Add(advanced)
 		if c.verbose && !c.traceACK && !c.ackGapStarted.IsZero() && time.Since(c.ackGapStarted) >= time.Second {
-			log.Debug().Uint64("advanced", advanced).Uint64("watermark", c.ackWatermarkExt).
+			log.Debug().Str("physical_session_id", c.sessionID).
+				Uint64("advanced", advanced).Uint64("watermark", c.ackWatermarkExt).
 				Uint64("pending", c.ackSeenPending).Int("ranges", len(c.ackSeenRanges)).
 				Dur("stalledFor", time.Since(c.ackGapStarted)).
 				Msg("petlibro ACK gap advanced")
@@ -125,7 +131,8 @@ func (c *Client) markACKReceived(subExt uint64) {
 			c.ackGapStarted = time.Now()
 		}
 		if c.verbose && !c.traceACK && c.ackSeenPending >= c.ackPendingWarn {
-			log.Warn().Uint64("watermark", c.ackWatermarkExt).Uint64("high", c.ackHighExt).
+			log.Warn().Str("physical_session_id", c.sessionID).
+				Uint64("watermark", c.ackWatermarkExt).Uint64("high", c.ackHighExt).
 				Uint64("pending", c.ackSeenPending).Int("ranges", len(c.ackSeenRanges)).
 				Msg("petlibro ACK receive gap stalled")
 			c.ackPendingWarn *= 2
@@ -394,6 +401,12 @@ func (c *Client) readerGoroutine(out chan<- []byte) {
 // the client is in verbose mode.  Numbers cover the most recent
 // interval; the cumulative counters are also visible.
 func (c *Client) dumpStats() {
+	now := time.Now()
+	interval := now.Sub(c.lastStatsAt)
+	if c.lastStatsAt.IsZero() || interval <= 0 {
+		interval = 5 * time.Second
+	}
+	c.lastStatsAt = now
 	cur := c.stats.snapshot()
 	delta := cur
 	if c.havePrevStats {
@@ -467,7 +480,7 @@ func (c *Client) dumpStats() {
 		}
 	}
 	if c.havePrevStats && cur.ackCurrentLow16 == c.prevStats.ackCurrentLow16 && cur.ackHigh > c.prevStats.ackHigh && !c.ackCurrStallWarned {
-		log.Warn().Uint64("watermark", cur.ackWatermark).
+		log.Warn().Str("physical_session_id", c.sessionID).Uint64("watermark", cur.ackWatermark).
 			Uint64("high", cur.ackHigh).Uint16("current", uint16(cur.ackCurrentLow16)).
 			Uint64("pending", cur.ackSeenPending).Msg("petlibro ACK current stalled while high advances")
 		c.ackCurrStallWarned = true
@@ -481,9 +494,11 @@ func (c *Client) dumpStats() {
 	if stalled && sameStallState {
 		c.stallStatsRepeat++
 		c.stallControlPkts += delta.otherFrags
-		log.Debug().Msgf("stats: stalled repeat=%d in=%d controlOnlyPackets=%d watermark=0x%x high=0x%x pending=%d nacks=%d reliable=0x%04x sent=%d highWire=0x%04x",
-			c.stallStatsRepeat, delta.pktsIn, c.stallControlPkts, cur.ackWatermark, cur.ackHigh, cur.ackSeenPending,
-			cur.ackNACKCount, uint16(cur.reliableRecvACK), delta.ackSent, uint16(cur.ackCurrentLow16))
+		log.Debug().Str("physical_session_id", c.sessionID).Dur("uptime", time.Since(c.connectedAt)).
+			Dur("interval", interval).Bool("media_stalled", true).Uint64("stall_intervals", c.stallStatsRepeat).
+			Uint64("packets_received", delta.pktsIn).Uint64("control_packets", c.stallControlPkts).
+			Uint64("ack_pending", cur.ackSeenPending).Uint64("ack_nacks", cur.ackNACKCount).
+			Msg("petlibro transport health")
 		c.prevStats = cur
 		return
 	}
@@ -494,7 +509,18 @@ func (c *Client) dumpStats() {
 	c.stallStatsHigh = cur.ackHigh
 	c.stallStatsCurrent = cur.ackCurrentLow16
 	c.stallStatsPending = cur.ackSeenPending
-	log.Debug().Msgf("stats: in=%d pkts (%d KiB) families: key=%d inter=%d audio=%d other=%d | video: %d frames in -> %d out (drop %d) | loss: frames=%d idr=%d p=%d missing=%d maxFrame=%d | frag skips: %d (%d frags lost) | forceDrain: %d | qDrops reader=%d emit=%d | reasons: fragIdxGap=%d frameNumJumpKey=%d frameNumJumpInter=%d expectedDataShortfall=%d zeroDataHardDrop=%d strictIDRDrop=%d strictPDrop=%d forceDrainFlush=%d forceDrainEntries=%d deferredDrop=%d | mediaHeaders: normal=%d extendedMedia parsed=%d rejected=%d data=%d end=%d rare=%d unknown0c08=%d unknown0c0d=%d candidates=%d seqAssembled=%d seqUnhandled=%d | frameinfo: codec=0x%04x flag=%d onlineNum=%d changes=%d unexpected=%d | transport: ackRx=%d probeRx=%d responseTx=%d feedbackRx=%d watermark=0x%x high=0x%x avNext=0x%x pending=%d ranges=%d nacks=%d overflow=%d advanced=%d duplicate=%d ackTx=%d base=0x%04x highWire=0x%04x reliable=0x%04x sendCount=0x%04x",
+	seconds := interval.Seconds()
+	log.Debug().Str("physical_session_id", c.sessionID).Dur("uptime", time.Since(c.connectedAt)).
+		Dur("interval", interval).Bool("media_stalled", stalled).
+		Float64("receive_kib_per_second", float64(delta.bytesIn)/1024/seconds).
+		Float64("packets_per_second", float64(delta.pktsIn)/seconds).
+		Float64("video_frames_per_second", float64(delta.vidFramesOut)/seconds).
+		Uint64("packets_received", delta.pktsIn).Uint64("video_frames_assembled", delta.vidFramesOut).
+		Uint64("video_frames_dropped", delta.vidDropped).Uint64("missing_fragments", delta.missingFragmentsTotal).
+		Uint64("reader_queue_drops", delta.readerDrops).Uint64("output_queue_drops", delta.emitDrops).
+		Uint64("ack_pending", cur.ackSeenPending).Uint64("ack_nacks", cur.ackNACKCount).
+		Msg("petlibro transport health")
+	log.Trace().Str("physical_session_id", c.sessionID).Msgf("petlibro transport diagnostics: in=%d pkts (%d KiB) families: key=%d inter=%d audio=%d other=%d | video: %d frames in -> %d out (drop %d) | loss: frames=%d idr=%d p=%d missing=%d maxFrame=%d | frag skips: %d (%d frags lost) | forceDrain: %d | qDrops reader=%d emit=%d | reasons: fragIdxGap=%d frameNumJumpKey=%d frameNumJumpInter=%d expectedDataShortfall=%d zeroDataHardDrop=%d strictIDRDrop=%d strictPDrop=%d forceDrainFlush=%d forceDrainEntries=%d deferredDrop=%d | mediaHeaders: normal=%d extendedMedia parsed=%d rejected=%d data=%d end=%d rare=%d unknown0c08=%d unknown0c0d=%d candidates=%d seqAssembled=%d seqUnhandled=%d | frameinfo: codec=0x%04x flag=%d onlineNum=%d changes=%d unexpected=%d | transport: ackRx=%d probeRx=%d responseTx=%d feedbackRx=%d watermark=0x%x high=0x%x avNext=0x%x pending=%d ranges=%d nacks=%d overflow=%d advanced=%d duplicate=%d ackTx=%d base=0x%04x highWire=0x%04x reliable=0x%04x sendCount=0x%04x",
 		delta.pktsIn, delta.bytesIn/1024,
 		delta.keyFrags, delta.interFrags, delta.audioFrags, delta.otherFrags,
 		delta.vidFramesIn, delta.vidFramesOut, delta.vidDropped,
@@ -548,6 +574,7 @@ func (c *Client) maintenanceLoop() {
 			body := a.marshal()
 			if c.verbose && c.traceACK {
 				log.Trace().
+					Str("physical_session_id", c.sessionID).
 					Uint16("ordinal", a.Ordinal).
 					Uint16("avBase", a.AVBase).
 					Uint16("avHigh", a.AVHigh).

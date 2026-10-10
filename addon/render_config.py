@@ -57,6 +57,7 @@ DEFAULTS = {
     "camera_metadata_interval_seconds": 30,
     "log_level": "info",
     "verbose_logs": False,
+    "camera_protocol_tracing": False,
     "enable_debug_dumps": False,
 }
 
@@ -74,6 +75,7 @@ BOOL_KEYS = {
     "persist_feeder_mqtt",
     "publish_camera_metadata",
     "verbose_logs",
+    "camera_protocol_tracing",
     "enable_debug_dumps",
 }
 INT_KEYS = {
@@ -539,7 +541,7 @@ def render_go2rtc(
             query["status_file"] = status_path
         if options["log_level"] in {"debug", "trace"}:
             query["verbose"] = "1"
-        if options["log_level"] == "trace":
+        if options["camera_protocol_tracing"]:
             query.update(
                 trace_packets="1", trace_ack="1", trace_frag="1", trace_frameinfo="1"
             )
@@ -552,6 +554,9 @@ def render_go2rtc(
     values = {
         "LOG_LEVEL": yaml_string("info"),
         "PETLIBRO_LOG_LEVEL": yaml_string(options["log_level"]),
+        "CAMERA_COMPONENT_LOG_LEVEL": yaml_string(
+            "debug" if options["log_level"] in {"debug", "trace"} else "info"
+        ),
         "API_LISTEN": yaml_string(f":{options['go2rtc_api_port']}"),
         "RTSP_LISTEN": yaml_string(f":{options['go2rtc_rtsp_port']}"),
         "WEBRTC_LISTEN": yaml_string(f":{options['go2rtc_webrtc_port']}"),

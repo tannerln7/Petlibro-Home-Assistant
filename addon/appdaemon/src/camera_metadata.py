@@ -153,6 +153,12 @@ class CameraMetadataPublisher:
             if now - source_update > datetime.timedelta(
                 seconds=3 * self.heartbeat_seconds
             ):
+                # Offline/idle files are terminal snapshots, not heartbeats from an
+                # active camera session. Their age is expected and must not turn an
+                # intentional stop into a stale-session warning.
+                if payload["status"] in {"offline", "idle"}:
+                    self._clear_source_problem()
+                    return payload
                 payload["status"] = "offline"
                 payload["last_update"] = _format_timestamp(now)
                 self._log_source_problem(

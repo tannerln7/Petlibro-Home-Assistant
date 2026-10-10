@@ -24,6 +24,7 @@ func (f *fakeCameraTransport) packets() <-chan *Packet          { return f.frame
 func (f *fakeCameraTransport) doneSignal() <-chan struct{}      { return f.done }
 func (f *fakeCameraTransport) RemoteAddr() net.Addr             { return &net.UDPAddr{} }
 func (f *fakeCameraTransport) Protocol() string                 { return "test" }
+func (f *fakeCameraTransport) SessionID() string                { return "ps-test" }
 func (f *fakeCameraTransport) healthSnapshot() countersSnapshot { return countersSnapshot{} }
 func (f *fakeCameraTransport) Close() error {
 	f.closes++

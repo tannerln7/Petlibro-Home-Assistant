@@ -31,11 +31,14 @@ func (c *Client) handshake() error {
 		}
 		if len(pkt) >= 0x1C+0x1A {
 			inner := pkt[0x1C:]
-			log.Debug().Msgf("hs %s: mt=0x%04x flags=0x%02x len=%d inner[0]=%02x inner[1]=%02x inner[24]=%02x",
-				label, mt, flag, len(pkt), inner[0], inner[1], inner[0x18])
+			log.Trace().Str("physical_session_id", c.sessionID).Str("phase", label).
+				Uint16("message_type", mt).Uint8("flags", flag).Int("packet_length", len(pkt)).
+				Uint8("inner_type", inner[0]).Uint8("inner_subtype", inner[1]).
+				Uint8("inner_status", inner[0x18]).Msg("petlibro handshake packet received")
 		} else {
-			log.Debug().Msgf("hs %s: mt=0x%04x flags=0x%02x len=%d",
-				label, mt, flag, len(pkt))
+			log.Trace().Str("physical_session_id", c.sessionID).Str("phase", label).
+				Uint16("message_type", mt).Uint8("flags", flag).Int("packet_length", len(pkt)).
+				Msg("petlibro handshake packet received")
 		}
 	}
 
@@ -56,7 +59,8 @@ func (c *Client) handshake() error {
 		}
 	}
 	if c.verbose && !gotLANSearchR {
-		log.Warn().Msgf("hs never received LAN_SEARCH_R from %s", c.cam)
+		log.Debug().Str("physical_session_id", c.sessionID).
+			Msg("petlibro handshake continued without optional LAN_SEARCH response")
 	}
 
 	_ = c.send(buildLANSearch3(c.uid, c.nonce, 2))
@@ -76,7 +80,8 @@ func (c *Client) handshake() error {
 		}
 	}
 	if c.verbose && !gotKnockRR2 {
-		log.Warn().Msgf("hs never received KNOCK_RR2 from %s", c.cam)
+		log.Debug().Str("physical_session_id", c.sessionID).
+			Msg("petlibro handshake continued without optional KNOCK response")
 	}
 
 	// LOGIN A + LOGIN B (fresh random seed, B = seed+1).  Earlier

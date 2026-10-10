@@ -7,6 +7,8 @@ package petlibro
 // fragment indexes, or retransmission windows.
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +18,7 @@ import (
 	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/aac"
+	"github.com/AlexxIT/go2rtc/pkg/creds"
 	"github.com/AlexxIT/go2rtc/pkg/h264"
 )
 
@@ -33,6 +36,7 @@ type cameraTransport interface {
 	RemoteAddr() net.Addr
 	Protocol() string
 	healthSnapshot() countersSnapshot
+	SessionID() string
 }
 
 // CameraDescription contains standard elementary-stream configuration. Video
@@ -141,38 +145,76 @@ func parseCameraOptions(rawURL string) (cameraOptions, error) {
 // Camera owns one physical viewing session. OpenCamera retries transient
 // login/readiness failures here, below the go2rtc producer boundary.
 type Camera struct {
-	transport  cameraTransport
-	quality    string
-	audio      bool
-	status     *runtimeStatusWriter
-	desc       CameraDescription
-	ready      *Packet
-	videoTime  cameraClock
-	audioSeq   uint32
-	healthTick *time.Ticker
-	closeOnce  sync.Once
-	closeErr   error
+	id             string
+	producerID     uint32
+	openedAt       time.Time
+	transport      cameraTransport
+	quality        string
+	audio          bool
+	status         *runtimeStatusWriter
+	desc           CameraDescription
+	ready          *Packet
+	videoTime      cameraClock
+	audioSeq       uint32
+	healthTick     *time.Ticker
+	closeOnce      sync.Once
+	closeErr       error
+	preparing      bool
+	lastSPS        []byte
+	lastWidth      uint16
+	lastHeight     uint16
+	lastProfile    byte
+	lastLevel      byte
+	videoHanded    uint64
+	audioHanded    uint64
+	videoForwarded uint64
+	audioForwarded uint64
 }
 
 func OpenCamera(rawURL string) (*Camera, error) {
+	return openCamera(rawURL, 0)
+}
+
+func openCamera(rawURL string, producerID uint32) (*Camera, error) {
+	creds.RegisterEndpointSecrets(rawURL)
 	opts, err := parseCameraOptions(rawURL)
 	if err != nil {
 		return nil, err
 	}
 	var lastErr error
 	var status *runtimeStatusWriter
+	adapterID := newAdapterID()
+	openedAt := time.Now()
+	log.Debug().Str("camera_adapter_id", adapterID).Uint32("producer_id", producerID).
+		Str("quality", opts.quality).Bool("audio", opts.audio).
+		Msg("petlibro camera adapter opening")
 	for attempt := 1; attempt <= 3; attempt++ {
 		// Each retry is a new physical camera session and therefore a new SPS
 		// epoch. Do not carry probe/transition metadata across attempts.
 		status = newRuntimeStatusWriter(opts.statusFile, opts.quality)
-		client, err := dialTransport(rawURL, opts.quality, opts.audio)
+		client, err := dialTransport(rawURL, opts.quality, opts.audio, cameraCorrelation{
+			adapterID: adapterID, producerID: producerID, startupAttempt: attempt,
+		})
 		if err == nil {
 			camera := newCamera(client, opts.quality, opts.audio, status)
+			camera.id, camera.producerID, camera.openedAt = adapterID, producerID, openedAt
 			status.setStatus("probing")
+			log.Debug().Str("camera_adapter_id", adapterID).
+				Str("physical_session_id", client.SessionID()).Int("startup_attempt", attempt).
+				Msg("petlibro camera readiness preparation started")
 			err = camera.prepare(cameraProbeTimeout, hdStartupStabilization)
 			if err == nil {
 				camera.startHealthUpdates()
 				status.setStatus("online")
+				log.Debug().Str("camera_adapter_id", adapterID).
+					Str("physical_session_id", client.SessionID()).
+					Uint16("width", camera.desc.Width).Uint16("height", camera.desc.Height).
+					Bool("audio_ready", len(camera.desc.AudioConfig) != 0).
+					Dur("elapsed", time.Since(openedAt)).Msg("petlibro camera media readiness handed off")
+				log.Info().Str("camera_adapter_id", adapterID).
+					Str("physical_session_id", client.SessionID()).Uint32("producer_id", producerID).
+					Uint16("width", camera.desc.Width).Uint16("height", camera.desc.Height).
+					Msg("petlibro camera stream available")
 				return camera, nil
 			}
 			_ = client.Close()
@@ -181,10 +223,13 @@ func OpenCamera(rawURL string) (*Camera, error) {
 		if !retryCameraStartup(err) || attempt == 3 {
 			break
 		}
-		log.Warn().Msgf("petlibro: camera startup attempt %d failed: %v", attempt, err)
+		log.Debug().Str("camera_adapter_id", adapterID).Int("startup_attempt", attempt).
+			Err(err).Msg("petlibro camera startup attempt will retry")
 		time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
 	}
 	status.setStatus("error")
+	log.Error().Str("camera_adapter_id", adapterID).Uint32("producer_id", producerID).
+		Err(lastErr).Dur("elapsed", time.Since(openedAt)).Msg("petlibro camera adapter failed to open")
 	return nil, lastErr
 }
 
@@ -194,11 +239,14 @@ func retryCameraStartup(err error) bool {
 }
 
 func newCamera(transport cameraTransport, quality string, audio bool, status *runtimeStatusWriter) *Camera {
-	return &Camera{transport: transport, quality: quality, audio: audio, status: status}
+	return &Camera{
+		id: newAdapterID(), openedAt: time.Now(), transport: transport,
+		quality: quality, audio: audio, status: status,
+	}
 }
 
 func (c *Camera) startHealthUpdates() {
-	if c.status != nil && c.healthTick == nil {
+	if c.healthTick == nil {
 		c.healthTick = time.NewTicker(5 * time.Second)
 	}
 }
@@ -226,6 +274,8 @@ func resetTimer(timer *time.Timer, d time.Duration) {
 // waits internally for the higher-resolution SPS instead of exposing a go2rtc
 // probe-duration setting.
 func (c *Camera) prepare(probeTimeout, hdWait time.Duration) error {
+	c.preparing = true
+	defer func() { c.preparing = false }()
 	timer := time.NewTimer(probeTimeout)
 	defer timer.Stop()
 
@@ -241,6 +291,9 @@ func (c *Camera) prepare(probeTimeout, hdWait time.Duration) error {
 		c.desc.VideoConfig = append(c.desc.VideoConfig[:0], pkt.Payload...)
 		c.desc.Width, c.desc.Height = width, height
 		discardedVideoAfterSelected = false
+		log.Debug().Str("camera_adapter_id", c.id).Str("physical_session_id", c.transport.SessionID()).
+			Uint16("width", width).Uint16("height", height).
+			Msg("petlibro camera selected startup IDR")
 	}
 	finishIfReady := func() bool {
 		if selected == nil || waitingForHD || (!haveAudio && c.audio) {
@@ -253,6 +306,8 @@ func (c *Camera) prepare(probeTimeout, hdWait time.Duration) error {
 			// normal readiness timeout.
 			selected = nil
 			discardedVideoAfterSelected = false
+			log.Debug().Str("camera_adapter_id", c.id).Str("physical_session_id", c.transport.SessionID()).
+				Msg("petlibro camera discarded stale startup IDR and is awaiting a continuous GOP")
 			resetTimer(timer, probeTimeout)
 			return false
 		}
@@ -264,6 +319,10 @@ func (c *Camera) prepare(probeTimeout, hdWait time.Duration) error {
 		select {
 		case <-timer.C:
 			if waitingForHD && selected != nil {
+				log.Debug().Str("camera_adapter_id", c.id).Str("physical_session_id", c.transport.SessionID()).
+					Uint16("width", c.desc.Width).Uint16("height", c.desc.Height).
+					Dur("stabilization_wait", hdWait).
+					Msg("petlibro camera HD stabilization ended at current resolution")
 				waitingForHD = false
 				hdPreferenceComplete = true
 				if finishIfReady() {
@@ -305,6 +364,10 @@ func (c *Camera) prepare(probeTimeout, hdWait time.Duration) error {
 						if higherResolution {
 							waitingForHD = false
 							hdPreferenceComplete = true
+							log.Debug().Str("camera_adapter_id", c.id).
+								Str("physical_session_id", c.transport.SessionID()).
+								Uint16("width", width).Uint16("height", height).
+								Msg("petlibro camera HD stabilization selected higher resolution")
 						} else {
 							if width > stabilizationWidth {
 								stabilizationWidth = width
@@ -338,6 +401,9 @@ func (c *Camera) prepare(probeTimeout, hdWait time.Duration) error {
 				if !haveAudio && aac.IsADTS(pkt.Payload) {
 					haveAudio = true
 					c.desc.AudioConfig = append([]byte(nil), pkt.Payload...)
+					log.Debug().Str("camera_adapter_id", c.id).
+						Str("physical_session_id", c.transport.SessionID()).
+						Msg("petlibro camera audio configuration ready")
 				}
 			}
 			if finishIfReady() {
@@ -364,10 +430,37 @@ func (c *Camera) observeVideoConfig(payload []byte) (uint16, uint16, bool) {
 	}
 	width, height := decoded.Width(), decoded.Height()
 	c.status.observeSPS(width, height, sps[1], sps[3])
-	if c.transport != nil {
-		log.Debug().Uint16("width", width).Uint16("height", height).
-			Str("quality", c.quality).Msg("petlibro camera SPS epoch")
+	digest := sha256.Sum256(sps)
+	configID := fmt.Sprintf("%x", digest[:4])
+	profile, level := sps[1], sps[3]
+	if len(c.lastSPS) == 0 {
+		log.Debug().Str("camera_adapter_id", c.id).Str("physical_session_id", c.transport.SessionID()).
+			Str("codec_config_id", configID).Uint16("width", width).Uint16("height", height).
+			Uint8("profile_idc", profile).Uint8("level_idc", level).
+			Msg("petlibro camera observed initial H.264 configuration")
+	} else if bytes.Equal(c.lastSPS, sps) {
+		log.Trace().Str("camera_adapter_id", c.id).Str("physical_session_id", c.transport.SessionID()).
+			Str("codec_config_id", configID).Msg("petlibro camera observed repeated H.264 configuration")
+	} else {
+		change := "sps"
+		if width != c.lastWidth || height != c.lastHeight {
+			change = "resolution"
+		} else if profile != c.lastProfile || level != c.lastLevel {
+			change = "profile_level"
+		}
+		event := log.Info()
+		if c.preparing {
+			event = log.Debug()
+		}
+		event.Str("camera_adapter_id", c.id).Str("physical_session_id", c.transport.SessionID()).
+			Str("change", change).Str("codec_config_id", configID).
+			Uint16("width", width).Uint16("height", height).
+			Uint8("profile_idc", profile).Uint8("level_idc", level).
+			Msg("petlibro camera H.264 configuration changed")
 	}
+	c.lastSPS = append(c.lastSPS[:0], sps...)
+	c.lastWidth, c.lastHeight = width, height
+	c.lastProfile, c.lastLevel = profile, level
 	return width, height, true
 }
 
@@ -381,7 +474,20 @@ func (c *Camera) Read() (*MediaUnit, error) {
 			case <-c.transport.doneSignal():
 				return nil, io.EOF
 			case <-c.healthUpdates():
-				c.status.updateHealth(c.transport.healthSnapshot())
+				snapshot := c.transport.healthSnapshot()
+				c.status.updateHealth(snapshot)
+				log.Debug().Str("camera_adapter_id", c.id).
+					Str("physical_session_id", c.transport.SessionID()).
+					Dur("uptime", time.Since(c.openedAt)).
+					Uint64("adapter_video_units", c.videoHanded).Uint64("adapter_audio_units", c.audioHanded).
+					Uint64("producer_video_units", c.videoForwarded).Uint64("producer_audio_units", c.audioForwarded).
+					Uint16("width", c.lastWidth).Uint16("height", c.lastHeight).
+					Uint64("dropped_frames", snapshot.vidDropped).
+					Uint64("missing_fragments", snapshot.missingFragmentsTotal).
+					Uint64("reader_queue_drops", snapshot.readerDrops).
+					Uint64("output_queue_drops", snapshot.emitDrops).
+					Uint64("ack_pending", snapshot.ackSeenPending).
+					Msg("petlibro camera media health")
 			case next, ok := <-c.transport.packets():
 				if !ok {
 					return nil, io.EOF
@@ -398,10 +504,12 @@ func (c *Camera) Read() (*MediaUnit, error) {
 	switch pkt.Codec {
 	case CodecH264:
 		unit.Codec = MediaH264
+		c.videoHanded++
 		_, _, _ = c.observeVideoConfig(pkt.Payload)
 		unit.Timestamp = c.videoTime.normalize(pkt.CameraTimeMS, pkt.HasCameraTime)
 	case CodecAACADTS:
 		unit.Codec = MediaAAC
+		c.audioHanded++
 		// One AAC-LC access unit advances the native AAC RTP clock by 1024
 		// samples, independent of the sample rate advertised by ADTS.
 		unit.Timestamp = c.audioSeq * 1024
@@ -421,14 +529,27 @@ func (c *Camera) Description() CameraDescription {
 func (c *Camera) RemoteAddr() net.Addr { return c.transport.RemoteAddr() }
 func (c *Camera) Protocol() string     { return c.transport.Protocol() }
 
+func (c *Camera) recordForwarded(codec MediaCodec) {
+	if codec == MediaH264 {
+		c.videoForwarded++
+	} else if codec == MediaAAC {
+		c.audioForwarded++
+	}
+}
+
 func (c *Camera) Close() error {
 	c.closeOnce.Do(func() {
+		log.Debug().Str("camera_adapter_id", c.id).Str("physical_session_id", c.transport.SessionID()).
+			Uint32("producer_id", c.producerID).Msg("petlibro camera adapter closing")
 		if c.healthTick != nil {
 			c.healthTick.Stop()
 		}
 		c.status.updateHealth(c.transport.healthSnapshot())
 		c.closeErr = c.transport.Close()
 		c.status.markOffline()
+		log.Debug().Str("camera_adapter_id", c.id).Str("physical_session_id", c.transport.SessionID()).
+			Uint32("producer_id", c.producerID).Err(c.closeErr).
+			Dur("uptime", time.Since(c.openedAt)).Msg("petlibro camera adapter closed")
 	})
 	return c.closeErr
 }

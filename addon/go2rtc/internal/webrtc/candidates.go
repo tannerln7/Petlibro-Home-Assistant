@@ -124,7 +124,7 @@ func asyncCandidates(tr *ws.Transport, cons *webrtc.Conn) {
 	})
 
 	for _, candidate := range GetCandidates() {
-		log.Trace().Str("candidate", candidate).Msg("[webrtc] config")
+		log.Trace().Int("candidate_bytes", len(candidate)).Msg("[webrtc] configured ICE candidate sent")
 		tr.Write(&ws.Message{Type: "webrtc/candidate", Value: candidate})
 	}
 }
@@ -133,7 +133,7 @@ func candidateHandler(tr *ws.Transport, msg *ws.Message) error {
 	// process incoming candidate in sync function
 	tr.WithContext(func(ctx map[any]any) {
 		candidate := msg.String()
-		log.Trace().Str("candidate", candidate).Msg("[webrtc] remote")
+		log.Trace().Int("candidate_bytes", len(candidate)).Msg("[webrtc] remote ICE candidate received")
 
 		if cons, ok := ctx["webrtc"].(*webrtc.Conn); ok {
 			// if webrtc.Server already initialized - process candidate

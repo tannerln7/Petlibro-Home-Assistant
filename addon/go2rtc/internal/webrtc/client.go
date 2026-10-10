@@ -102,7 +102,9 @@ func go2rtcClient(url string) (core.Producer, error) {
 		switch msg := msg.(type) {
 		case *pion.ICECandidate:
 			s := msg.ToJSON().Candidate
-			log.Trace().Str("candidate", s).Msg("[webrtc] local ")
+			log.Trace().Uint32("connection_id", prod.ID).
+				Str("candidate_type", msg.Typ.String()).Str("protocol", msg.Protocol.String()).
+				Msg("[webrtc] local ICE candidate available")
 			connMu.Lock()
 			_ = conn.WriteJSON(&ws.Message{Type: "webrtc/candidate", Value: s})
 			connMu.Unlock()

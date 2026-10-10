@@ -52,6 +52,12 @@ type Connection struct {
 	Transport any `json:"-"`
 }
 
+// GetID exposes the process-local connection identifier for lifecycle
+// correlation without requiring callers to know a concrete connection type.
+func (c *Connection) GetID() uint32 {
+	return c.ID
+}
+
 func (c *Connection) GetMedias() []*Media {
 	return c.Medias
 }

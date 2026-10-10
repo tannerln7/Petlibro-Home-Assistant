@@ -253,9 +253,10 @@ camera_quality: hd
 
 Then set `log_level: debug`. Petlibro statistics report packet families, media
 loss, ACK progress, and SPS transitions without including raw packets or MQTT
-payloads. Escalate to `log_level: trace` only for a short reproduction that
-needs per-packet, ACK, fragment, frame-info, or raw MQTT evidence; trace can
-produce a very large volume of output.
+payloads. Escalate to `log_level: trace` for implementation-level state and
+forwarding decisions. If a short reproduction also needs high-volume ACK,
+fragment, frame-info, and packet-metadata evidence, explicitly enable
+`camera_protocol_tracing`. Neither setting logs decrypted payload bytes.
 
 Enable `enable_debug_dumps` only when repeatable packet evidence is necessary.
 The add-on writes one pair per stream:

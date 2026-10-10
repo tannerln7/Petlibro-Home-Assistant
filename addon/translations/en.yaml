@@ -91,7 +91,10 @@ configuration:
     description: Deprecated compatibility option; use log level instead.
   log_level:
     name: Log level
-    description: Petlibro application logging level; trace is intentionally very noisy.
+    description: Petlibro application logging level. Trace includes implementation details but not raw protocol payloads.
+  camera_protocol_tracing:
+    name: Camera protocol tracing
+    description: Enable high-volume camera ACK, fragment, frame-info, and packet-metadata traces for short diagnostic captures.
   enable_debug_dumps:
     name: Debug dumps
     description: Write sensitive decrypted protocol dumps to persistent add-on data.

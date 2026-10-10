@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.12-beta.2
+
+- Refactor PLAF203 camera logging around operational lifecycle,
+  component diagnostics, and detailed implementation tracing.
+- Improve session and producer correlation for camera startup,
+  teardown, and rapid-reconnect investigations.
+- Reduce routine protocol logging noise while retaining targeted
+  diagnostics for hardware testing.
+
 ## 0.3.12-beta.1
 
 - Refactor the PLAF203 live-camera path into explicit Petlibro/TUTK transport,

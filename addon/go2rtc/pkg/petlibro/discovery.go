@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/AlexxIT/go2rtc/pkg/creds"
 	"github.com/AlexxIT/go2rtc/pkg/tutk"
 )
 
@@ -579,6 +580,10 @@ func discoverByUID(conn *net.UDPConn, uid string, nonce []byte, subnets []string
 		return nil, err
 	}
 	discoveryCache.Store(cacheKey, *result.IPAddress)
+	// Discovery learns an endpoint that was not present in the source URL.
+	// Register it once with the centralized log sanitizer before any component
+	// emits it as structured context.
+	creds.AddSecret(*result.IPAddress)
 	if verbose {
 		log.Debug().Str("method", result.Method).Str("ip", *result.IPAddress).
 			Int64("elapsed_ms", result.ElapsedMS).Interface("stats", result.Stats).

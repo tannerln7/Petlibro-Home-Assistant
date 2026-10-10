@@ -36,7 +36,7 @@ func crealityClient(url string) (core.Producer, error) {
 		return nil, err
 	}
 
-	log.Trace().Msgf("[webrtc] offer:\n%s", offer)
+	log.Trace().Int("sdp_bytes", len(offer)).Msg("[webrtc] offer created")
 
 	body, err := offerToB64(offer)
 	if err != nil {
@@ -63,7 +63,7 @@ func crealityClient(url string) (core.Producer, error) {
 		return nil, err
 	}
 
-	log.Trace().Msgf("[webrtc] answer:\n%s", answer)
+	log.Trace().Int("sdp_bytes", len(answer)).Msg("[webrtc] answer received")
 
 	if answer, err = fixCrealitySDP(answer); err != nil {
 		return nil, err

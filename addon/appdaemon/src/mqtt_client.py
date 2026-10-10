@@ -288,20 +288,29 @@ class Client:
     def _send(self, channel: str, message) -> None:
         payload = message.to_mqtt_payload()
         topic = self.message_topics.sub(channel)
+        encoded = json.dumps(payload)
         self.logger.trace(
-            "MQTT message",
+            "MQTT message metadata",
             direction="tx",
             topic=topic,
             command=payload.get("cmd"),
-            payload=payload,
+            payload_bytes=len(encoded.encode("utf-8")),
+            payload_fields=sorted(str(key) for key in payload),
         )
-        self.mqtt.mqtt_publish(topic, json.dumps(payload), namespace="mqtt")
+        self.mqtt.mqtt_publish(topic, encoded, namespace="mqtt")
 
     def _trace_mqtt(self, direction: str, data: dict, payload: dict) -> None:
+        raw_payload = data.get("payload")
+        payload_bytes = (
+            len(raw_payload.encode("utf-8"))
+            if isinstance(raw_payload, str)
+            else None
+        )
         self.logger.trace(
-            "MQTT message",
+            "MQTT message metadata",
             direction=direction,
             topic=data.get("topic"),
             command=payload.get("cmd"),
-            payload=payload,
+            payload_bytes=payload_bytes,
+            payload_fields=sorted(str(key) for key in payload),
         )

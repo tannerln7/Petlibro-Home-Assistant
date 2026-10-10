@@ -3,6 +3,7 @@ package streams
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,9 @@ const (
 
 type Producer struct {
 	core.Listener
+	id         uint32
+	streamID   uint32
+	generation uint32
 
 	url      string
 	template string
@@ -40,10 +44,32 @@ const SourceTemplate = "{input}"
 
 func NewProducer(source string) *Producer {
 	if strings.Contains(source, SourceTemplate) {
-		return &Producer{template: source}
+		return &Producer{id: core.NewID(), template: source}
 	}
 
-	return &Producer{url: source}
+	return &Producer{id: core.NewID(), url: source}
+}
+
+type connectionIdentifier interface {
+	GetID() uint32
+}
+
+func connectionID(conn any) uint32 {
+	if identified, ok := conn.(connectionIdentifier); ok {
+		return identified.GetID()
+	}
+	return 0
+}
+
+func connectionType(conn any) string {
+	return fmt.Sprintf("%T", conn)
+}
+
+func sourceScheme(source string) string {
+	if i := strings.IndexByte(source, ':'); i > 0 {
+		return source[:i]
+	}
+	return "unknown"
 }
 
 func (p *Producer) SetSource(s string) {
@@ -59,13 +85,24 @@ func (p *Producer) Dial() error {
 	defer p.mu.Unlock()
 
 	if p.state == stateNone {
+		nextGeneration := p.generation + 1
+		log.Debug().Uint32("stream_id", p.streamID).Uint32("stream_producer_id", p.id).
+			Uint32("producer_generation", nextGeneration).Str("source_scheme", sourceScheme(p.url)).
+			Msg("[streams] producer dial started")
 		conn, err := GetProducer(p.url)
 		if err != nil {
+			log.Debug().Uint32("stream_id", p.streamID).Uint32("stream_producer_id", p.id).
+				Uint32("producer_generation", nextGeneration).Str("source_scheme", sourceScheme(p.url)).
+				Err(err).Msg("[streams] producer dial failed")
 			return err
 		}
 
 		p.conn = conn
+		p.generation = nextGeneration
 		p.state = stateMedias
+		log.Debug().Uint32("stream_id", p.streamID).Uint32("stream_producer_id", p.id).
+			Uint32("producer_generation", p.generation).Uint32("producer_id", connectionID(conn)).
+			Str("source_scheme", sourceScheme(p.url)).Msg("[streams] producer dial completed")
 	}
 
 	return nil
@@ -149,7 +186,9 @@ func (p *Producer) start() {
 		return
 	}
 
-	log.Debug().Msgf("[streams] start producer url=%s", p.url)
+	log.Debug().Uint32("stream_id", p.streamID).Uint32("stream_producer_id", p.id).
+		Uint32("producer_generation", p.generation).Uint32("producer_id", connectionID(p.conn)).
+		Msg("[streams] producer forwarding started")
 
 	p.state = stateStart
 	p.workerID++
@@ -167,7 +206,9 @@ func (p *Producer) worker(conn core.Producer, workerID int) {
 			return
 		}
 
-		log.Warn().Err(err).Str("url", p.url).Caller().Send()
+		log.Debug().Uint32("stream_id", p.streamID).Uint32("stream_producer_id", p.id).
+			Uint32("producer_generation", p.generation).Uint32("producer_id", connectionID(conn)).
+			Err(err).Msg("[streams] producer forwarding ended; reconnecting")
 	}
 
 	p.reconnect(workerID, 0)
@@ -178,15 +219,23 @@ func (p *Producer) reconnect(workerID, retry int) {
 	defer p.mu.Unlock()
 
 	if p.workerID != workerID {
-		log.Trace().Msgf("[streams] stop reconnect url=%s", p.url)
+		log.Trace().Uint32("stream_id", p.streamID).Uint32("stream_producer_id", p.id).
+			Msg("[streams] reconnect cancelled")
 		return
 	}
 
-	log.Debug().Msgf("[streams] retry=%d to url=%s", retry, p.url)
+	nextGeneration := p.generation + 1
+	oldProducerID := connectionID(p.conn)
+	log.Debug().Uint32("stream_id", p.streamID).Uint32("stream_producer_id", p.id).
+		Uint32("old_producer_id", oldProducerID).Uint32("producer_generation", nextGeneration).
+		Int("retry", retry).Str("source_scheme", sourceScheme(p.url)).
+		Msg("[streams] replacement producer dial started")
 
 	conn, err := GetProducer(p.url)
 	if err != nil {
-		log.Debug().Msgf("[streams] producer=%s", err)
+		log.Debug().Uint32("stream_id", p.streamID).Uint32("stream_producer_id", p.id).
+			Uint32("old_producer_id", oldProducerID).Uint32("producer_generation", nextGeneration).
+			Int("retry", retry).Err(err).Msg("[streams] replacement producer dial failed")
 
 		timeout := time.Minute
 		if retry < 5 {
@@ -202,6 +251,11 @@ func (p *Producer) reconnect(workerID, retry int) {
 		})
 		return
 	}
+	newProducerID := connectionID(conn)
+	log.Debug().Uint32("stream_id", p.streamID).Uint32("stream_producer_id", p.id).
+		Uint32("old_producer_id", oldProducerID).Uint32("new_producer_id", newProducerID).
+		Uint32("producer_generation", nextGeneration).
+		Msg("[streams] replacement producer ready; transferring tracks before stopping previous producer")
 
 	for _, media := range conn.GetMedias() {
 		switch media.Direction {
@@ -238,6 +292,11 @@ func (p *Producer) reconnect(workerID, retry int) {
 	_ = p.conn.Stop()
 	// swap connections
 	p.conn = conn
+	p.generation = nextGeneration
+	log.Debug().Uint32("stream_id", p.streamID).Uint32("stream_producer_id", p.id).
+		Uint32("old_producer_id", oldProducerID).Uint32("producer_id", newProducerID).
+		Uint32("producer_generation", p.generation).
+		Msg("[streams] producer replacement completed")
 
 	go p.worker(conn, workerID)
 }
@@ -257,7 +316,9 @@ func (p *Producer) stop() {
 		p.workerID++
 	}
 
-	log.Debug().Msgf("[streams] stop producer url=%s", p.url)
+	log.Debug().Uint32("stream_id", p.streamID).Uint32("stream_producer_id", p.id).
+		Uint32("producer_generation", p.generation).Uint32("producer_id", connectionID(p.conn)).
+		Msg("[streams] producer stopping")
 
 	if p.conn != nil {
 		_ = p.conn.Stop()
