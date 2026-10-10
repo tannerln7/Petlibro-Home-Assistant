@@ -53,7 +53,7 @@ addresses do not get committed. A minimal fixed-address configuration is:
 
 ```yaml
 streams:
-  petlibro_feeder: petlibro://192.168.1.42?uid=PLAF20300000000ABCD0&quality=hd&send_delay_ctrl=1&hd_probe_wait_ms=15000
+  petlibro_feeder: petlibro://192.168.1.42?uid=PLAF20300000000ABCD0&quality=hd
 ```
 
 Replace both placeholder values. If the camera and go2rtc are on the same
@@ -61,7 +61,7 @@ broadcast domain, the camera can instead be discovered by UID:
 
 ```yaml
 streams:
-  petlibro_feeder: petlibro://?uid=PLAF20300000000ABCD0&quality=hd&send_delay_ctrl=1&hd_probe_wait_ms=15000
+  petlibro_feeder: petlibro://?uid=PLAF20300000000ABCD0&quality=hd
 ```
 
 For a routed camera network, add one or more `subnet=` query parameters, such as
@@ -98,8 +98,14 @@ ffprobe -v error -rtsp_transport tcp \
 ```
 
 An HD camera may initially send a 640x360 SPS before switching to 1920x1080.
-The example's `hd_probe_wait_ms=15000` gives the producer a bounded window to
-advertise the later HD SPS instead of the startup resolution.
+The PLAF203 adapter automatically gives this transition a bounded 15-second
+preference window before advertising the initial track. This limits startup
+latency; it does not guarantee HD, and later SPS changes are forwarded in-band
+without changing the initial codec/SDP description. If stabilization consumed
+frames after its last candidate IDR, the adapter uses a separately bounded
+five-second resynchronization phase to find a new SPS-bearing IDR so delivery
+begins at a continuous live GOP rather than replaying an incomplete history.
+Requested audio discovery may use a separate readiness interval.
 
 ## Build
 

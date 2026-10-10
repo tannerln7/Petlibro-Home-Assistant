@@ -175,6 +175,8 @@ class RenderConfigTests(unittest.TestCase):
             self.assertIn("petlibro://192.0.2.100?", go2rtc)
             self.assertNotIn("subnet=", go2rtc)
             self.assertNotIn("ack=", go2rtc)
+            self.assertNotIn("send_delay_ctrl=", go2rtc)
+            self.assertNotIn("hd_probe_wait_ms=", go2rtc)
             self.assertIn(
                 "status_file=%2Fdata%2Fpetlibro_camera_status_petlibro_feeder.json",
                 go2rtc,
@@ -338,6 +340,10 @@ class RenderConfigTests(unittest.TestCase):
                 serial="EXAMPLE123",
                 uid="PLAF20300000000ABCD0",
                 product_secret="must-not-leak",
+                send_delay_ctrl=False,
+                hd_probe_wait_ms=60000,
+                streamctrl_variant="standard",
+                streamctrl_quality=2,
             )
             (data_dir / "options.json").write_text(
                 json.dumps(options), encoding="utf-8"
@@ -350,6 +356,10 @@ class RenderConfigTests(unittest.TestCase):
             )
             self.assertIn("petlibro://192.0.2.100?", generated)
             self.assertNotIn("must-not-leak", generated)
+            self.assertNotIn("send_delay_ctrl", generated)
+            self.assertNotIn("hd_probe_wait_ms", generated)
+            self.assertNotIn("streamctrl_variant", generated)
+            self.assertNotIn("streamctrl_quality", generated)
 
     def test_loads_discovery_first_home_assistant_options(self):
         with tempfile.TemporaryDirectory() as temporary:

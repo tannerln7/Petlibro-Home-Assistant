@@ -1,5 +1,5 @@
 name: Petlibro Local backend
-version: "0.3.11-beta.2"
+version: "0.3.12-beta.1"
 slug: petlibro_local
 description: Local PLAF203 MQTT control and camera streaming backend
 url: https://github.com/tannerln7/Petlibro-Home-Assistant
@@ -52,8 +52,6 @@ options:
   devices: []
   go2rtc_stream_name: petlibro_feeder
   camera_quality: hd
-  send_delay_ctrl: true
-  hd_probe_wait_ms: 15000
   go2rtc_api_port: 1984
   go2rtc_rtsp_port: 8554
   go2rtc_webrtc_port: 8555
@@ -97,8 +95,6 @@ schema:
       ip_address: str
   go2rtc_stream_name: str
   camera_quality: list(hd|sd)
-  send_delay_ctrl: bool
-  hd_probe_wait_ms: int(0,60000)
   go2rtc_api_port: port
   go2rtc_rtsp_port: port
   go2rtc_webrtc_port: port

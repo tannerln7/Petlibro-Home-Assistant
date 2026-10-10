@@ -766,12 +766,10 @@ func (c *Client) emit(e *pendingFrag) {
 		c.startedAt = time.Now()
 	}
 	if e.isAudio {
-		pts := uint32(float64(c.emitAudioSeq) * 1024 * 90000 / 44100)
 		c.queuePacket(&Packet{
-			Codec:     CodecAACADTS,
-			Payload:   e.payload,
-			FrameNo:   c.emitAudioSeq,
-			Timestamp: pts,
+			Codec:   CodecAACADTS,
+			Payload: e.payload,
+			FrameNo: c.emitAudioSeq,
 		})
 		c.emitAudioSeq++
 		return
@@ -910,7 +908,7 @@ func (c *Client) emit(e *pendingFrag) {
 	// fragments arrive, so the slice we hand to emitAU / queuePacket
 	// must own its bytes.  Packet.Payload therefore has no shared
 	// backing storage with the assembler's working buffer and
-	// consumers may retain it past the next ReadPacket() call.
+	// consumers may retain it after the assembler advances.
 	au := append([]byte(nil), asm.buf...)
 	gapped := asm.curAUGapped
 	wasKey := e.channel == innerChKey
@@ -957,8 +955,6 @@ func (c *Client) emit(e *pendingFrag) {
 		isKeyframe := true
 		c.debugFrameEvent("gapped_idr_emit", e, &asmState, onlineNum, hasTrailer, &isKeyframe)
 	}
-	c.pendingFrameTs = frameTs
-	c.havePendingTs = true
 	// In strict mode only, drop P-frames in a poisoned GOP until the
 	// next clean IDR.  In non-strict (default), let them through.
 	if c.strict && c.gopPoisoned && !wasKey {
@@ -968,7 +964,7 @@ func (c *Client) emit(e *pendingFrag) {
 		c.debugFrameEvent("strict_gop_poisoned_drop", e, &asmState, onlineNum, hasTrailer, &isKeyframe)
 		return
 	}
-	c.emitAU(au, e.frameNum, e.channel, onlineNum)
+	c.emitAU(au, e.frameNum, e.channel, onlineNum, frameTs, hasTrailer)
 }
 
 // flushPendingIDR emits the accumulated ch=0x05 IDR buffer in the
@@ -1031,31 +1027,18 @@ func (c *Client) flushPendingIDR(nextPFrameTs uint32) {
 	// near zero, and a P-frame whose ts is < 40 ms would naively
 	// produce nextPFrameTs - 40 = ~0xFFFFFFC0 and lock the rest of
 	// the session's PTS into the wrap-around regime.
-	if nextPFrameTs >= 40 {
-		c.pendingFrameTs = nextPFrameTs - 40
-		c.havePendingTs = true
+	var cameraTimeMS uint32
+	hasCameraTime := nextPFrameTs >= 40
+	if hasCameraTime {
+		cameraTimeMS = nextPFrameTs - 40
 	}
-	c.emitAU(au, asmState.curFrameNum, innerChKey, 0)
+	c.emitAU(au, asmState.curFrameNum, innerChKey, 0, cameraTimeMS, hasCameraTime)
 }
 
 // emitAU finalises one access unit and queues it for the consumer.
-func (c *Client) emitAU(au []byte, cameraFrameNum uint32, channel, onlineNum byte) {
+func (c *Client) emitAU(au []byte, cameraFrameNum uint32, channel, onlineNum byte, cameraTimeMS uint32, hasCameraTime bool) {
 	if len(au) < 5 {
 		return
-	}
-	if sps := annexbNAL(au, h264.NALUTypeSPS); sps != nil && !slices.Equal(sps, c.lastSPS) {
-		c.lastSPS = append(c.lastSPS[:0], sps...)
-		if len(sps) >= 4 {
-			decoded := h264.DecodeSPS(sps)
-			if decoded != nil {
-				c.runtimeStatus.observeSPS(decoded.Width(), decoded.Height(), sps[1], sps[3])
-				if c.verbose {
-					log.Debug().Uint16("width", decoded.Width()).Uint16("height", decoded.Height()).
-						Uint8("profileIDC", sps[1]).Uint8("levelIDC", sps[3]).
-						Str("quality", c.quality).Msg("petlibro SPS resolution")
-				}
-			}
-		}
 	}
 	isKey := annexbContainsNALType(au, h264.NALUTypeIFrame)
 	if isKey {
@@ -1086,36 +1069,6 @@ func (c *Client) emitAU(au []byte, cameraFrameNum uint32, channel, onlineNum byt
 		return
 	}
 
-	// PTS comes from the camera's own millisecond clock embedded in
-	// the metadata trailer of each frame's last fragment.  This gives
-	// per-frame-accurate timestamps that survive forceDrain bursts —
-	// wall-clock derived PTS produced "Invalid video timestamp X -> X"
-	// duplicates in mpv because multiple AUs flushed within one ms.
-	var pts uint32
-	if c.havePendingTs {
-		if !c.haveFirstTs {
-			c.firstFrameTs = c.pendingFrameTs
-			c.haveFirstTs = true
-		}
-		// Frame counter is u32 LE ms; subtract origin and convert to
-		// the H.264 90 kHz clock.  Wrap-safe via unsigned subtraction.
-		ms := c.pendingFrameTs - c.firstFrameTs
-		pts = ms * 90
-		c.havePendingTs = false
-	} else {
-		// No trailer seen yet (early packets before the first frame
-		// finishes) or the trailer for this AU was lost — fall back
-		// to "just-after the last emitted PTS" so playback ordering
-		// stays monotonic and the AU doesn't collide with the prior
-		// one.
-		pts = c.lastEmitTs + 1
-	}
-	if pts <= c.lastEmitTs && c.lastEmitTs != 0 {
-		// Strictly monotonic — never re-use a previous PTS.
-		pts = c.lastEmitTs + 1
-	}
-	c.lastEmitTs = pts
-
 	c.queuePacket(&Packet{
 		Codec:         CodecH264,
 		Payload:       au,
@@ -1123,7 +1076,8 @@ func (c *Client) emitAU(au []byte, cameraFrameNum uint32, channel, onlineNum byt
 		CameraFrameNo: cameraFrameNum,
 		Channel:       channel,
 		OnlineNum:     onlineNum,
-		Timestamp:     pts,
+		CameraTimeMS:  cameraTimeMS,
+		HasCameraTime: hasCameraTime,
 		IsKeyframe:    isKey,
 	})
 	c.emitSeq++

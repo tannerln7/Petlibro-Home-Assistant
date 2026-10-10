@@ -221,10 +221,12 @@ ambiguous decoder.
 ## Initial 640x360 stream before HD
 
 Tested PLAF203 firmware can start an HD session with a 640x360 SPS and switch to
-1920x1080 later. Some observed sessions transitioned after several minutes,
-beyond the configurable 60000 ms probe limit. Keep `camera_quality: hd` and use
-the recommended `hd_probe_wait_ms: 15000`; the runtime metadata reports both
-the first and latest SPS even when go2rtc initially advertises 640x360.
+1920x1080 later. The camera adapter automatically waits up to 15 seconds for
+the higher-resolution SPS. Some observed sessions transitioned after several
+minutes; runtime metadata reports both the first and latest SPS even when
+go2rtc initially advertises 640x360. A later SPS is forwarded in-band and
+updates observation metadata, but does not renegotiate the initial go2rtc
+codec/SDP description.
 
 ## Feeder resolution returns to P720 when viewing stops
 
@@ -247,8 +249,6 @@ Start with the validated settings:
 
 ```yaml
 camera_quality: hd
-send_delay_ctrl: true
-hd_probe_wait_ms: 15000
 ```
 
 Then set `log_level: debug`. Petlibro statistics report packet families, media

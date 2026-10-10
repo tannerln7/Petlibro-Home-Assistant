@@ -131,7 +131,6 @@ class Plaf203(adbase.ADBase):
             serial=self.serial_number,
             stream_name=self.args.get("go2rtc_stream_name", "petlibro_feeder"),
             requested_quality=self.args.get("camera_quality", "hd"),
-            configured_hd_probe_wait_ms=int(self.args.get("hd_probe_wait_ms", 15000)),
             rtsp_port=int(self.args.get("go2rtc_rtsp_port", 8554)),
             status_file=self.args.get(
                 "camera_status_file", "/data/petlibro_camera_status.json"

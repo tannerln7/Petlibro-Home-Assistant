@@ -49,8 +49,6 @@ DEFAULTS = {
     "devices": [],
     "go2rtc_stream_name": "petlibro_feeder",
     "camera_quality": "hd",
-    "send_delay_ctrl": True,
-    "hd_probe_wait_ms": 15000,
     "go2rtc_api_port": 1984,
     "go2rtc_rtsp_port": 8554,
     "go2rtc_webrtc_port": 8555,
@@ -74,7 +72,6 @@ LEGACY_ENV_KEYS = {
 BOOL_KEYS = {
     "device_discovery",
     "persist_feeder_mqtt",
-    "send_delay_ctrl",
     "publish_camera_metadata",
     "verbose_logs",
     "enable_debug_dumps",
@@ -88,7 +85,6 @@ INT_KEYS = {
     "ip_discovery_max_unicast_per_second",
     "ip_refresh_interval_minutes",
     "ip_retry_backoff_seconds",
-    "hd_probe_wait_ms",
     "go2rtc_api_port",
     "go2rtc_rtsp_port",
     "go2rtc_webrtc_port",
@@ -305,8 +301,6 @@ def validate(options: dict[str, object]) -> None:
         raise ValueError(
             "log_level must be critical, error, warning, info, debug, or trace"
         )
-    if not 0 <= int(options["hd_probe_wait_ms"]) <= 60000:
-        raise ValueError("hd_probe_wait_ms must be between 0 and 60000")
     if not 5 <= int(options["camera_metadata_interval_seconds"]) <= 300:
         raise ValueError("camera_metadata_interval_seconds must be between 5 and 300")
 
@@ -540,8 +534,6 @@ def render_go2rtc(
         query = {
             "uid": uid,
             "quality": str(options["camera_quality"]),
-            "send_delay_ctrl": "1" if options["send_delay_ctrl"] else "0",
-            "hd_probe_wait_ms": str(options["hd_probe_wait_ms"]),
         }
         if options["publish_camera_metadata"]:
             query["status_file"] = status_path
@@ -699,7 +691,6 @@ def render_appdaemon(
                     "tutk_p2p_region": "REGION_US",
                     "go2rtc_stream_name": stream_name,
                     "camera_quality": options["camera_quality"],
-                    "hd_probe_wait_ms": options["hd_probe_wait_ms"],
                     "go2rtc_rtsp_port": options["go2rtc_rtsp_port"],
                     "publish_camera_metadata": options["publish_camera_metadata"],
                     "camera_status_file": status_file_for(stream_name),

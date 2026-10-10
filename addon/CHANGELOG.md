@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.12-beta.1
+
+- Refactor the PLAF203 live-camera path into explicit Petlibro/TUTK transport,
+  physical-camera adapter, and conventional go2rtc producer responsibilities,
+  while preserving the firmware-backed ACK/NACK and media-reassembly behavior.
+- Normalize physical session startup and shutdown in the camera adapter,
+  including typed startup retries, capture-backed HD/SD control, the standard
+  AVAPI pacing command, and one best-effort `IPCAM_STOP` after a transmitted
+  `IPCAM_START`.
+- Make initial delivery decoder-safe by combining bounded HD SPS stabilization
+  with live-GOP resynchronization, and correct video timestamp rollover and AAC
+  RTP sample-clock handling.
+- Remove historical camera protocol experiments from the supported
+  configuration surface, publish camera runtime metadata schema version 2, and
+  document retained transport recovery policy and unresolved codec-epoch
+  behavior. This development release has deterministic test coverage but still
+  requires physical-feeder validation.
+
 ## 0.3.11-beta.2
 
 - Enable go2rtc API CORS responses so Home Assistant frontends on a different

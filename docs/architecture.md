@@ -123,10 +123,33 @@ from `DEVICE_START_EVENT`. Device discovery resolves the current feeder address
 using the UID-specific LAN_SEARCH3/KNOCK2 exchange and writes a private device
 registry. Only resolved devices receive go2rtc stream entries.
 
-The go2rtc `petlibro://` producer opens on demand. It performs the local camera
-handshake, stream control, media-window acknowledgment, and H.264/AAC assembly.
-It writes one private atomic status JSON file per stream. AppDaemon validates
-that internal file and publishes the stable
+The go2rtc `petlibro://` source opens on demand. Its camera path has three
+responsibility layers:
+
+```text
+go2rtc Producer (codec declaration and RTP forwarding)
+  -> PLAF203 Camera adapter (physical session, readiness, SPS observation, clocks)
+    -> Petlibro Client transport (discovery, IOCtrl, ACK/reorder/reassembly)
+```
+
+The transport converts Petlibro/TUTK datagrams into complete H.264/AAC access
+units while preserving raw camera clock observations. It has no RTSP, WebRTC,
+or downstream-consumer policy. The adapter owns the physical viewing session:
+startup retries, the observed low-to-HD SPS transition, an initial
+SPS-bearing IDR with continuous live GOP handoff, timestamp normalization,
+status, and a best-effort `IPCAM_STOP` before transport shutdown. If startup
+stabilization has consumed video after its saved IDR, the adapter resynchronizes
+at the next SPS-bearing IDR rather than exposing a reference-frame gap.
+STOP transmission is not an
+acknowledgement that the physical camera has deactivated. The adapter observes
+later SPS epochs for media forwarding and status, but does not renegotiate the
+producer's initial go2rtc codec/SDP description.
+The go2rtc producer sees only normalized media units and standard codec
+descriptions. Multiple downstream consumers continue to share go2rtc's normal
+single source instance.
+
+The adapter writes one private atomic status JSON file per stream. AppDaemon
+validates that internal file and publishes the stable
 [camera MQTT contract](mqtt-camera-contract.md); frontend consumers do not
 depend on go2rtc internals.
 

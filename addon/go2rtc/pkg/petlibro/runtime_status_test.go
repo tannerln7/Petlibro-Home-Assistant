@@ -26,7 +26,7 @@ func TestRuntimeStatusSPSAndHealth(t *testing.T) {
 	path := filepath.Join(dir, "camera.json")
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	w := newRuntimeStatusWriterWithClock(
-		path, "hd", 15*time.Second, func() time.Time { return now },
+		path, "hd", func() time.Time { return now },
 	)
 	w.setStatus("probing")
 	w.observeSPS(640, 360, 66, 30)
@@ -43,7 +43,7 @@ func TestRuntimeStatusSPSAndHealth(t *testing.T) {
 	})
 
 	status := readRuntimeStatus(t, path)
-	if status.SchemaVersion != 1 || status.Status != "online" {
+	if status.SchemaVersion != 2 || status.Status != "online" {
 		t.Fatalf("unexpected status header: %+v", status)
 	}
 	if status.ProbeResolution == nil || status.ProbeResolution.Width != 640 ||
@@ -80,7 +80,7 @@ func TestRuntimeStatusPreservesErrorOnClose(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "camera.json")
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	w := newRuntimeStatusWriterWithClock(
-		path, "sd", 0, func() time.Time { return now },
+		path, "sd", func() time.Time { return now },
 	)
 	w.setStatus("error")
 	w.markOffline()

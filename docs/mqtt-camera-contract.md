@@ -1,7 +1,7 @@
 # MQTT camera runtime contract
 
 This contract lets frontend integrations consume Petlibro camera runtime state
-without depending on go2rtc APIs, logs, or internal files. Schema version 1 is
+without depending on go2rtc APIs, logs, or internal files. Schema version 2 is
 published by the backend add-on and is intended for the future HACS integration.
 
 ## Topics and delivery
@@ -29,13 +29,12 @@ state and availability are refreshed at the configured heartbeat interval.
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "product": "PLAF203",
   "serial": "YOUR_DEVICE_SERIAL",
   "stream_name": "petlibro_plaf203_your_device_serial",
   "status": "online",
   "requested_quality": "hd",
-  "configured_hd_probe_wait_ms": 15000,
   "probe_resolution": {
     "width": 640,
     "height": 360,
@@ -75,7 +74,7 @@ ignore fields they do not recognize so compatible fields can be added later.
 
 | Field | Meaning |
 |---|---|
-| `schema_version` | Contract version; currently `1` |
+| `schema_version` | Contract version; currently `2`; version 2 removes the former configurable probe-wait field |
 | `status` | `idle`, `starting`, `probing`, `online`, `offline`, or `error` |
 | `requested_quality` | Configured `hd` or `sd` request, not measured resolution |
 | `probe_resolution` | First valid SPS resolution observed in the current camera session |

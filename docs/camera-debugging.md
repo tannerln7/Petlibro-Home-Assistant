@@ -15,7 +15,7 @@ log:
   petlibro: debug
 
 streams:
-  petlibro_feeder: petlibro://192.168.1.42?uid=PLAF20300000000ABCD0&quality=hd&send_delay_ctrl=1&hd_probe_wait_ms=15000&verbose=1
+  petlibro_feeder: petlibro://192.168.1.42?uid=PLAF20300000000ABCD0&quality=hd&verbose=1
 ```
 
 Replace the placeholder IP and UID. Use one viewer at a time while comparing
@@ -36,21 +36,22 @@ timeline.
 
 Enable traces one at a time unless full wire correlation is necessary.
 
-### Stream and probe controls
+### Camera controls
 
 | Option | Default | Effect |
 | --- | --- | --- |
 | `quality=hd` or `quality=sd` | `hd` | Selects the requested stream and builds the corresponding stream-control command |
 | `audio=true` | `false` | Requests AAC audio after video start |
 | `strict=1` | off | Drops damaged IDRs and dependent P-frames until a clean GOP begins; may freeze on genuine loss |
-| `send_delay_ctrl=1` | off | Sends the AVAPI data-delay IOCtrl immediately before `IPCAM_START` |
-| `hd_probe_wait_ms=N` | `0` | For HD, waits up to 60000 ms for a higher-resolution SPS before publishing the track |
-| `streamctrl_variant=legacy`, `standard`, or `none` | `legacy` | Selects captured Petlibro control, standard AVAPI control, or no stream-control request |
-| `streamctrl_quality=N` | derived from `quality` | Overrides the stream-control quality byte with a value from 0 through 255 |
 
-`streamctrl_variant` and `streamctrl_quality` are protocol experiments, not
-general tuning knobs. Record both the outgoing body and camera response when
-using them.
+The Petlibro stream-control body is capture-backed. The zero-valued data-delay
+control follows the public TUTK AVAPI sequence and was the packaged add-on's
+validated default; the repository does not claim that every firmware requires
+it. Both are fixed in the supported production profile rather than exposed as
+user policy. HD startup stabilization is camera-adapter behavior. Their former
+URL switches were reverse-engineering experiments and no longer affect runtime
+policy; see the
+[quarantine note](research/camera-runtime-quarantine.md).
 
 ### Transport ACK diagnostics
 
@@ -98,8 +99,8 @@ Healthy live behavior is not defined by one number, but these are useful signs:
   `0c0d`
 - `missingFragmentsTotal`, gapped IDRs, and decoder errors remain near zero
 - ACK watermark follows high-water with little or no pending backlog
-- the expected SPS transition is logged before probe selection when
-  `hd_probe_wait_ms` is enabled
+- the expected SPS transition is logged as a camera SPS epoch during the
+  adapter's bounded HD startup window
 
 The source URL written to go2rtc debug logs redacts the `uid` query value.
 Plaintext dump files can still contain device identifiers and must be handled as
@@ -129,16 +130,19 @@ producer failed during startup or codec probe, so go2rtc could not expose a
 usable stream. Inspect the go2rtc log before the RTSP request for:
 
 - bootstrap or IOCtrl failure
-- probe timeout or EOF
+- camera readiness timeout or EOF
 - absence of an SPS-bearing IDR
-- repeated startup retries
+- repeated camera startup retries
 
 ### HD request advertises 640x360
 
 The camera can begin with a 640x360 SPS and switch to 1920x1080 several seconds
-later. Enable Petlibro debug logging and look for `SPS resolution`, `spsChange`,
-and `probe selected`. Use a bounded `hd_probe_wait_ms`, such as 15000, if the
-consumer must receive an HD SDP from its first RTSP probe.
+later. Enable Petlibro debug logging and look for `camera SPS epoch`. The
+adapter waits up to 15 seconds for this transition before publishing the
+initial track. A later transition is still forwarded in-band, but the original
+go2rtc codec/SDP remains based on the startup SPS. In-band SPS is sufficient
+for some consumers, but the adapter does not currently renegotiate a changed
+profile, level, or resolution.
 
 ### Corrupt H.264 or concealment warnings
 

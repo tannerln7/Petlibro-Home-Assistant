@@ -4,43 +4,26 @@ import (
 	"bytes"
 	"encoding/binary"
 	"testing"
-	"time"
 )
 
 func TestBootstrapIOCtrlOrder(t *testing.T) {
-	for _, tt := range []struct {
-		name      string
-		sendDelay bool
-		wantIDs   []uint32
-	}{
-		{
-			name:    "captured default",
-			wantIDs: []uint32{ioctlPetlibroStreamCtrl, ioctlGetVideoModeReq, ioctlGetStreamCtrlReq, ioctlGetAudioOutFormatReq, ioctlStart},
-		},
-		{
-			name:      "AVAPI send delay immediately before start",
-			sendDelay: true,
-			wantIDs:   []uint32{ioctlPetlibroStreamCtrl, ioctlGetVideoModeReq, ioctlGetStreamCtrlReq, ioctlGetAudioOutFormatReq, ioctlInnerSendDataDelay, ioctlStart},
-		},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			c := &Client{sendDelayCtrl: tt.sendDelay}
-			cmds := c.bootstrapIOCtrls(qualityHD)
-			if len(cmds) != len(tt.wantIDs) {
-				t.Fatalf("got %d commands, want %d", len(cmds), len(tt.wantIDs))
-			}
-			for i, wantID := range tt.wantIDs {
-				if got := binary.LittleEndian.Uint32(cmds[i].payload); got != wantID {
-					t.Errorf("command %d ID=0x%04x, want 0x%04x", i, got, wantID)
-				}
-			}
-		})
+	wantIDs := []uint32{
+		ioctlPetlibroStreamCtrl, ioctlGetVideoModeReq, ioctlGetStreamCtrlReq,
+		ioctlGetAudioOutFormatReq, ioctlInnerSendDataDelay, ioctlStart,
+	}
+	cmds := (&Client{}).bootstrapIOCtrls(qualityHD)
+	if len(cmds) != len(wantIDs) {
+		t.Fatalf("got %d commands, want %d", len(cmds), len(wantIDs))
+	}
+	for i, wantID := range wantIDs {
+		if got := binary.LittleEndian.Uint32(cmds[i].payload); got != wantID {
+			t.Errorf("command %d ID=0x%04x, want 0x%04x", i, got, wantID)
+		}
 	}
 }
 
 func TestBootstrapAVAPIPayloadShapes(t *testing.T) {
-	c := &Client{sendDelayCtrl: true}
-	cmds := c.bootstrapIOCtrls(qualityHD)
+	cmds := (&Client{}).bootstrapIOCtrls(qualityHD)
 
 	delay := cmds[len(cmds)-2].payload
 	if len(delay) != 6 || binary.LittleEndian.Uint32(delay) != ioctlInnerSendDataDelay ||
@@ -57,40 +40,31 @@ func TestBootstrapAVAPIPayloadShapes(t *testing.T) {
 	}
 }
 
-func TestStreamCtrlVariants(t *testing.T) {
-	standard := ioctlBody(ioctlSetStreamCtrlReq, []byte{0, 0, 0, 0, 7, 0, 0, 0})
-	if len(standard) != 12 || binary.LittleEndian.Uint32(standard) != 0x0320 || standard[8] != 7 {
-		t.Fatalf("standard SETSTREAMCTRL=% x", standard)
+func TestBootstrapUsesCapturedStreamControl(t *testing.T) {
+	cmds := (&Client{}).bootstrapIOCtrls(qualityHD)
+	if got := cmds[0].channelFamily; got != 0x1000 {
+		t.Fatalf("SETSTREAMCTRL channel=0x%04x, want captured 0x1000", got)
 	}
-	standardClient := &Client{streamCtrlVariant: streamCtrlStandard}
-	if got := standardClient.bootstrapIOCtrls(standard)[0].channelFamily; got != 0x7000 {
-		t.Fatalf("standard SETSTREAMCTRL channel=0x%04x, want 0x7000", got)
-	}
-	c := &Client{}
-	cmds := c.bootstrapIOCtrls(nil)
-	if got := binary.LittleEndian.Uint32(cmds[0].payload); got != ioctlGetVideoModeReq {
-		t.Fatalf("none variant first IOCtrl=0x%04x", got)
-	}
-	if _, err := parseStreamCtrlVariant("bogus"); err == nil {
-		t.Fatal("invalid streamctrl variant accepted")
-	}
-	if got, err := parseStreamCtrlQuality("255", "hd"); err != nil || got != 255 {
-		t.Fatalf("quality=%d err=%v", got, err)
+	if !bytes.Equal(cmds[0].payload, qualityHD) {
+		t.Fatalf("SETSTREAMCTRL=% x, want captured body % x", cmds[0].payload, qualityHD)
 	}
 }
 
-func TestParseHDProbeWait(t *testing.T) {
-	for _, value := range []string{"", "0"} {
-		if got, err := parseHDProbeWait(value); err != nil || got != 0 {
-			t.Fatalf("parseHDProbeWait(%q)=%s, %v; want zero", value, got, err)
+func TestStreamControlForRequestedQuality(t *testing.T) {
+	for _, test := range []struct {
+		quality string
+		want    []byte
+	}{
+		{quality: "hd", want: qualityHD},
+		{quality: "sd", want: qualitySD},
+	} {
+		got := streamControlForQuality(test.quality)
+		if !bytes.Equal(got, test.want) {
+			t.Errorf("quality %q body=% x, want % x", test.quality, got, test.want)
 		}
-	}
-	if got, err := parseHDProbeWait("8000"); err != nil || got != 8*time.Second {
-		t.Fatalf("parseHDProbeWait(8000)=%s, %v", got, err)
-	}
-	for _, value := range []string{"-1", "bogus", "60001"} {
-		if _, err := parseHDProbeWait(value); err == nil {
-			t.Fatalf("parseHDProbeWait(%q) unexpectedly succeeded", value)
+		got[0] ^= 0xff
+		if bytes.Equal(got, test.want) {
+			t.Errorf("quality %q returned shared template storage", test.quality)
 		}
 	}
 }

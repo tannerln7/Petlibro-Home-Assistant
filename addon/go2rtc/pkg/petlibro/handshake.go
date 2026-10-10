@@ -3,7 +3,6 @@ package petlibro
 import (
 	"crypto/rand"
 	"encoding/binary"
-	"fmt"
 	"time"
 )
 
@@ -126,5 +125,5 @@ func (c *Client) handshake() error {
 			return nil
 		}
 	}
-	return fmt.Errorf("petlibro: LOGIN_RESP timeout")
+	return errLoginResponseTimeout
 }

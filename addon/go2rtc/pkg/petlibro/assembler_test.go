@@ -480,9 +480,8 @@ func TestNormalAudio0c0dIsNotExtended(t *testing.T) {
 // same — totalFrags + fragIdx gap detection + trailer-signature
 // end-fragment detection.
 //
-// First emit's PTS is anchored at 0 (firstFrameTs is set from the first
-// trailer-borne ts seen). Subsequent emits' PTS values are validated
-// in TestEndToEndMultiFragmentIDRMonotonicPTS.
+// The transport preserves the trailer's raw camera clock. RTP-clock
+// normalization belongs to the Camera adapter.
 func TestEndToEndMultiFragmentIDR(t *testing.T) {
 	c := newTestClient(0x4000, "hd")
 
@@ -535,17 +534,14 @@ func TestEndToEndMultiFragmentIDR(t *testing.T) {
 	if string(got.Payload) != string(wantPayload) {
 		t.Fatalf("payload mismatch:\n got=%x\nwant=%x", got.Payload, wantPayload)
 	}
-	// First emit anchors firstFrameTs := pendingFrameTs → PTS = 0.
-	if got.Timestamp != 0 {
-		t.Fatalf("first PTS=%d, want 0 (firstFrameTs anchor)", got.Timestamp)
+	if !got.HasCameraTime || got.CameraTimeMS != tsMs {
+		t.Fatalf("camera time=(%t,%d), want (true,%d)", got.HasCameraTime, got.CameraTimeMS, tsMs)
 	}
 }
 
-// TestEndToEndMultiFragmentIDRMonotonicPTS — two back-to-back IDRs
-// with strictly-increasing trailer timestamps must produce two AUs
-// whose 90 kHz PTS values are strictly increasing. The first AU
-// anchors firstFrameTs (= 0); the second AU's PTS = (ts2-ts1)*90.
-func TestEndToEndMultiFragmentIDRMonotonicPTS(t *testing.T) {
+// TestEndToEndMultiFragmentIDRPreservesCameraTime checks that transport
+// assembly does not reinterpret camera timing.
+func TestEndToEndMultiFragmentIDRPreservesCameraTime(t *testing.T) {
 	c := newTestClient(0x4000, "hd")
 
 	sendIDR := func(frameNum uint32, baseSub uint16, tsMs uint32) {
@@ -584,15 +580,11 @@ func TestEndToEndMultiFragmentIDRMonotonicPTS(t *testing.T) {
 	if len(pkts) != 2 {
 		t.Fatalf("emitted %d packets, want 2", len(pkts))
 	}
-	if pkts[0].Timestamp >= pkts[1].Timestamp {
-		t.Fatalf("PTS not monotonic: %d then %d", pkts[0].Timestamp, pkts[1].Timestamp)
-	}
-	// First PTS is 0 because firstFrameTs anchors to the first ts seen.
-	if pkts[0].Timestamp != 0 {
-		t.Fatalf("first PTS=%d, want 0 (anchored to firstFrameTs)", pkts[0].Timestamp)
-	}
-	if pkts[1].Timestamp != (200-100)*90 {
-		t.Fatalf("second PTS=%d, want %d", pkts[1].Timestamp, (200-100)*90)
+	if !pkts[0].HasCameraTime || !pkts[1].HasCameraTime ||
+		pkts[0].CameraTimeMS != 100 || pkts[1].CameraTimeMS != 200 {
+		t.Fatalf("camera times=(%t,%d),(%t,%d)",
+			pkts[0].HasCameraTime, pkts[0].CameraTimeMS,
+			pkts[1].HasCameraTime, pkts[1].CameraTimeMS)
 	}
 }
 

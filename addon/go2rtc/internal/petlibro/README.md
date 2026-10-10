@@ -35,12 +35,10 @@ Core options:
 | `quality` | no | `hd` | Requests and selects `hd` or `sd` video |
 | `audio` | no | `false` | Requests AAC audio when `true` or `1` |
 | `strict` | no | `false` | Drops damaged IDRs and dependent GOP frames instead of emitting a gapped IDR |
-| `hd_probe_wait_ms` | no | `0` | Waits up to 60000 ms for a higher-resolution SPS before publishing an HD track |
 | `verbose` | no | `false` | Enables compact bootstrap, probe, health, and ACK diagnostics |
 
 The tracked [`go2rtc.example.yaml`](../../go2rtc.example.yaml) contains a
-recommended PLAF203 configuration. Experimental ACK, stream-control, trace, and
-capture options are documented in the
+recommended PLAF203 configuration. Trace and capture options are documented in the
 [Petlibro debugging guide](../../../../docs/camera-debugging.md).
 
 ## Discovery
@@ -53,15 +51,16 @@ host networking.
 
 ## Quality and codec probe
 
-The default `legacy` stream-control path sends the captured Petlibro control
-body for the requested quality before `IPCAM_START`. Stream selection is then
-enforced from each frame's metadata byte.
+The transport sends the captured Petlibro stream-control body for the requested
+quality before `IPCAM_START`, followed by the standard AVAPI pacing control.
+Resolution is learned from H.264 SPS; FRAMEINFO `onlineNum` is an AV-client
+count/state and is never used as a stream selector.
 
 On the tested PLAF203, an HD session can start with a 640x360 SPS and switch to
-1920x1080 after several seconds. By default, go2rtc publishes the first usable
-SPS. Set `hd_probe_wait_ms` when the first advertised RTSP description must wait
-for a higher resolution. The bounded wait ends when a higher resolution appears
-or the timeout expires.
+1920x1080 after several seconds. The camera adapter owns this quirk and waits up
+to 15 seconds for the higher-resolution SPS before exposing the source. It then
+returns the selected SPS-bearing IDR as the first media unit. This is fixed
+camera normalization rather than a go2rtc probe-duration setting.
 
 Strict mode affects damaged-frame output only. It does not change stream
 selection, packet parsing, ACK tracking, or recovery.
@@ -72,7 +71,8 @@ The post-login flow is:
 
 ```text
 LAN_SEARCH3 -> KNOCK2 -> LOGIN A/B -> stream/bootstrap IOCtrls
-  -> AV-ready ACK -> receive/maintenance loops -> H.264/AAC producer
+  -> AV-ready ACK -> receive/maintenance loops -> H.264/AAC access units
+  -> PLAF203 camera normalization -> go2rtc producer
 ```
 
 The parser supports both the normal 36-byte media header and the alternate
@@ -91,6 +91,10 @@ Wire constants and captured templates live in
 [`pkg/petlibro/templates.go`](../../pkg/petlibro/templates.go). Parser,
 assembler, ACK, and bootstrap tests live beside the implementation in
 [`pkg/petlibro`](../../pkg/petlibro/).
+
+Session close sends the known `IPCAM_STOP` IOCtrl once before UDP teardown. The
+adapter, rather than a transient downstream consumer, owns that physical media
+lifetime.
 
 For packet formats, counters, dump replay, and failure diagnosis, see the
 [debugging guide](../../../../docs/camera-debugging.md). For code structure and

@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const runtimeStatusSchemaVersion = 1
+const runtimeStatusSchemaVersion = 2
 
 type runtimeResolution struct {
 	Width      uint16 `json:"width"`
@@ -33,19 +33,18 @@ type runtimeHealth struct {
 }
 
 type cameraRuntimeStatus struct {
-	SchemaVersion           int                 `json:"schema_version"`
-	Status                  string              `json:"status"`
-	RequestedQuality        string              `json:"requested_quality"`
-	ConfiguredHDProbeWaitMS int64               `json:"configured_hd_probe_wait_ms"`
-	ProbeResolution         *runtimeResolution  `json:"probe_resolution"`
-	ActualResolution        *runtimeResolution  `json:"actual_resolution"`
-	HDTransition            runtimeHDTransition `json:"hd_transition"`
-	LastUpdate              string              `json:"last_update"`
-	Health                  runtimeHealth       `json:"health"`
+	SchemaVersion    int                 `json:"schema_version"`
+	Status           string              `json:"status"`
+	RequestedQuality string              `json:"requested_quality"`
+	ProbeResolution  *runtimeResolution  `json:"probe_resolution"`
+	ActualResolution *runtimeResolution  `json:"actual_resolution"`
+	HDTransition     runtimeHDTransition `json:"hd_transition"`
+	LastUpdate       string              `json:"last_update"`
+	Health           runtimeHealth       `json:"health"`
 }
 
-// runtimeStatusWriter is the structured hand-off between the Petlibro client
-// and the add-on controller. It serializes every mutation and replaces the
+// runtimeStatusWriter is the structured hand-off between the PLAF203 camera
+// adapter and the add-on controller. It serializes every mutation and replaces the
 // destination atomically so readers never observe partial JSON.
 type runtimeStatusWriter struct {
 	mu         sync.Mutex
@@ -57,12 +56,12 @@ type runtimeStatusWriter struct {
 	lastError  string
 }
 
-func newRuntimeStatusWriter(path, quality string, hdProbeWait time.Duration) *runtimeStatusWriter {
-	return newRuntimeStatusWriterWithClock(path, quality, hdProbeWait, time.Now)
+func newRuntimeStatusWriter(path, quality string) *runtimeStatusWriter {
+	return newRuntimeStatusWriterWithClock(path, quality, time.Now)
 }
 
 func newRuntimeStatusWriterWithClock(
-	path, quality string, hdProbeWait time.Duration, now func() time.Time,
+	path, quality string, now func() time.Time,
 ) *runtimeStatusWriter {
 	if path == "" {
 		return nil
@@ -71,11 +70,10 @@ func newRuntimeStatusWriterWithClock(
 		path: path,
 		now:  now,
 		state: cameraRuntimeStatus{
-			SchemaVersion:           runtimeStatusSchemaVersion,
-			Status:                  "starting",
-			RequestedQuality:        quality,
-			ConfiguredHDProbeWaitMS: hdProbeWait.Milliseconds(),
-			HDTransition:            runtimeHDTransition{},
+			SchemaVersion:    runtimeStatusSchemaVersion,
+			Status:           "starting",
+			RequestedQuality: quality,
+			HDTransition:     runtimeHDTransition{},
 		},
 	}
 	w.write()

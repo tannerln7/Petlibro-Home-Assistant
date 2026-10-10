@@ -11,7 +11,7 @@ from typing import Callable
 from petlibro_logging import PetlibroLogger
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 VALID_STATUSES = {"idle", "starting", "probing", "online", "offline", "error"}
 POLL_INTERVAL_SECONDS = 2
 
@@ -73,7 +73,6 @@ class CameraMetadataPublisher:
         serial: str,
         stream_name: str,
         requested_quality: str,
-        configured_hd_probe_wait_ms: int,
         rtsp_port: int,
         status_file: str,
         topic_prefix: str,
@@ -88,7 +87,6 @@ class CameraMetadataPublisher:
         self.serial = serial
         self.stream_name = stream_name
         self.requested_quality = requested_quality
-        self.configured_hd_probe_wait_ms = configured_hd_probe_wait_ms
         self.rtsp_port = rtsp_port
         self.status_file = Path(status_file)
         self.topic_prefix = topic_prefix.rstrip("/") or (
@@ -191,11 +189,6 @@ class CameraMetadataPublisher:
             raise ValueError("invalid requested camera quality")
         if requested_quality != self.requested_quality:
             raise ValueError("camera runtime quality does not match configuration")
-        probe_wait = _nonnegative_int(
-            raw.get("configured_hd_probe_wait_ms"), "configured_hd_probe_wait_ms"
-        )
-        if probe_wait != self.configured_hd_probe_wait_ms:
-            raise ValueError("camera runtime probe wait does not match configuration")
         source_update = _parse_timestamp(raw.get("last_update"))
 
         transition = raw.get("hd_transition")
@@ -263,7 +256,6 @@ class CameraMetadataPublisher:
             "stream_name": self.stream_name,
             "status": status,
             "requested_quality": self.requested_quality,
-            "configured_hd_probe_wait_ms": self.configured_hd_probe_wait_ms,
             "probe_resolution": None,
             "actual_resolution": None,
             "hd_transition": {"observed": False, "elapsed_ms": None},

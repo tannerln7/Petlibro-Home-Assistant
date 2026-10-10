@@ -11,7 +11,7 @@ import (
 // bootstrap runs the post-LOGIN IOCtrl sequence that primes the
 // camera to start streaming: captured timing feedback/ACK/probe, then SETSTREAMCTRL +
 // standard queries (GET_VIDEOMODE/GETSTREAMCTRL/GETAUDIOOUTFORMAT) +
-// optional SND_DATA_DELAY + IPCAM_START + optional AUDIOSTART, with
+// SND_DATA_DELAY + IPCAM_START + optional AUDIOSTART, with
 // per-iteration ack collection, ending with the
 // AV-ready ack that switches the camera into AV-streaming mode and
 // initialises the wrap-counter state for the assembler.
@@ -27,6 +27,7 @@ import (
 type bootstrapCmd struct {
 	channelFamily uint16
 	payload       []byte
+	startsMedia   bool
 }
 
 func (c *Client) debugIOCtrlResponse(inner []byte) {
@@ -45,33 +46,39 @@ func (c *Client) debugIOCtrlResponse(inner []byte) {
 }
 
 func (c *Client) bootstrapIOCtrls(stream []byte) []bootstrapCmd {
-	cmds := make([]bootstrapCmd, 0, 7)
-	if len(stream) != 0 {
-		streamChan := uint16(0x1000)
-		if c.streamCtrlVariant == streamCtrlStandard {
-			streamChan = 0x7000
-		}
-		cmds = append(cmds, bootstrapCmd{streamChan, stream})
-	}
+	cmds := []bootstrapCmd{{channelFamily: 0x1000, payload: stream}}
 	cmds = append(cmds, []bootstrapCmd{
-		{0x7000, ioctlBody12(ioctlGetVideoModeReq)},
-		{0x7000, ioctlBody12(ioctlGetStreamCtrlReq)},
-		{0x7000, ioctlBody12(ioctlGetAudioOutFormatReq)},
+		{channelFamily: 0x7000, payload: ioctlBody12(ioctlGetVideoModeReq)},
+		{channelFamily: 0x7000, payload: ioctlBody12(ioctlGetStreamCtrlReq)},
+		{channelFamily: 0x7000, payload: ioctlBody12(ioctlGetAudioOutFormatReq)},
 	}...)
-	if c.sendDelayCtrl {
-		// Match the public TUTK AVAPI Linux client: send the system
-		// pacing IOCTRL with uint16(0) immediately before IPCAM_START.
-		cmds = append(cmds, bootstrapCmd{0x7000, ioctlBody(ioctlInnerSendDataDelay, []byte{0, 0})})
-	}
-	cmds = append(cmds, bootstrapCmd{0x7000, ioctlBody12(ioctlStart)})
+	// Match the public TUTK AVAPI Linux client. This is part of the known
+	// production handshake, not a user-selectable camera policy.
+	cmds = append(cmds, bootstrapCmd{channelFamily: 0x7000, payload: ioctlBody(ioctlInnerSendDataDelay, []byte{0, 0})})
+	cmds = append(cmds, bootstrapCmd{channelFamily: 0x7000, payload: ioctlBody12(ioctlStart), startsMedia: true})
 	if c.audio {
 		// The app enables audio AFTER IPCAM_START via a separate
 		// 0x0300 AUDIOSTART; do not also pack it into IPCAM_START.
 		audioOn := ioctlBody12(ioctlAudioOn)
 		audioOn[4] = 0x01
-		cmds = append(cmds, bootstrapCmd{0x7000, audioOn})
+		cmds = append(cmds, bootstrapCmd{channelFamily: 0x7000, payload: audioOn})
 	}
 	return cmds
+}
+
+// sendBootstrapCommand records START eligibility immediately after the START
+// datagram is successfully handed to UDP. It deliberately does not claim that
+// the camera received or acted on the command; it only means Close must make a
+// best-effort STOP attempt if the remainder of bootstrap fails.
+func (c *Client) sendBootstrapCommand(cm bootstrapCmd, ordinal uint16) error {
+	if err := c.sendInner(innerData(c.icounter, cm.channelFamily, ordinal, cm.payload)); err != nil {
+		return err
+	}
+	c.icounter++
+	if cm.startsMedia {
+		c.mediaStartSent.Store(true)
+	}
+	return nil
 }
 
 func (c *Client) bootstrap() error {
@@ -100,15 +107,17 @@ func (c *Client) bootstrap() error {
 	}
 	c.icounter++
 
-	// 2. IOCtrl bootstrap commands — match the official Petlibro app's
-	// sequence (verified against PCAPdroid_22_May_08_31_19.pcap), with
-	// an optional stock-AVAPI pacing command immediately before start:
+	// 2. IOCtrl bootstrap commands — use the Petlibro control order/body
+	// verified against PCAPdroid_22_May_08_31_19.pcap, plus the public TUTK
+	// AVAPI pacing command immediately before start. The pacing command was
+	// the packaged add-on's validated default; it is not known to be required
+	// by every firmware revision.
 	//
-	//	1. SETSTREAMCTRL HD     (chan=0x1000, chan=1 type=0x3fff)
+	//	1. SETSTREAMCTRL HD/SD  (chan=0x1000, chan=1 type=0x3fff)
 	//	2. GET_VIDEOMODE_REQ    (chan=0x7000, IOCtrl 0x0372)
 	//	3. GETSTREAMCTRL_REQ    (chan=0x7000, IOCtrl 0x0322)
 	//	4. GETAUDIOOUTFORMAT_REQ (chan=0x7000, IOCtrl 0x032A)
-	//	5. (optional) INNER_SND_DATA_DELAY (chan=0x7000, uint16 value=0)
+	//	5. INNER_SND_DATA_DELAY (chan=0x7000, uint16 value=0)
 	//	6. IPCAM_START          (chan=0x7000, 8-byte zero AVStream body)
 	//	7. (optional) AUDIOSTART if audio=true
 	//
@@ -117,39 +126,16 @@ func (c *Client) bootstrap() error {
 	// On a real HD-capable camera this resulted in the camera dual-
 	// streaming HD + SD with the SD IDR sometimes winning probe and
 	// breaking decoding.
-	var stream []byte
-	switch c.streamCtrlVariant {
-	case streamCtrlNone:
-	case streamCtrlStandard:
-		payload := make([]byte, 8) // u32 channel + u8 quality + 3 reserved
-		payload[4] = c.streamCtrlQuality
-		stream = ioctlBody(ioctlSetStreamCtrlReq, payload)
-	default:
-		if c.quality == "sd" {
-			stream = append([]byte(nil), qualitySD...)
-		} else {
-			stream = append([]byte(nil), qualityHD...)
-		}
-		stream[4] = c.streamCtrlQuality
-	}
-	if len(stream) == 0 {
-		log.Debug().Msgf("petlibro: bootstrap SETSTREAMCTRL variant=%s quality=%q configuredQuality=%d skipped", c.streamCtrlVariant, c.quality, c.streamCtrlQuality)
-	} else {
-		streamChan := uint16(0x1000)
-		if c.streamCtrlVariant == streamCtrlStandard {
-			streamChan = 0x7000
-		}
-		log.Debug().Msgf("petlibro: bootstrap SETSTREAMCTRL variant=%s quality=%q configuredQuality=%d chan=0x%04x body=% x", c.streamCtrlVariant, c.quality, c.streamCtrlQuality, streamChan, stream)
-	}
-	log.Debug().Msgf("petlibro: bootstrap send_delay_ctrl=%t IPCAM_START body=% x", c.sendDelayCtrl, ioctlBody12(ioctlStart))
+	stream := streamControlForQuality(c.quality)
+	log.Debug().Msgf("petlibro: bootstrap SETSTREAMCTRL quality=%q chan=0x1000 body=% x", c.quality, stream)
+	log.Debug().Msgf("petlibro: bootstrap IPCAM_START body=% x", ioctlBody12(ioctlStart))
 	cmds := c.bootstrapIOCtrls(stream)
 
 	var bootstrapAVMax uint16 = 0x3FFF
 	for i, cm := range cmds {
-		if err := c.sendInner(innerData(c.icounter, cm.channelFamily, uint16(i), cm.payload)); err != nil {
+		if err := c.sendBootstrapCommand(cm, uint16(i)); err != nil {
 			return err
 		}
-		c.icounter++
 
 		// 40 ms per-IOCtrl ack window.  Calibrated against PLAF203 on
 		// 2.4 GHz Wi-Fi where the camera typically responds in
@@ -221,8 +207,15 @@ func (c *Client) bootstrap() error {
 	c.avBuffer = make(map[uint64]*pendingFrag)
 	c.initACKTracking(uint64(bootstrapAVMax))
 	if c.verbose {
-		log.Debug().Msgf("petlibro: bootstrap ready commands=%d AVMax=0x%04x avNext=0x%x reliableRecvACK=0x%04x streamctrlVariant=%s",
-			len(cmds), bootstrapAVMax, c.avNextExt, c.reliableRecvACK, c.streamCtrlVariant)
+		log.Debug().Msgf("petlibro: bootstrap ready commands=%d AVMax=0x%04x avNext=0x%x reliableRecvACK=0x%04x",
+			len(cmds), bootstrapAVMax, c.avNextExt, c.reliableRecvACK)
 	}
 	return nil
+}
+
+func streamControlForQuality(quality string) []byte {
+	if quality == "sd" {
+		return append([]byte(nil), qualitySD...)
+	}
+	return append([]byte(nil), qualityHD...)
 }

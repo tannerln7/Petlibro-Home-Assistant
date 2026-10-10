@@ -68,12 +68,6 @@ configuration:
   camera_quality:
     name: Camera quality
     description: Request the HD or SD video stream.
-  send_delay_ctrl:
-    name: Send delay control
-    description: Send the AVAPI data-delay control before starting media.
-  hd_probe_wait_ms:
-    name: HD probe wait
-    description: Milliseconds to wait for a higher-resolution SPS before advertising the initial stream.
   go2rtc_api_port:
     name: go2rtc API port
     description: TCP port for the go2rtc web interface and API.

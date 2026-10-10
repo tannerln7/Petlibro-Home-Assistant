@@ -13,7 +13,8 @@
 //	bootstrap.go  — post-LOGIN IOCtrl bootstrap (SETSTREAMCTRL → IPCAM_START)
 //	recv.go       — UDP recv/processor goroutines + maintenance loop + stats
 //	assembler.go  — fragment reassembly (wrapSeq, channelAsm, parseDatagram)
-//	producer.go   — wraps the Client into a go2rtc Producer
+//	camera.go     — PLAF203 lifecycle/readiness/timestamp normalization adapter
+//	producer.go   — exposes normalized Camera media to go2rtc
 //	runtime_status.go — atomic structured camera status for backend consumers
 //
 // petlibro divergence vs pkg/tutk: petlibro shares pkg/tutk's Luffy
@@ -29,6 +30,7 @@ package petlibro
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -50,13 +52,7 @@ const (
 	CodecAACADTS byte = 0x87
 )
 
-type streamCtrlVariant string
-
 const (
-	streamCtrlLegacy   streamCtrlVariant = "legacy"
-	streamCtrlStandard streamCtrlVariant = "standard"
-	streamCtrlNone     streamCtrlVariant = "none"
-
 	defaultACKInterval = 25 * time.Millisecond
 	// This local bound keeps type-0x09 comfortably below a UDP MTU. If more
 	// holes exist, AVHigh is reduced before the first hole that
@@ -90,7 +86,8 @@ func SetLogger(l zerolog.Logger) { log = l }
 type Packet struct {
 	Codec         byte
 	Payload       []byte
-	Timestamp     uint32
+	CameraTimeMS  uint32
+	HasCameraTime bool
 	FrameNo       uint32
 	CameraFrameNo uint32
 	Channel       byte
@@ -108,6 +105,7 @@ type Client struct {
 	kseq     uint16 // outer kalay seq (byte 6..7)
 	icounter uint16 // inner cmd counter (byte 4..5)
 	txMu     sync.Mutex
+	innerMu  sync.Mutex // serializes live IOCtrl counters and shutdown
 
 	// in-order reassembly
 	wrap           wrapSeq
@@ -139,46 +137,32 @@ type Client struct {
 	emitAudioSeq uint32
 	startedAt    time.Time
 
-	// frames carries assembled AUs to the consumer.  done is closed
-	// by Close() to signal every worker goroutine to exit; we select
-	// on it instead of carrying a separate closed-bool + mutex +
-	// recover() dance.  Closing done first means the
-	// send-on-closed-frames race is structurally impossible — every
-	// caller writing to frames first selects on done.
-	frames        chan *Packet
-	done          chan struct{}
-	closeOnce     sync.Once
-	d2cPlainDump  *os.File
-	d2cDumpMu     sync.Mutex
-	c2dPlainDump  *os.File
-	c2dDumpMu     sync.Mutex
-	runtimeStatus *runtimeStatusWriter
-
-	audio             bool
-	quality           string
-	strict            bool
-	verbose           bool
-	traceACK          bool
-	traceFrag         bool
-	traceFrameInfo    bool
-	tracePackets      bool
-	sendDelayCtrl     bool
-	streamCtrlVariant streamCtrlVariant
-	streamCtrlQuality byte
-	hdProbeWait       time.Duration
-	keyAsm            channelAsm // key/IDR-family assembly state for marker 0x05
-	interAsm          channelAsm // inter-frame assembly state for marker 0x07
-	gopPoisoned       bool       // strict mode only: a fragment was lost in this GOP — drop P-frames until next clean IDR
-
-	// Camera-clock PTS state.  pendingFrameTs is the millisecond value
-	// extracted from the most recently seen metadata trailer; it
-	// becomes the PTS for the next emitted AU.  firstFrameTs is the
-	// first ts we saw, used to anchor the 90kHz PTS at 0.
-	pendingFrameTs uint32
-	havePendingTs  bool
-	firstFrameTs   uint32
-	haveFirstTs    bool
-	lastEmitTs     uint32 // last PTS we emitted (in 90 kHz) — monotonic guard
+	// frames carries assembled AUs to the camera adapter. done is the sole
+	// closure signal. frames remains open because processor goroutines are not
+	// joined and closing it would permit a send-on-closed-channel race.
+	frames    chan *Packet
+	done      chan struct{}
+	closeOnce sync.Once
+	closeErr  error
+	// mediaStartSent means an IPCAM_START datagram was successfully written,
+	// so shutdown owes the session a best-effort IPCAM_STOP. It is not proof
+	// that the camera received START or that physical media became active.
+	mediaStartSent atomic.Bool
+	d2cPlainDump   *os.File
+	d2cDumpMu      sync.Mutex
+	c2dPlainDump   *os.File
+	c2dDumpMu      sync.Mutex
+	audio          bool
+	quality        string
+	strict         bool
+	verbose        bool
+	traceACK       bool
+	traceFrag      bool
+	traceFrameInfo bool
+	tracePackets   bool
+	keyAsm         channelAsm // key/IDR-family assembly state for marker 0x05
+	interAsm       channelAsm // inter-frame assembly state for marker 0x07
+	gopPoisoned    bool       // strict mode only: a fragment was lost in this GOP — drop P-frames until next clean IDR
 
 	stats         counters
 	prevStats     countersSnapshot
@@ -197,7 +181,6 @@ type Client struct {
 	frameInfoCodec      uint16
 	frameInfoFlag       byte
 	frameInfoOnlineNum  byte
-	lastSPS             []byte
 	ackCurrStallWarned  bool
 	stallStatsActive    bool
 	stallStatsRepeat    uint64
@@ -207,6 +190,8 @@ type Client struct {
 	stallStatsCurrent   uint64
 	stallStatsPending   uint64
 }
+
+var errLoginResponseTimeout = errors.New("petlibro: LOGIN_RESP timeout")
 
 // counters holds running totals for a stream-health summary. Atomic
 // fields because the reader goroutine writes bytesIn/pktsIn/
@@ -440,17 +425,16 @@ func (c *counters) snapshot() countersSnapshot {
 	}
 }
 
-// Dial parses a petlibro:// URL, opens a UDP socket, optionally
+// dialTransport parses Petlibro addressing/diagnostics, opens a UDP socket, optionally
 // discovers the camera address by UID, runs LAN_SEARCH3 + KNOCK2 +
 // LOGIN A/B + the Petlibro bootstrap, then starts the receive
-// worker.  Returns once IPCAM_START has been sent and the AV-ready ack
-// acknowledged — the camera will then stream video (and audio if
-// &audio=true).
+// worker. Returns once IPCAM_START has been sent and the AV-ready ack is
+// acknowledged. The camera adapter supplies requested quality and audio state.
 //
 // URL shape:
 //
-//	petlibro://<host>?uid=<UID>[&audio=true][&quality=hd|sd][&send_delay_ctrl=1][&hd_probe_wait_ms=N][&status_file=<path>][&strict=1][&verbose=1]
-//	petlibro://?uid=<UID>[&subnet=192.168.1.0/24][&audio=true][&quality=hd|sd][&send_delay_ctrl=1][&hd_probe_wait_ms=N][&status_file=<path>][&strict=1][&verbose=1]
+//	petlibro://<host>?uid=<UID>[&strict=1][&verbose=1]
+//	petlibro://?uid=<UID>[&subnet=192.168.1.0/24][&strict=1][&verbose=1]
 //
 //	strict=1 — drop any IDR with a fragment loss and poison the GOP
 //	           (pristine pixels at the cost of multi-second freezes
@@ -458,23 +442,15 @@ func (c *counters) snapshot() countersSnapshot {
 //	           with localised macroblock artefacts and drop gapped
 //	           P-frames (avoids cascading inter-frame errors).
 //
-//	send_delay_ctrl=1 sends TUTK IOTYPE_INNER_SND_DATA_DELAY immediately
-//	before IPCAM_START, as the public AVAPI Linux client sample does.
-//
 //	dump_plain and dump_d2c_plain record decrypted device-to-client packets.
 //	dump_c2d_plain records timestamped client-to-device inner bodies.
-//
-// Matches the project-wide Dial(rawURL string) (*Client, error)
-// signature used by every other UDP/TCP camera adapter — see
-// pkg/wyze, pkg/tapo, pkg/kasa, pkg/dvrip.
 //
 // petlibro divergence vs pkg/tutk: pkg/tutk's Dial
 // (pkg/tutk/conn.go:12) takes (host, uid, username, password)
 // positionally and goes through Nebula/relay if the port is 10001 —
-// neither applies here.  Petlibro is LAN-only and parses options out
-// of a URL because the per-camera tweaks (strict/quality/verbose) are
-// petlibro-specific runtime flags.
-func Dial(rawURL string) (*Client, error) {
+// neither applies here. Petlibro is LAN-only; dialTransport parses connection
+// and diagnostic options while camera.go supplies normalized media intent.
+func dialTransport(rawURL, quality string, audio bool) (*Client, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("petlibro: bad url: %w", err)
@@ -491,23 +467,6 @@ func Dial(rawURL string) (*Client, error) {
 	if len(uid) != 20 {
 		return nil, fmt.Errorf("petlibro: uid must be 20 chars (got %d)", len(uid))
 	}
-	quality := q.Get("quality")
-	if quality == "" {
-		quality = "hd"
-	}
-	streamVariant, err := parseStreamCtrlVariant(q.Get("streamctrl_variant"))
-	if err != nil {
-		return nil, err
-	}
-	streamQuality, err := parseStreamCtrlQuality(q.Get("streamctrl_quality"), quality)
-	if err != nil {
-		return nil, err
-	}
-	hdProbeWait, err := parseHDProbeWait(q.Get("hd_probe_wait_ms"))
-	if err != nil {
-		return nil, err
-	}
-
 	var cam *net.UDPAddr
 	if host := u.Host; host != "" {
 		if _, _, err := net.SplitHostPort(host); err != nil {
@@ -587,42 +546,35 @@ func Dial(rawURL string) (*Client, error) {
 		}
 	}
 	c := &Client{
-		conn:              udp,
-		cam:               cam,
-		uid:               uid,
-		nonce:             nonce,
-		kseq:              2,
-		audio:             boolQuery(q, "audio"),
-		quality:           quality,
-		strict:            boolQuery(q, "strict"),
-		verbose:           verbose,
-		traceACK:          boolQuery(q, "trace_ack"),
-		traceFrag:         boolQuery(q, "trace_frag"),
-		traceFrameInfo:    boolQuery(q, "trace_frameinfo"),
-		tracePackets:      boolQuery(q, "trace_packets"),
-		sendDelayCtrl:     boolQuery(q, "send_delay_ctrl"),
-		streamCtrlVariant: streamVariant,
-		streamCtrlQuality: streamQuality,
-		hdProbeWait:       hdProbeWait,
-		frames:            make(chan *Packet, 1024),
-		done:              make(chan struct{}),
-		d2cPlainDump:      d2cPlainDump,
-		c2dPlainDump:      c2dPlainDump,
-		runtimeStatus:     newRuntimeStatusWriter(q.Get("status_file"), quality, hdProbeWait),
+		conn:           udp,
+		cam:            cam,
+		uid:            uid,
+		nonce:          nonce,
+		kseq:           2,
+		audio:          audio,
+		quality:        quality,
+		strict:         boolQuery(q, "strict"),
+		verbose:        verbose,
+		traceACK:       boolQuery(q, "trace_ack"),
+		traceFrag:      boolQuery(q, "trace_frag"),
+		traceFrameInfo: boolQuery(q, "trace_frameinfo"),
+		tracePackets:   boolQuery(q, "trace_packets"),
+		frames:         make(chan *Packet, 1024),
+		done:           make(chan struct{}),
+		d2cPlainDump:   d2cPlainDump,
+		c2dPlainDump:   c2dPlainDump,
 	}
 	if c.verbose {
-		log.Debug().Msgf("petlibro: debug config sendDelayCtrl=%t streamctrlVariant=%s streamctrlQuality=%d hdProbeWait=%s traces ack=%t frag=%t frameinfo=%t packets=%t",
-			c.sendDelayCtrl, c.streamCtrlVariant, c.streamCtrlQuality, c.hdProbeWait,
+		log.Debug().Msgf("petlibro: debug config quality=%s strict=%t traces ack=%t frag=%t frameinfo=%t packets=%t",
+			c.quality, c.strict,
 			c.traceACK, c.traceFrag, c.traceFrameInfo, c.tracePackets)
 	}
 	if err := c.handshake(); err != nil {
-		c.runtimeStatus.setStatus("error")
 		clearDiscoveryCache(uid, q["subnet"])
 		_ = c.Close()
 		return nil, err
 	}
 	if err := c.bootstrap(); err != nil {
-		c.runtimeStatus.setStatus("error")
 		clearDiscoveryCache(uid, q["subnet"])
 		_ = c.Close()
 		return nil, err
@@ -630,46 +582,7 @@ func Dial(rawURL string) (*Client, error) {
 
 	go c.recvLoop()
 	go c.maintenanceLoop()
-	c.runtimeStatus.setStatus("probing")
 	return c, nil
-}
-
-func parseStreamCtrlVariant(value string) (streamCtrlVariant, error) {
-	if value == "" {
-		return streamCtrlLegacy, nil
-	}
-	v := streamCtrlVariant(value)
-	switch v {
-	case streamCtrlLegacy, streamCtrlStandard, streamCtrlNone:
-		return v, nil
-	default:
-		return "", fmt.Errorf("petlibro: streamctrl_variant must be legacy, standard, or none (got %q)", value)
-	}
-}
-
-func parseStreamCtrlQuality(value, quality string) (byte, error) {
-	if value == "" {
-		if quality == "sd" {
-			return 2, nil
-		}
-		return 1, nil
-	}
-	n, err := strconv.ParseUint(value, 10, 8)
-	if err != nil {
-		return 0, fmt.Errorf("petlibro: streamctrl_quality must be an integer from 0 to 255 (got %q)", value)
-	}
-	return byte(n), nil
-}
-
-func parseHDProbeWait(value string) (time.Duration, error) {
-	if value == "" || value == "0" {
-		return 0, nil
-	}
-	ms, err := strconv.ParseUint(value, 10, 16)
-	if err != nil || ms > 60000 {
-		return 0, fmt.Errorf("petlibro: hd_probe_wait_ms must be an integer from 0 to 60000 (got %q)", value)
-	}
-	return time.Duration(ms) * time.Millisecond, nil
 }
 
 // boolQuery parses a URL query bool using strconv.ParseBool's
@@ -756,37 +669,30 @@ func (c *Client) recvOne(timeout time.Duration) ([]byte, error) {
 	return tutk.ReverseTransCodePartial(nil, buf[:n]), nil
 }
 
-// --- public surface ------------------------------------------------------
-
-// ReadPacket blocks until a Packet is available or the connection closes.
-func (c *Client) ReadPacket() (*Packet, error) {
-	select {
-	case <-c.done:
-		return nil, io.EOF
-	case p, ok := <-c.frames:
-		if !ok {
-			return nil, io.EOF
-		}
-		return p, nil
-	}
-}
-
-// Close shuts the session down.  closeOnce.Do(close(done) +
-// conn.Close() + close(frames)) — closing done before frames means
-// every goroutine selecting on done (recvLoop, readerGoroutine,
-// maintenanceLoop, queuePacket, ReadPacket) drops out before we touch
-// the frames channel they were writing to, so the
-// send-on-closed-channel race is structurally impossible.  Investigated
+// Close makes a best-effort request to stop media at the camera and then shuts
+// the session down. A successful UDP write does not confirm physical shutdown.
+// done is the sole closure signal; frames is deliberately not closed because
+// UDP processor goroutines aren't joined and a select could otherwise choose
+// a concurrent send after done became ready. Investigated
 // pkg/wyze (closeMu+bool), pkg/tapo / pkg/dvrip (bare conn.Close()),
 // and pkg/onvif (no Close).  None of those use a done channel today,
-// but for a multi-goroutine UDP client this is the simpler, mutex-free
-// equivalent of wyze's pattern.
+// but for a multi-goroutine UDP client this is the simpler equivalent of
+// wyze's pattern.
 func (c *Client) Close() error {
 	c.closeOnce.Do(func() {
-		c.runtimeStatus.updateHealth(c.stats.snapshot())
-		c.runtimeStatus.markOffline()
-		close(c.done)
-		_ = c.conn.Close()
+		if c.done != nil {
+			close(c.done)
+		}
+		if c.mediaStartSent.Swap(false) {
+			c.innerMu.Lock()
+			body := innerData(c.icounter, 0x7000, 0, ioctlBody12(ioctlStop))
+			c.icounter++
+			c.closeErr = c.sendInner(body)
+			c.innerMu.Unlock()
+		}
+		if c.conn != nil {
+			_ = c.conn.Close()
+		}
 		c.d2cDumpMu.Lock()
 		if c.d2cPlainDump != nil {
 			_ = c.d2cPlainDump.Close()
@@ -797,18 +703,12 @@ func (c *Client) Close() error {
 			_ = c.c2dPlainDump.Close()
 		}
 		c.c2dDumpMu.Unlock()
-		close(c.frames)
 	})
-	return nil
+	return c.closeErr
 }
 
-func (c *Client) RemoteAddr() net.Addr { return c.cam }
-func (c *Client) Protocol() string     { return "petlibro+udp" }
-func (c *Client) Audio() bool          { return c.audio }
-
-func (c *Client) SetDeadline(t time.Time) error {
-	if c.conn == nil {
-		return nil
-	}
-	return c.conn.SetReadDeadline(t)
-}
+func (c *Client) RemoteAddr() net.Addr             { return c.cam }
+func (c *Client) Protocol() string                 { return "petlibro+udp" }
+func (c *Client) packets() <-chan *Packet          { return c.frames }
+func (c *Client) doneSignal() <-chan struct{}      { return c.done }
+func (c *Client) healthSnapshot() countersSnapshot { return c.stats.snapshot() }

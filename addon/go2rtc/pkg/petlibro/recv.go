@@ -318,7 +318,6 @@ func (c *Client) recvLoop() {
 
 	lastForce := time.Now()
 	lastStats := time.Now()
-	lastRuntimeStatus := time.Now()
 	tick := time.NewTicker(20 * time.Millisecond)
 	defer tick.Stop()
 
@@ -348,10 +347,6 @@ func (c *Client) recvLoop() {
 		if c.verbose && time.Since(lastStats) > 5*time.Second {
 			c.dumpStats()
 			lastStats = time.Now()
-		}
-		if c.runtimeStatus != nil && time.Since(lastRuntimeStatus) > 5*time.Second {
-			c.runtimeStatus.updateHealth(c.stats.snapshot())
-			lastRuntimeStatus = time.Now()
 		}
 	}
 }
@@ -541,6 +536,13 @@ func (c *Client) maintenanceLoop() {
 		case <-alive.C:
 			_ = c.send(buildAliveC2D(c.nonce))
 		case <-ack.C:
+			c.innerMu.Lock()
+			select {
+			case <-c.done:
+				c.innerMu.Unlock()
+				return
+			default:
+			}
 			tick := tick16()
 			a, window := c.nextTransportACK(c.icounter, tick)
 			body := a.marshal()
@@ -572,6 +574,7 @@ func (c *Client) maintenanceLoop() {
 			if err == nil {
 				c.stats.ackSent.Add(1)
 			}
+			c.innerMu.Unlock()
 		}
 	}
 }

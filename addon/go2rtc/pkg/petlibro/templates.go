@@ -61,6 +61,7 @@ const (
 	ioctlSetStreamCtrlReq     uint32 = 0x0320 // standard IOTYPE_USER_IPCAM_SETSTREAMCTRL_REQ
 	ioctlSetStreamCtrlResp    uint32 = 0x0321
 	ioctlStart                uint32 = 0x01FF // IOTYPE_USER_IPCAM_START
+	ioctlStop                 uint32 = 0x02FF // IOTYPE_USER_IPCAM_STOP
 	ioctlAudioOn              uint32 = 0x0300 // IOTYPE_USER_IPCAM_AUDIOSTART
 	ioctlGetStreamCtrlReq     uint32 = 0x0322 // IOTYPE_USER_IPCAM_GETSTREAMCTRL_REQ
 	ioctlGetStreamCtrlResp    uint32 = 0x0323

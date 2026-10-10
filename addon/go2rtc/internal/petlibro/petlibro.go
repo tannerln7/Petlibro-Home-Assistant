@@ -12,11 +12,11 @@
 // back-label or visible in the Petlibro app under camera details.  If
 // the URL omits the host, go2rtc discovers the local camera IP by UID.
 //
-// The `quality=hd|sd` query parameter selects the corresponding
-// stream-control body and filters the media frames emitted by the
-// camera. HD sessions may begin with a low-resolution SPS before the
-// camera switches profiles; `hd_probe_wait_ms` can provide a bounded
-// probe-stabilization window. See internal/petlibro/README.md.
+// The `quality=hd|sd` query parameter selects the corresponding captured
+// stream-control body. Resolution is determined from H.264 SPS. HD sessions
+// may begin with a low-resolution SPS before the camera switches profiles;
+// the PLAF203 adapter contains that bounded startup behavior before exposing
+// media to go2rtc. See internal/petlibro/README.md.
 package petlibro
 
 import (

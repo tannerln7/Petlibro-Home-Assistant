@@ -20,12 +20,13 @@ Run the Go commands below from `addon/go2rtc`.
 | --- | --- |
 | [`main.go`](../addon/go2rtc/main.go) | Registers the Petlibro module in the standalone binary |
 | [`internal/petlibro/`](../addon/go2rtc/internal/petlibro/) | Connects the `petlibro://` URL handler to go2rtc logging and stream routing |
-| [`pkg/petlibro/client.go`](../addon/go2rtc/pkg/petlibro/client.go) | Client state, URL parsing, socket setup, counters, and plaintext C2D writes |
+| [`pkg/petlibro/client.go`](../addon/go2rtc/pkg/petlibro/client.go) | Transport state, addressing/diagnostic URL parsing, socket setup, counters, and plaintext C2D writes |
+| [`pkg/petlibro/camera.go`](../addon/go2rtc/pkg/petlibro/camera.go) | PLAF203 lifecycle, codec readiness, SPS epochs, startup retry, and timestamp normalization |
 | [`pkg/petlibro/handshake.go`](../addon/go2rtc/pkg/petlibro/handshake.go) | LAN discovery session handshake and login |
 | [`pkg/petlibro/bootstrap.go`](../addon/go2rtc/pkg/petlibro/bootstrap.go) | IOCtrl ordering, stream control, AV-ready state, and initial sequence cursors |
 | [`pkg/petlibro/recv.go`](../addon/go2rtc/pkg/petlibro/recv.go) | Datagram receive loop, receive-side ACK tracking, maintenance ACKs, and stats |
-| [`pkg/petlibro/assembler.go`](../addon/go2rtc/pkg/petlibro/assembler.go) | Media-header decoding, sequence reordering, frame assembly, loss accounting, and SPS logging |
-| [`pkg/petlibro/producer.go`](../addon/go2rtc/pkg/petlibro/producer.go) | Codec probe, optional HD stabilization, and conversion to go2rtc media packets |
+| [`pkg/petlibro/assembler.go`](../addon/go2rtc/pkg/petlibro/assembler.go) | Media-header decoding, sequence reordering, frame assembly, loss accounting, and raw camera timestamps |
+| [`pkg/petlibro/producer.go`](../addon/go2rtc/pkg/petlibro/producer.go) | Conventional conversion of normalized camera units to go2rtc media packets |
 | [`pkg/petlibro/templates.go`](../addon/go2rtc/pkg/petlibro/templates.go) | Wire constants and packet builders |
 | [`pkg/petlibro/*_test.go`](../addon/go2rtc/pkg/petlibro/) | Unit, regression, dump-summary, and offline replay tests |
 
@@ -38,8 +39,9 @@ UDP datagram
   -> mark the wire sequence as received for ACK tracking
   -> reorder by extended sequence
   -> assemble fragments per media channel
-  -> emit H.264/AAC packet
-  -> probe/convert to go2rtc media
+  -> emit complete H.264/AAC access unit with raw timing
+  -> normalize camera readiness and clocks
+  -> convert to go2rtc media
 ```
 
 ## Protocol invariants
@@ -69,11 +71,28 @@ Preserve these boundaries when modifying the implementation:
   experiment.
 - `strict=1` changes damaged-GOP output policy; it must not change packet
   classification, receive tracking, or ACK semantics.
+- The transport must not import go2rtc consumer lifecycle. The camera adapter
+  must return an SPS-bearing keyframe followed by an unbroken live GOP, and
+  media with forward modular RTP clock progression, including normal `uint32`
+  rollover. Replaying a keyframe after preparation discarded later frames from
+  that GOP does not satisfy this invariant.
+- HD startup stabilization is a PLAF203 behavior, not a go2rtc probe option.
+  Keep its policy in `camera.go`; do not expose transport timing as user intent.
+- Once `IPCAM_START` has been transmitted, closing a camera session attempts
+  `IPCAM_STOP` once before closing UDP. UDP transmission confirms neither that
+  START was activated nor that STOP physically ended the camera session.
 
 The AV ACK base/high interval and relative NACK list are established from the
 AF203 resend dispatcher. The reserved field at +6, transport state at +16, and
 some type-0x0b statistics remain only partially understood; keep their names
 and zero/default behavior conservative.
+
+Repository tests use constructed packets, fake camera transports, local UDP
+sockets, and optional offline dumps; they do not prove that a physical feeder
+acted on a datagram. Hardware observations are called out explicitly in these
+guides. In particular, PLAF203 audio has been observed as 44.1 kHz AAC, but no
+firmware guarantee for that rate is known; the adapter and published ADTS codec
+therefore use native 1024-sample AAC clock steps instead of a 44.1 kHz formula.
 
 ## Media header layouts
 
@@ -116,7 +135,7 @@ Useful focused test groups include:
 ```bash
 go test ./pkg/petlibro -run 'TestExtendedMedia|TestEndToEnd|TestForceDrain' -count=1
 go test ./pkg/petlibro -run 'TestACK|TestParseACK' -count=1
-go test ./pkg/petlibro -run 'TestBootstrap|TestStreamCtrl|TestParseHDProbe' -count=1
+go test ./pkg/petlibro -run 'TestBootstrap|TestCamera|TestClientClose' -count=1
 ```
 
 Dump-backed tests intentionally skip when their environment variable is unset,
@@ -151,15 +170,26 @@ of build artifacts.
    visual playback.
 7. Remove or securely retain dumps outside the repository.
 
-For HD tests, record both the first SPS and any later `spsChange` line. The
-camera can begin at 640x360 before moving to 1920x1080, so the first advertised
-resolution alone does not prove that stream control failed.
+For HD tests, record both the first SPS and any later camera SPS-epoch line.
+The adapter waits up to 15 seconds when an HD request begins below 1920x1080;
+the camera can transition later, so the first advertised resolution alone does
+not prove that stream control failed. This bound preserves the former packaged
+add-on default; direct `petlibro://` sources previously defaulted to no wait.
+The bound limits startup latency and is a preference window, not a guarantee
+that the camera has reached its requested resolution. If video arrived after
+the last retained IDR, the adapter discards that stale candidate and waits up
+to the normal five-second readiness timeout for a new SPS-bearing IDR. This can
+add up to one GOP after the 15-second preference window, but avoids handing a
+decoder an IDR followed by P-frames with missing references. Requested audio
+discovery has its own readiness interval, so when both audio and video
+resynchronization are pending the total post-stabilization delay can be longer.
 
 ## Adding configuration options
 
 When adding a Petlibro URL parameter:
 
-1. Parse and validate it in `Dial()` with a clear error for invalid input.
+1. Decide whether it is user camera intent (`camera.go`) or a narrowly useful
+   transport diagnostic (`Dial()`); do not expose protocol hypotheses.
 2. Keep the default compatible unless the change is intentionally behavioral.
 3. Add a focused parsing or behavior test.
 4. Log the effective value under `verbose=1` when it affects protocol behavior.

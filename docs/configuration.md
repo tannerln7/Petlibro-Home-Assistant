@@ -31,8 +31,6 @@ users configure the same values in the ignored `docker/.env` file.
 | `devices`                              | `DEVICES_JSON`                         | Optional manual device override array                         |
 | `go2rtc_stream_name`                   | `GO2RTC_STREAM_NAME`                   | go2rtc stream and RTSP URL                                    |
 | `camera_quality`                       | `CAMERA_QUALITY`                       | Petlibro URL `quality` query                                  |
-| `send_delay_ctrl`                      | `SEND_DELAY_CTRL`                      | Petlibro URL data-delay option                                |
-| `hd_probe_wait_ms`                     | `HD_PROBE_WAIT_MS`                     | Petlibro HD SPS stabilization                                 |
 | `go2rtc_api_port`                      | `GO2RTC_API_PORT`                      | go2rtc API listener                                           |
 | `go2rtc_rtsp_port`                     | `GO2RTC_RTSP_PORT`                     | go2rtc RTSP listener                                          |
 | `go2rtc_webrtc_port`                   | `GO2RTC_WEBRTC_PORT`                   | go2rtc WebRTC listener                                        |
@@ -45,6 +43,20 @@ users configure the same values in the ignored `docker/.env` file.
 
 See [the add-on option guide](../addon/DOCS.md) for defaults and
 behavior.
+
+### Removed camera experiments
+
+Upgrades may leave `send_delay_ctrl`, `hd_probe_wait_ms`,
+`streamctrl_variant`, or `streamctrl_quality` in an existing `options.json` or
+Compose environment. The renderer ignores unknown persisted keys and no longer
+emits those URL parameters; removed environment variables are likewise
+ignored. The add-on schema no longer presents them. If Home Assistant reports
+an obsolete-option warning while importing an older backup, save the current
+options once to discard the stale keys.
+
+The supported camera surface now expresses only `camera_quality` (`hd` or
+`sd`). That is a request to the physical device, not a guarantee of the SPS
+resolution that will be observed.
 
 ## Generated files
 

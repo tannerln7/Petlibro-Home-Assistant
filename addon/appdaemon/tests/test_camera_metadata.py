@@ -40,10 +40,9 @@ class FakeMqtt:
 def runtime_status(last_update, observed_at=None, **overrides):
     observed_at = observed_at or last_update
     status = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "online",
         "requested_quality": "hd",
-        "configured_hd_probe_wait_ms": 15000,
         "probe_resolution": {
             "width": 640,
             "height": 360,
@@ -88,7 +87,6 @@ class CameraMetadataPublisherTests(unittest.TestCase):
             serial="YOUR_DEVICE_SERIAL",
             stream_name="petlibro_feeder",
             requested_quality="hd",
-            configured_hd_probe_wait_ms=15000,
             rtsp_port=8554,
             status_file=str(self.status_file),
             topic_prefix="",
@@ -130,6 +128,7 @@ class CameraMetadataPublisherTests(unittest.TestCase):
         self.assertNotIn("mqtt_password", payload)
         self.assertNotIn("product_secret", payload)
         self.assertNotIn("device_ip", payload)
+        self.assertNotIn("configured_hd_probe_wait_ms", payload)
         self.assertEqual(
             "rtsp://<backend-host>:8554/petlibro_feeder",
             payload["rtsp_url_hint"],
