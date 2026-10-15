@@ -278,10 +278,16 @@ export class OperationManager {
       ...workerEvents.map((event) => event.sequence),
     );
     const status = worker.status;
-    const terminal = status === 'succeeded' || status === 'failed';
+    const terminal =
+      status === 'succeeded' || status === 'failed' || status === 'interrupted';
     const updated: OperationSnapshot = {
       ...operation,
       workerInstanceId: worker.workerInstanceId,
+      ...(worker.reconciledByWorkerInstanceId === undefined
+        ? {}
+        : {
+            reconciledByWorkerInstanceId: worker.reconciledByWorkerInstanceId,
+          }),
       status,
       stage: worker.stage,
       updatedAt: worker.updatedAt,
@@ -295,7 +301,7 @@ export class OperationManager {
       sourceEventKey: `worker:${worker.invocationId}:${event.sequence}`,
       operationId: operation.operationId,
       type: event.type,
-      source: 'python-worker',
+      source: 'capability-worker',
       severity: event.severity,
       occurredAt: event.occurredAt,
       payload: event.payload,
@@ -304,8 +310,16 @@ export class OperationManager {
       events.push(
         this.applicationEvent(
           updated,
-          status === 'succeeded' ? 'operation.succeeded' : 'operation.failed',
-          status === 'succeeded' ? 'info' : 'error',
+          status === 'succeeded'
+            ? 'operation.succeeded'
+            : status === 'interrupted'
+              ? 'operation.interrupted'
+              : 'operation.failed',
+          status === 'succeeded'
+            ? 'info'
+            : status === 'interrupted'
+              ? 'warning'
+              : 'error',
           status === 'succeeded'
             ? { stage: updated.stage }
             : { failure: updated.failure },

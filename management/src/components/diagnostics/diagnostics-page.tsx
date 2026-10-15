@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { CircleHelp, ServerCog, Stethoscope } from 'lucide-react';
+import { CircleHelp, Download, ServerCog, Stethoscope } from 'lucide-react';
 import { PageHeader } from '#/components/layout/application-shell';
 import {
   AvailabilityBadge,
@@ -37,6 +37,14 @@ export function DiagnosticsPage() {
         title="Diagnostics"
         description="Separate observed facts, query failures, and diagnostic interpretation for each subsystem."
       >
+        <Button asChild variant="outline">
+          <a
+            href={`${import.meta.env.BASE_URL}api/v1/diagnostics/report?download=1`}
+            download
+          >
+            <Download aria-hidden="true" /> Export report
+          </a>
+        </Button>
         {actionQuery.data?.available ? (
           <Button asChild>
             <Link to="/operations">

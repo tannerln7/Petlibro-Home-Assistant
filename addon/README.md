@@ -9,7 +9,7 @@ image:
 - a maintained go2rtc fork that converts the feeder camera's local Petlibro
   transport into RTSP, WebRTC, and other go2rtc outputs.
 - the Petlibro Management Node application and durable SQLite journal;
-- a private Python device-capability worker; and
+- a private native-TypeScript device-capability worker; and
 - an Nginx gateway for Home Assistant Ingress and optional direct access.
 
 The add-on is the Home Assistant side of the system. It does not modify feeder

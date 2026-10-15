@@ -43,8 +43,7 @@ COPY --from=go2rtc-builder /out/petlibro-resolve /usr/local/bin/petlibro-resolve
 COPY --from=management-builder /usr/local/bin/node /usr/local/bin/node
 COPY --from=management-builder /src/management/.output/ /opt/petlibro-management/
 COPY addon/appdaemon/src/ /opt/petlibro-local/appdaemon/
-COPY management/worker/run.py /opt/petlibro-local/management-worker/run.py
-COPY management/worker/petlibro_worker/ /opt/petlibro-local/management-worker/petlibro_worker/
+COPY --from=management-builder /src/management/.worker/run.mjs /opt/petlibro-management-worker/run.mjs
 COPY state-agent/release-public-key.hex /opt/petlibro-local/release-public-key.hex
 COPY addon/templates/ /opt/petlibro-local/templates/
 COPY addon/render_config.py /usr/local/bin/petlibro-render-config

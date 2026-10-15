@@ -42,8 +42,35 @@ describe('SqliteOperationJournal', () => {
     const reopened = new SqliteOperationJournal(databasePath);
     expect(reopened.get(operation.operationId)?.stage).toBe('queued-again');
     expect(reopened.eventsAfter(operation.operationId, 0, 10)).toHaveLength(1);
+    expect(
+      reopened.queryEvents({ limit: 10, search: 'accepted' }),
+    ).toHaveLength(1);
+    expect(reopened.queryEvents({ limit: 10, severity: 'error' })).toHaveLength(
+      0,
+    );
     expect(reopened.listNonTerminal()).toHaveLength(1);
     reopened.close();
+  });
+
+  it('does not prune durable semantic evidence at a global display limit', () => {
+    const journal = new SqliteOperationJournal(':memory:');
+    const operation = snapshot();
+    const events = Array.from({ length: 10_005 }, (_, index) => ({
+      sourceEventKey: `worker:${operation.operationId}:${index + 1}`,
+      operationId: operation.operationId,
+      type: 'capability.evidence',
+      source: 'capability-worker' as const,
+      severity: 'info' as const,
+      occurredAt: operation.createdAt,
+      payload: { evidenceSequence: index + 1 },
+    }));
+
+    journal.create(operation, events);
+
+    expect(journal.queryEvents({ limit: events.length })).toHaveLength(
+      events.length,
+    );
+    journal.close();
   });
 });
 

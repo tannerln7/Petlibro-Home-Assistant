@@ -1,5 +1,12 @@
 # Petlibro Management — System Coverage, Interaction & Authority Map
 
+> **Capability implementation revision (October 14, 2026):** management
+> capabilities target native TypeScript in a separately supervised worker. The
+> standalone Python installer remains the functioning reference implementation
+> and supported CLI, but it is not imported or executed by management. This
+> supersedes older migration diagrams that present Python as management's
+> initial active capability implementation.
+
 **Architecture planning · October 13, 2026**  
 **Existing implementation:** [Petlibro-Home-Assistant / `develop`](https://github.com/tannerln7/Petlibro-Home-Assistant/tree/develop)  
 **Status:** Proposed target architecture and responsibility map, informed by the existing implementation. It is not an implementation specification or a claim that the proposed management application already exists.
@@ -88,7 +95,7 @@ Those behaviors are documented in the existing [architecture](https://github.com
 
 **Our new architecture should preserve these existing authority boundaries, while making the interfaces to them cleaner and more intentional.**
 
-The mappings below are proposed target architecture. They are not descriptions of functionality already implemented in TanStack Start or the Python worker.
+The mappings below describe target responsibilities; implementation status still belongs in maintained application documentation and tests.
 
 ---
 
@@ -174,7 +181,7 @@ The UI may cache that view. It does not become authoritative for it.
 
 ### 4.2 Coordination ↔ device capabilities
 
-**This is the principal Python-to-TypeScript migration boundary.**
+**This is the principal application-to-capability execution boundary.**
 
 The coordinator owns the larger operation from the user's perspective: which capabilities need to run, their ordering, prerequisites, and when user decisions are required.
 
@@ -260,7 +267,8 @@ There are several different types of state, and they cannot all be treated as eq
 | MQTT broker accounts and ACLs | Final broker | Credential test outcome, not assumed configuration | Broker configuration lifetime |
 | Add-on options | Home Assistant Supervisor | Validated configuration projection | Add-on installation lifetime |
 | Service running/restart status | Process supervisor / relevant service | Service health observation | Service lifecycle |
-| Application event history | Management event journal | Filtered history and live subscriptions | Retention policy |
+| Durable semantic event history | Management operation journal | Filtered history and live notifications | Operation/evidence retention policy |
+| Raw operational logs | Existing service/worker log producers | Sanitized on-demand subscription records | Browser session; producer-native retention remains independent |
 | Dashboard health summary | Derived by management application | Versioned, source-labeled composite view | Cache/observation lifetime |
 
 The reconciled feeder-state row deserves care. The underlying OEM files are the persistent truth; the State Agent supplies a validated view of them. AppDaemon owns the process of reconciling that truth with MQTT commands and deciding which controls can safely be considered available.
@@ -346,7 +354,7 @@ Those lifetimes are not interchangeable.
 | Capability invocation | Capability implementation | Coordinator invokes the capability | Capability returns a supported outcome |
 | Stateful capability session | Capability's resource owner | Resource acquisition is accepted | Resources are safely released or lost |
 | Critical device transaction | Executing capability | Transaction crosses its defined commitment boundary | Completion, known failure, or unresolved interruption |
-| Python worker process | Platform/s6 | Worker service starts | Worker shuts down or crashes |
+| Native capability worker process | Platform/s6 | Worker service starts | Worker shuts down or crashes |
 | Management Node process | Platform/s6 | Management service starts | Service shuts down or crashes |
 | AppDaemon controller | Existing AppDaemon/s6 | Operational controller starts | Controller stops or fails |
 | Camera session | go2rtc | Media source becomes active | Camera adapter/transport closes the session |
@@ -357,7 +365,7 @@ Those lifetimes are not interchangeable.
 
 **A parent workflow does not automatically own the lifetime of every resource used by its children.**
 
-For example, the management coordinator owns an installation job. However, the Python worker owns its active MQTT listener. The actual operating-system process is supervised by s6.
+For example, the management coordinator owns an installation job. However, the native capability worker owns its active MQTT listener. The actual operating-system process is supervised by s6.
 
 These components cooperate, but each has different responsibilities.
 
@@ -573,7 +581,7 @@ Make the architectural boundary precise:
 
 ```mermaid
 flowchart TB
-    P["Python worker<br/>Execution logs, progress, OTA evidence"]
+    P["Native capability worker<br/>Execution logs, progress, OTA evidence"]
     T["TypeScript services<br/>Jobs, decisions, lifecycle transitions"]
     A["AppDaemon<br/>Feeder events, reconciliation, errors"]
     R["go2rtc<br/>Camera status, stream health"]
@@ -600,12 +608,14 @@ flowchart TB
 | Job accepted, completed or interrupted | Reliable, recoverable | Durable |
 | Critical OTA and verification evidence | Reliable, ordered within the relevant transaction | Durable |
 | Operator checkpoint or required decision | Recoverable as application state | Durable |
-| Build stdout/stderr | Streamed, bounded and correlated | Retained according to log policy |
+| Build stdout/stderr | Streamed on demand, bounded and correlated | Browser session; critical outcomes/evidence recorded separately |
 | Capability progress | Live with current progress snapshot | Latest state recoverable |
 | Runtime telemetry | Live or appropriately sampled | Optional historical retention |
-| Debug traces | Explicitly enabled, bounded and redacted | Limited retention |
+| Debug traces | Explicitly subscribed, bounded and redacted | Browser session only unless promoted to a significant semantic event |
 
-A lost WebSocket connection should never mean a lost installation result.
+A lost WebSocket connection should never mean a lost installation result. It
+may mean that ephemeral raw lines were not observed; the operation must remain
+understandable from durable semantic state and evidence.
 
 Likewise, if the frontend misses several progress events, it should be able to obtain the latest operation state without replaying every intermediate progress update.
 
@@ -613,7 +623,7 @@ This also enables a simple collapsible execution-details panel. It subscribes to
 
 ### The Python/TypeScript migration benefit
 
-A Python capability reports through its worker event adapter. A TypeScript capability reports through the native application event publisher.
+A worker capability reports through its IPC event adapter. An application-local capability reports through the native application event publisher. Both use the same semantic event contract.
 
 Both produce the same observable contract.
 
@@ -757,24 +767,24 @@ The key requirement is:
 flowchart TB
     A["Application coordinator<br/>Defines workflow intent and owns user-facing lifecycle"]
     C["Stable capability contract"]
-    P["Python unit<br/>Initial implementation"]
-    T["TypeScript unit<br/>Replacement implementation"]
+    T["Native TypeScript unit<br/>Management implementation"]
+    P["Standalone Python CLI<br/>Reference implementation"]
     A --> C
-    C -. "Active implementation" .-> P
-    C -. "Future active implementation" .-> T
+    C -. "Active implementation" .-> T
+    P -. "Parity vectors and behavioral reference" .-> C
 ```
 
-*One implementation owns the active device resource at a time. Parallel implementations can coexist for testing and staged migration.*
+*One implementation owns an active device resource at a time. The independent CLI and management implementation may coexist on disk and in tests, but must not acquire competing live sessions.*
 
 A migration unit includes its private dependency closure.
 
-Pure shared dependencies can exist independently in both languages while their consumers migrate.
+Pure behavior can exist independently in both languages with shared parity vectors.
 
 Stateful shared dependencies require explicit ownership, and tightly coupled technical transactions may migrate as a group.
 
 For example, our current temporary MQTT server and OTA transaction have strong live-session dependencies. They can be internally modular while remaining one coordinated migration group.
 
-The application shouldn't need a new workflow merely because that group moves to TypeScript.
+The application workflow depends only on the stable capability contract.
 
 ### AppDaemon migration
 
@@ -869,7 +879,7 @@ The frontend can become sophisticated without becoming a controller.
 
 The coordinator can manage complex installation and recovery workflows without understanding MQTT packet handling.
 
-The Python worker can be decomposed into independently migratable capability groups without needing to understand TanStack Start.
+The native worker can be decomposed into independently replaceable capability groups without needing to understand TanStack Start.
 
 AppDaemon can continue to operate independently until its TypeScript replacement is ready.
 

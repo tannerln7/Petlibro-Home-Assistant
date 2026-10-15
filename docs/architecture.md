@@ -64,7 +64,7 @@ There is no arbitrary file, path, command, shell, or package-management API.
   projection, State Agent reconciliation, and signed update orchestration;
 - the go2rtc fork, which handles LAN camera discovery, Petlibro media transport,
   and standard streaming outputs.
-- the Petlibro Management Node application, private Python capability worker,
+- the Petlibro Management Node application, private native-TypeScript capability worker,
   and Nginx Ingress/direct-access gateway.
 
 Home Assistant options are rendered atomically into service configuration under
@@ -78,6 +78,29 @@ health, and a bounded verified-state summary; it excludes credentials and
 device-changing commands. Management correlates these files by product/serial
 with the existing go2rtc status files. It may probe the configured broker with
 MQTT CONNECT/CONNACK, but does not subscribe or publish.
+
+The capability worker is built and supervised independently from the web
+process, persists invocation acceptance/evidence separately, and never exposes
+its Unix socket through the gateway. The standalone Python installer remains
+the supported independent installation path and behavioral reference; the
+management runtime does not import or execute it. Native OEM wire primitives
+are parity-tested, but the management UI exposes no OTA/bootstrap transaction
+until temporary-broker ownership, artifact custody, operator checkpoints, and
+post-install verification are ported as one coherent resource-owning session.
+
+Management separates durable semantic evidence from ephemeral raw logs.
+Operation lifecycle, checkpoints, transaction correlation, verified results,
+and significant capability evidence remain in the SQLite journal and are not
+pruned by a raw-log display limit. The Events & Logs view exposes a bounded,
+redacted query of that durable evidence; diagnostic exports may include the
+same evidence plus source-aware runtime projections.
+
+Raw AppDaemon, go2rtc, management, worker, and future build output will use
+on-demand source adapters and browser-session retention. Raw output is not
+automatically copied into SQLite, and browser subscriptions neither change a
+producer's native logging configuration nor affect capability execution. No
+raw-log source adapter is enabled yet, so the UI states that limitation rather
+than presenting operation events as a live service-log stream.
 
 ## State ownership
 

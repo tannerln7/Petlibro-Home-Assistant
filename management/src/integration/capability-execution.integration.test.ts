@@ -4,12 +4,13 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { OperationManager } from '#/application/operation-manager';
 import { isTerminalOperationStatus } from '#/domain/operations';
 import { SqliteOperationJournal } from '#/infrastructure/persistence/sqlite-operation-journal';
-import { PythonWorkerClient } from '#/infrastructure/worker/python-worker-client';
+import { CapabilityWorkerClient } from '#/infrastructure/worker/capability-worker-client';
 
 const TOKEN = 'synthetic-cross-process-token';
 const cleanup: Array<() => Promise<void> | void> = [];
@@ -36,7 +37,7 @@ describe('capability execution boundary', () => {
     cleanup.push(() => journal.close());
     const manager = new OperationManager(
       journal,
-      new PythonWorkerClient(socketPath, 2_000),
+      new CapabilityWorkerClient(socketPath, 2_000),
       {
         baseUrl: stateAgent.url,
         token: TOKEN,
@@ -65,7 +66,7 @@ describe('capability execution boundary', () => {
     expect(
       detail.events.find((event) => event.type === 'capability.evidence'),
     ).toMatchObject({
-      source: 'python-worker',
+      source: 'capability-worker',
       payload: {
         kind: 'state-agent-health',
         observation: terminal.result,
@@ -112,32 +113,33 @@ async function startStateAgent(): Promise<{ server: Server; url: string }> {
 }
 
 async function startWorker(socketPath: string): Promise<ChildProcess> {
-  const python = resolve('../.venv/bin/python');
-  const workerDirectory = resolve('worker');
-  const process = spawn(
-    python,
-    ['-m', 'petlibro_worker', '--socket', socketPath],
-    {
-      cwd: workerDirectory,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
+  const workerEntry = fileURLToPath(
+    new URL('../../.worker/run.mjs', import.meta.url),
   );
+  const child = spawn(process.execPath, [workerEntry], {
+    env: {
+      ...process.env,
+      PETLIBRO_CAPABILITY_WORKER_SOCKET: socketPath,
+      PETLIBRO_MANAGEMENT_DATA_DIR: dirname(socketPath),
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   let stderr = '';
-  process.stderr?.on('data', (chunk: Buffer) => {
+  child.stderr?.on('data', (chunk: Buffer) => {
     stderr += chunk.toString('utf8');
   });
   const deadline = Date.now() + 3_000;
-  while (!existsSync(socketPath) && process.exitCode === null) {
+  while (!existsSync(socketPath) && child.exitCode === null) {
     if (Date.now() >= deadline) {
-      process.kill('SIGTERM');
+      child.kill('SIGTERM');
       throw new Error(`worker socket did not appear: ${stderr}`);
     }
     await delay(20);
   }
-  if (process.exitCode !== null) {
+  if (child.exitCode !== null) {
     throw new Error(`worker exited before startup: ${stderr}`);
   }
-  return process;
+  return child;
 }
 
 async function stopWorker(process: ChildProcess): Promise<void> {

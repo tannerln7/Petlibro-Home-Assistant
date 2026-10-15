@@ -11,17 +11,19 @@
   },
   "scripts": {
     "dev": "vite dev --port 3000",
-    "worker": "python3 worker/run.py",
+    "worker": "node .worker/run.mjs",
+    "build:worker": "vite build --config vite.worker.config.ts",
     "generate-routes": "tsr generate",
-    "build": "vite build",
+    "build": "npm run build:worker && vite build",
     "start": "node .output/server/index.mjs",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "lint": "biome lint .",
     "check": "biome check .",
     "typecheck": "tsc --noEmit",
+    "pretest": "npm run build:worker",
     "test": "vitest run",
-    "test:worker": "python3 -m pytest worker/tests -q",
+    "test:worker": "vitest run worker src/infrastructure/capabilities",
     "test:watch": "vitest"
   },
   "dependencies": {

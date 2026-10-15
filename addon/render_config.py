@@ -572,7 +572,7 @@ def render_management_runtime(
         "NITRO_UNIX_SOCKET": str(application_socket),
         "PETLIBRO_MANAGEMENT_DATA_DIR": str(management_data_dir),
         "PETLIBRO_RUNTIME_DATA_DIR": str(data_dir),
-        "PETLIBRO_WORKER_SOCKET": str(worker_socket),
+        "PETLIBRO_CAPABILITY_WORKER_SOCKET": str(worker_socket),
         "PETLIBRO_STATE_AGENT_TOKEN_FILE": str(token_file),
         "PETLIBRO_STATE_AGENT_TIMEOUT_SECONDS": str(timeout_seconds),
     }
@@ -582,7 +582,7 @@ def render_management_runtime(
         "NITRO_UNIX_SOCKET",
         "PETLIBRO_MANAGEMENT_DATA_DIR",
         "PETLIBRO_RUNTIME_DATA_DIR",
-        "PETLIBRO_WORKER_SOCKET",
+        "PETLIBRO_CAPABILITY_WORKER_SOCKET",
         "PETLIBRO_STATE_AGENT_TOKEN_FILE",
         "PETLIBRO_STATE_AGENT_TIMEOUT_SECONDS",
         "PETLIBRO_STATE_AGENT_URL",

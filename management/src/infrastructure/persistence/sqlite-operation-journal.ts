@@ -1,7 +1,10 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { OperationJournal } from '#/application/operation-journal';
+import type {
+  OperationEventQuery,
+  OperationJournal,
+} from '#/application/operation-journal';
 import {
   isTerminalOperationStatus,
   type OperationEvent,
@@ -162,17 +165,39 @@ export class SqliteOperationJournal implements OperationJournal {
          ORDER BY sequence ASC LIMIT ?`,
       )
       .all(operationId, afterSequence, limit) as unknown as EventRow[];
-    return rows.map((row) => ({
-      sequence: row.sequence,
-      sourceEventKey: row.source_event_key,
-      operationId: row.operation_id,
-      type: row.type,
-      source: row.source,
-      severity: row.severity,
-      occurredAt: row.occurred_at,
-      ingestedAt: row.ingested_at,
-      payload: JSON.parse(row.payload_json) as Record<string, unknown>,
-    }));
+    return rows.map(eventFromRow);
+  }
+
+  public queryEvents(query: OperationEventQuery): readonly OperationEvent[] {
+    const conditions: string[] = [];
+    const parameters: Array<string | number> = [];
+    if (query.severity !== undefined) {
+      conditions.push('severity = ?');
+      parameters.push(query.severity);
+    }
+    if (query.source !== undefined) {
+      conditions.push('source = ?');
+      parameters.push(query.source);
+    }
+    if (query.search !== undefined) {
+      conditions.push(
+        `(type LIKE ? ESCAPE '\\' OR payload_json LIKE ? ESCAPE '\\'
+          OR operation_id LIKE ? ESCAPE '\\')`,
+      );
+      const pattern = `%${escapeLike(query.search)}%`;
+      parameters.push(pattern, pattern, pattern);
+    }
+    const where =
+      conditions.length === 0 ? '' : `WHERE ${conditions.join(' AND ')}`;
+    const rows = this.database
+      .prepare(
+        `SELECT sequence, source_event_key, operation_id, type, source,
+                severity, occurred_at, ingested_at, payload_json
+         FROM operation_events ${where}
+         ORDER BY sequence DESC LIMIT ?`,
+      )
+      .all(...parameters, query.limit) as unknown as EventRow[];
+    return rows.map(eventFromRow);
   }
 
   public close(): void {
@@ -210,4 +235,25 @@ export class SqliteOperationJournal implements OperationJournal {
       throw error;
     }
   }
+}
+
+function eventFromRow(row: EventRow): OperationEvent {
+  return {
+    sequence: row.sequence,
+    sourceEventKey: row.source_event_key,
+    operationId: row.operation_id,
+    type: row.type,
+    source: row.source,
+    severity: row.severity,
+    occurredAt: row.occurred_at,
+    ingestedAt: row.ingested_at,
+    payload: JSON.parse(row.payload_json) as Record<string, unknown>,
+  };
+}
+
+function escapeLike(value: string): string {
+  return value
+    .replaceAll('\\', '\\\\')
+    .replaceAll('%', '\\%')
+    .replaceAll('_', '\\_');
 }

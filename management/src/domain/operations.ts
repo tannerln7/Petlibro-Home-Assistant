@@ -15,7 +15,10 @@ export type OperationStatus =
   | 'indeterminate';
 
 export type OperationEventSeverity = 'info' | 'warning' | 'error';
-export type OperationEventSource = 'management-application' | 'python-worker';
+export type OperationEventSource =
+  | 'management-application'
+  | 'capability-worker'
+  | 'python-worker';
 
 export interface StateAgentHealthResult {
   readonly healthy: boolean;
@@ -41,7 +44,10 @@ export interface OperationSnapshot {
   readonly actionId: typeof STATE_AGENT_INSPECTION_ACTION_ID;
   readonly capabilityId: typeof STATE_AGENT_INSPECTION_CAPABILITY_ID;
   readonly invocationId: string;
+  /** The capability worker process that accepted and owned the invocation. */
   readonly workerInstanceId?: string;
+  /** The later worker process, if any, that reconciled it after a restart. */
+  readonly reconciledByWorkerInstanceId?: string;
   readonly target: {
     readonly kind: 'state-agent';
     readonly label: string;
@@ -133,12 +139,18 @@ export function parseOperationSnapshot(value: unknown): OperationSnapshot {
     ),
   };
   const workerInstanceId = optionalString(record.workerInstanceId);
+  const reconciledByWorkerInstanceId = optionalString(
+    record.reconciledByWorkerInstanceId,
+  );
   const startedAt = optionalString(record.startedAt);
   const completedAt = optionalString(record.completedAt);
 
   return {
     ...snapshot,
     ...(workerInstanceId === undefined ? {} : { workerInstanceId }),
+    ...(reconciledByWorkerInstanceId === undefined
+      ? {}
+      : { reconciledByWorkerInstanceId }),
     ...(startedAt === undefined ? {} : { startedAt }),
     ...(completedAt === undefined ? {} : { completedAt }),
     ...(record.result === undefined
@@ -154,7 +166,11 @@ export function parseOperationEvent(value: unknown): OperationEvent {
   const record = objectValue(value, 'operation event');
   const source = stringValue(record.source, 'event source');
   const severity = stringValue(record.severity, 'event severity');
-  if (source !== 'management-application' && source !== 'python-worker') {
+  if (
+    source !== 'management-application' &&
+    source !== 'capability-worker' &&
+    source !== 'python-worker'
+  ) {
     throw new Error('The operation event has an unsupported source.');
   }
   if (severity !== 'info' && severity !== 'warning' && severity !== 'error') {

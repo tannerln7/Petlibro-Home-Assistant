@@ -1,9 +1,16 @@
 # Petlibro Management — Implementation Guide & Subsystem Specification
 
 **Planning baseline:** October 13, 2026  
-**Status:** Target implementation specification; not a claim that the management application has been implemented  
+**Status:** Maintained target specification with implementation-status notes; tests and source remain the authority for completed behavior
 **Existing system:** [Petlibro-Home-Assistant (`develop`)](https://github.com/tannerln7/Petlibro-Home-Assistant/tree/develop)  
 **Related planning documents:** [System Coverage, Interaction & Authority Map](petlibro-management-architecture-coverage-map.md) · [Migration & Implementation Sequence](petlibro-management-migration-implementation-sequence.md)
+
+> **Revised capability decision (October 14, 2026).** Management device
+> capabilities are implemented natively in TypeScript in an independently
+> supervised worker. The standalone Python installer remains supported and is
+> the behavioral reference, but management neither imports nor executes it.
+> This decision supersedes older Python-extraction language below wherever any
+> residual wording conflicts.
 
 > **Purpose.** This document translates the responsibility/authority map and migration sequence into concrete expectations for the planned implementation: technologies, application pages, interactions, service responsibilities, architectural boundaries, code organization, lifecycle and data contracts, migration requirements, security, and validation. It is an engineering reference for future design decisions and bounded Codex implementation assignments. It is **not** a mandate to create every example class, directory, or endpoint literally.
 
@@ -36,7 +43,7 @@ These statuses distinguish **design completeness** from **implementation complet
 1. **Design toward the complete intended application.** No throwaway MVP architecture or indefinite “we'll add the missing lifecycle/security/state layer later” promises. Incremental construction is appropriate; incomplete underlying contracts are not.
 2. **Intent descends, results ascend, authoritative state remains with its owner.** Reading, storing, publishing, commanding, executing, and transferring authority are distinct interactions.
 3. **Design capabilities around cohesive responsibility and dependency closure, not files or language boundaries.** A migration unit includes its private dependent implementation. Shared pure dependencies may temporarily exist in Python and TypeScript; exclusive stateful owners may not compete.
-4. **Python is an initial implementation detail of device capabilities.** No browser route, action definition, dashboard component, or core operation contract should depend on Python-specific objects or execution mechanics.
+4. **Management capabilities are native TypeScript behind language-neutral contracts.** The standalone Python CLI remains an independent installer and behavioral reference. No management process imports or executes it, and no browser contract depends on implementation mechanics.
 5. **AppDaemon remains the active routine feeder controller in the initial product.** The future TypeScript routine controller has a planned, independent boundary. The web dashboard does not become a competing controller.
 6. **Go camera code and feeder-resident C State Agent remain distinct components.** This project does not imply rewriting go2rtc, the device firmware, or the State Agent in TypeScript.
 7. **A single shared event vocabulary, not necessarily a single wire transport.** Structured logs, progress, status, diagnostics, and telemetry are interoperable across source languages and delivered over suitable transports.
@@ -58,7 +65,7 @@ flowchart TB
     Front["React / TanStack Start SPA"]
     TS["TypeScript application services"]
     Contract["Domain contracts / capability interfaces"]
-    Python["Python capability worker"]
+    Worker["Native TypeScript capability worker"]
     AppD["Existing AppDaemon routine controller"]
     Go["Existing go2rtc media service"]
     Sup["Home Assistant Supervisor / service lifecycle"]
@@ -71,20 +78,20 @@ flowchart TB
     Browser <--> Front
     Front <--> TS
     TS -. "uses" .-> Contract
-    Contract -. "governs" .-> Python
-    TS <--> Python
+    Contract -. "governs" .-> Worker
+    TS <--> Worker
     TS <--> AppD
     TS <--> Go
     TS <--> Sup
-    Python <--> OEM
+    Worker <--> OEM
     AppD <--> Broker
     Broker <--> OEM
     AppD <--> Agent
     Agent --> OEM
     Go <--> OEM
     TS <--> Data
-    Python <--> Data
-    Python --> Events
+    Worker <--> Data
+    Worker --> Events
     AppD --> Events
     Go --> Events
     TS --> Events
@@ -111,8 +118,8 @@ This is a logical diagram. **Contract definitions do not need to be a running pr
 | Motion | **Motion** where useful | **Optional.** Respect reduced-motion preferences; never obscure operation state. |
 | Icons | **Lucide** | **Planned selection.** Consistent small UI iconography. |
 | Production host-side runtime | **Node.js 24** | **Planned selection; scaffolded and host-build validated.** One production application build, no Vite development server in the add-on. Image/runtime compatibility still requires packaging validation. |
-| Device operations worker | **Python 3.12+**, existing tested installer modules | **Established initial strategy.** Independently supervised, with strict local IPC. |
-| Worker RPC | **HTTP/JSON over a Unix domain socket** | **Implemented foundation.** Private mode-`0600` socket, versioned health/capability/invocation routes and snapshot event replay are host-validated; add-on supervision remains unqualified. |
+| Device operations worker | **Native strict TypeScript on Node.js 24** | **Established and implemented foundation.** Independently built/supervised from the web process; the standalone Python installer remains the reference, not a runtime dependency. |
+| Worker RPC | **HTTP/JSON over a Unix domain socket** | **Implemented foundation.** Private mode-`0600` socket, versioned health/capability/invocation routes, durable invocation snapshots and bounded event replay are packaged. |
 | Browser live updates | **WebSocket support** plus HTTP snapshots/history | **Implemented foundation; authentication/Ingress validation pending.** Notifications reconnect by durable cursor; snapshots/history remain recovery truth. |
 | Durable application records | **SQLite under persistent add-on storage** | **Selected and implemented for operation snapshots/events.** Node 24 built-in SQLite, schema versioning and transactional event/state writes are validated; add-on backup/restore and production concurrency remain to qualify. |
 | Process supervision | **s6** services | **Established existing pattern**, expanded for management and worker. |
@@ -125,10 +132,10 @@ Framework reference links: [TanStack Start SPA mode](https://tanstack.com/start/
 
 ### 1.3 Technology ownership rules
 
-- React components must not instantiate Python clients, open raw OEM sockets, or contain broker/State Agent command logic.
+- React components must not instantiate capability clients, open raw OEM sockets, or contain broker/State Agent command logic.
 - TanStack-specific server functions/routes are **adapters** around ordinary TypeScript application services; domain behavior must remain usable independently of TanStack Start.
-- TypeScript application services may depend on domain contracts, not concrete Python classes, subprocess return strings, or frontend hooks.
-- Python capability modules may use Python-native dependencies internally, but their exported capability outcomes must conform to the stable contract.
+- TypeScript application services depend on domain contracts, not worker internals or frontend hooks.
+- Native capability modules preserve the standalone installer's tested behavior through shared vectors and parity tests without importing or executing Python.
 - State Agent, go2rtc, Supervisor, and AppDaemon APIs are existing authority boundaries; new adapters are not permitted to redefine their semantics.
 - Pure value models and schema definitions should be shared where meaningful. Do not create an unnecessary generic shared utility framework just to eliminate two small independent functions.
 
@@ -409,8 +416,8 @@ A migration unit is a **cohesive functional capability plus the private dependen
 Dependencies fall into three categories:
 
 1. **Private implementation dependency:** used only within one migration unit; port together with that unit.
-2. **Shared portable behavior:** used by multiple units, e.g. a deterministic packet encoder; Python and TypeScript copies may safely coexist while their consumers migrate, with common vectors and compatibility guarantees.
-3. **Shared stateful authority/resource:** active MQTT broker socket, OTA session, feeder write coordinator, camera session, or persistent resource; coexisting implementations must never silently compete. Explicit transfer of ownership is required.
+2. **Shared portable behavior:** used by multiple units, e.g. a deterministic packet encoder; standalone Python and management TypeScript copies may coexist with common vectors and compatibility guarantees.
+3. **Shared stateful authority/resource:** active MQTT broker socket, OTA session, feeder write coordinator, camera session, or persistent resource; the standalone CLI and management implementation must never run competing sessions. Explicit transfer of ownership is required.
 
 The desired property is **replaceability without surrounding redesign**, not a separate RPC layer for every helper function.
 
@@ -430,9 +437,43 @@ The existing code provides the following starting points; the group boundaries a
 | **State Agent inspection** | `bootstrap._probe_state_agent()`, existing State Agent client | Authorized health/version/revision/compatibility observations | Existing routine controller retains authority over persistent-state reconciliation |
 | **Service/configuration integration** | `addon/render_config.py`, add-on options/Supervisor | Supported configuration application, read-back and adoption verification | Platform/runtime integration boundary, not generic device worker responsibility |
 
-The current `installer/bootstrap.py` combines CLI input, build preparation, resource coordination, operator pauses, and the guarded transaction. Extraction must separate user interaction from technical mechanics while preserving behavior.
+The current `installer/bootstrap.py` combines CLI input, build preparation, resource coordination, operator pauses, and the guarded transaction. Native implementation must separate user interaction from technical mechanics while preserving behavior; management must not import or execute this module.
 
 The current broker session and OTA correlation share live state, including identity, session generation, subscription readiness, `msgId`, QoS acknowledgment, OTA result and post-reconnect startup evidence. Do not place an RPC seam through that state machine merely to make each Python file appear independently migratable.
+
+#### Current native implementation boundary
+
+Implemented and exercised in management:
+
+- independently supervised TypeScript worker with durable idempotent invocation
+  acceptance and explicit interrupted/no-replay restart reconciliation;
+- authenticated bounded State Agent health inspection;
+- byte-exact OEM provisioning-frame, MQTT CONNECT/SUBSCRIBE/PUBLISH, ACK,
+  publish, and OTA-command primitives with reference-equivalent vectors;
+- exact-shape OpenSSH recovery public-key validation;
+- a read-only setup preflight for endpoint constraints, final-broker backend
+  authentication, recovery input, and transient TCP/1883 ownership; and
+- bounded redacted queries over durable operation/capability evidence and a
+  source-aware diagnostic export. Raw service-log streaming remains deferred.
+
+The next coherent device-changing boundary is deliberately not split further:
+artifact provenance/custody and payload assembly, temporary MQTT identity
+capture, source-restricted artifact serving, provisioning, correlated OTA,
+terminal/startup evidence, final-broker credential/heartbeat proof, explicit
+same-host port transfer, and runtime adoption must be implemented as one
+resource-owning bootstrap session coordinated by durable operator checkpoints.
+Until that boundary is complete, management exposes no OTA, recovery-write, or
+maintenance-write action and the independent Python CLI remains the supported
+installer. Supervisor service-control permissions and apply/restart semantics
+remain a concrete dependency for same-host Mosquitto handoff.
+
+Two protocol/bootstrap questions intentionally remain with that next boundary.
+The current read-only preflight validates address shape, reachability, broker
+authentication, and local TCP/1883 ownership, but it does not yet impose one
+blanket endpoint-address policy across listener, broker, and feeder-destination
+roles. Likewise, the native provisioning-frame default sequence is not being
+changed solely to resemble the Python helper; its default and call-site policy
+must be resolved from protocol evidence during the complete bootstrap review.
 
 ### 4.3 Capability implementation requirements
 
@@ -446,7 +487,7 @@ Every real exported capability needs:
 - A means of logging/progress publication through the shared event vocabulary.
 - Appropriate test fixtures and behavior-preservation checks.
 - Independence from application page layout and frontend component implementation.
-- Documented dependency closure for future Python-to-TypeScript replacement.
+- Documented dependency closure and parity provenance against the standalone installer.
 
 Workers and adapters may differ internally, but the capability's externally observable behavior must stay compatible when its implementation changes.
 
@@ -471,11 +512,11 @@ References: [installer README](https://github.com/tannerln7/Petlibro-Home-Assist
 
 ---
 
-## 5. Python worker: shape, lifecycle and boundaries
+## 5. Native TypeScript capability worker: shape, lifecycle and boundaries
 
 ### 5.1 What the worker is
 
-A **long-lived, independently supervised local execution service**, initially in Python, providing the existing protected feeder operations through stable contracts. It is *not* a second application coordinator or a server for browser requests.
+A **long-lived, independently supervised native-TypeScript execution service** providing protected feeder operations through stable contracts. It is *not* a second application coordinator or a server for browser requests. The standalone Python CLI remains independently runnable and is used for behavioral reference and parity fixtures only.
 
 The worker owns technical sessions and live resources, e.g. temporary MQTT listener, artifact HTTP serving, OTA handshake correlation, and attached subprocesses.
 
@@ -494,13 +535,13 @@ The TypeScript coordinator owns user-facing jobs and checkpoints. The worker doe
 - Reject unrecognized commands, unknown input fields where dangerous, unauthorized paths, and invalid device identities.
 - Produce clear worker health/capability/version information for TypeScript adapter negotiation.
 
-### 5.3 Python extraction conventions
+### 5.3 Native implementation and parity conventions
 
 - Preserve tested existing mechanics and hard-won behavior before improving code structure.
-- Maintain a runnable original CLI/reference path during extraction and migration.
-- Use cohesive Python classes, dataclasses, and `Protocol` where they clarify ownership and dependencies.
-- Separate CLI prompting/terminal printing from reusable operations; preserve domain-safe validation at the capability boundary.
-- Keep internal module organization suitable to Python, not artificially mirrored to TypeScript file names.
+- Maintain the runnable standalone Python CLI and its tests without making it a management dependency.
+- Use cohesive TypeScript services and explicit interfaces where they clarify resource ownership and dependencies.
+- Keep CLI prompting/terminal printing outside management; reproduce domain-safe validation at the native capability boundary.
+- Organize the native implementation by capability/resource ownership, not by mechanically mirroring Python files.
 - Avoid generic `run(command)` shell RPC, arbitrary import/method invocation, unrestricted paths, and ambient privilege escalation.
 - Any source-code refactor affecting device-visible behavior requires reference parity tests, not just a green new-worker suite.
 - Use pinned/provenance-aware artifact inputs; never package arbitrary developer firmware dumps into a production bootstrap.
@@ -515,7 +556,7 @@ The TypeScript coordinator owns user-facing jobs and checkpoints. The worker doe
 - Cancellation is a *request* with capability-specific acceptance/denial and safe-point semantics.
 - A restored worker must report what it actually knows, not infer success from a previous job record.
 
-### 5.5 Python worker ↔ TypeScript IPC
+### 5.5 Capability worker ↔ application IPC
 
 **Preferred shape:** private Unix domain socket carrying versioned HTTP/JSON requests and a replayable local event stream. The specific streaming transport can be SSE, WebSocket or equivalent; common **event semantics** are mandatory, uniform physical transport is not.
 
@@ -575,7 +616,7 @@ Some checkpoints are *operator confirmations*. Others require *external observed
 | Browser tab closes | Backend job and worker can survive | UI resumes by querying snapshot/events; no automatic cancellation |
 | WebSocket disconnects | Backend operations continue | Reconnect, refresh snapshot, recover available events by cursor |
 | Node application restarts | Python live session may survive | Reconcile journal with worker operation/session status; do not duplicate commands |
-| Python worker restarts | In-memory technical sessions usually lost | Mark lost/uncertain where applicable; inspect external evidence before recovery |
+| Capability worker restarts | In-memory technical sessions usually lost | Mark lost/uncertain where applicable; inspect external evidence before recovery |
 | Add-on container restarts | All in-container processes stop | Recover durable facts, re-establish observations, report incomplete critical transactions |
 | Mosquitto stops | Broker authority temporarily unavailable | Surface dependency loss; coordinate only authorized transition |
 | Feeder restarts mid-OTA | Physical result initially unknown | Correlate fresh post-restart evidence; do not assume failure or rerun OTA |
@@ -613,18 +654,28 @@ The global journal sequence is assigned by the journal, **not** independently in
 | Operation lifecycle | accepted, started, checkpoint, verifying, terminal outcome | Durable/recoverable |
 | Transaction evidence | OTA publish/ack/download/restart correlation | Durable, appropriately ordered |
 | Progress | phase changed, current/total, activity indication | Latest snapshot recoverable; stream intermediate changes |
-| Logs | semantic application logs and captured stdout/stderr | Bounded history with safe filtering |
+| Durable semantic events | lifecycle, checkpoints, transaction evidence and verified outcomes | Persistent/recoverable according to operation evidence policy |
+| Raw logs | application/service output and captured stdout/stderr | On-demand transport with bounded browser-session retention; no automatic journal copy |
 | Device/runtime status | MQTT connected, controller ready, camera status, agent health | Source-labeled, fresh/stale/unavailable distinctions |
 | Diagnostics | check started/completed, observed result, inference | Report-specific durable or retained policy |
 | Telemetry | sampled device/system metric | Bounded, rate-controlled, optionally downsampled/retained |
 
-### 7.3 Python process logs
+### 7.3 Capability and service process logs
 
-The worker should support both structured operation logging and asynchronous stdout/stderr capture for child processes such as ARM builds. Associate output with operation, subprocess, severity/stream, and timestamps. Handle line framing and partial output deliberately.
+The native worker should support both durable structured operation evidence and
+on-demand asynchronous stdout/stderr transport for child processes such as ARM
+builds. Existing services retain their own producers and native retention.
+Associate transported output with source, optional operation/subprocess,
+severity/stream, source timestamp, and ingestion timestamp. Handle line framing
+and partial output deliberately, and sanitize on the backend before delivery.
 
 Do not equate log-line count with progress; provide named stages and actual measurements where available. A process that is still building but has no meaningful percentage should show activity/indeterminate status.
 
-**UX:** each operation can expose an expandable *Execution details* panel containing the same normalized log stream. Closing the panel stops presentation/following but not the operation or important event capture.
+**UX:** each operation can expose an expandable *Execution details* panel
+containing a normalized ephemeral log subscription. Closing the final viewer
+releases browser-directed collection; it never stops the operation or durable
+critical evidence capture. The browser owns a bounded active-session buffer and
+may pause display while continuing to retain incoming records within that bound.
 
 ### 7.4 Event transport and continuity
 
@@ -632,7 +683,7 @@ Do not equate log-line count with progress; provide named stages and actual meas
 - Worker: private local event stream, with correlation, replay/cursor or reconciliation sufficient for durable facts.
 - Events and snapshots represent one coherent semantic model; consumers must handle duplicate/replayed notifications idempotently.
 - Critical state and evidence are stored durably **before** treating notification as the only proof.
-- High-volume logs/telemetry may be bounded, sampled or dropped under explicit policies; critical lifecycle/evidence events may not be silently dropped.
+- High-volume raw logs/telemetry may be bounded or dropped under explicit transport/browser policies; critical lifecycle/evidence events may not be silently dropped or coupled to a raw-log count limit.
 - Consumers must detect gaps and recover from snapshots/history rather than claiming complete event continuity.
 - Streaming transport backpressure must not block technical OTA progress or exhaust process memory.
 
@@ -767,9 +818,9 @@ Reference: [TanStack Start server-function same-origin/CSRF guidance](https://ta
 
 ### 9.4 Process topology
 
-The add-on should supervise at least the management Node process, Python worker, existing AppDaemon, and existing go2rtc as distinct lifecycle units initially. A crash/restart in one should not unnecessarily bring down the others.
+The add-on should supervise at least the management Node process, native capability worker, existing AppDaemon, and existing go2rtc as distinct lifecycle units initially. A crash/restart in one should not unnecessarily bring down the others.
 
-The add-on s6 topology supervises the Node application, Python worker, Nginx gateway, AppDaemon, and go2rtc independently. Management starts independently of routine controller readiness.
+The add-on s6 topology supervises the Node application, native capability worker, Nginx gateway, AppDaemon, and go2rtc independently. Management starts independently of routine controller readiness.
 
 The add-on packaging can use a multi-stage Node/Go/C build as needed. Exact base image/runtime availability and resulting binary compatibility require packaging validation, not assumption.
 
@@ -908,7 +959,7 @@ management/
 
 installer/
   ...                       # retained reference source during migration
-  worker/                   # independently supervised Python capability worker
+  worker/                   # independently bundled TypeScript capability worker
 
 addon/
   ...                       # existing s6, configuration and packaging
@@ -1058,15 +1109,15 @@ The initial release is feature-complete within the agreed supported device/deplo
 
 1. A user can open the management app through Home Assistant Ingress **without first completing feeder setup**; authenticated direct browser mode is supported through the same frontend where configured.
 2. Full guided PLAF203 bootstrap is available in the web UI, including verified prerequisites, SSH recovery material, protected identity capture, guarded OTA, broker handoff, configuration and end-to-end integration checks.
-3. Existing Python functionality is modular behind stable, independently replaceable capability boundaries, with behavioral parity tests and recorded source provenance.
+3. Native TypeScript capabilities are modular behind stable, independently replaceable boundaries, with behavioral parity tests against the standalone Python installer and recorded source provenance.
 4. The TypeScript coordinator owns durable user jobs and checkpoints, while capability implementations exclusively own technical transactions and live device resources.
-5. Python execution logs and meaningful progress are streamed into reusable UI components; operation history and critical evidence survive browser loss and are recovered correctly after supported process interruptions.
+5. On-demand execution logs and meaningful progress are delivered through reusable UI components; raw logs remain ephemeral while operation history and critical evidence survive browser loss and are recovered correctly after supported process interruptions.
 6. The dashboard provides coherent source-aware device, MQTT, State Agent, AppDaemon and camera health without creating a new authority over routine feeder state.
 7. Diagnostics, events/history, maintenance/actions, operation details and settings are implemented with consistent interfaces and error/uncertainty semantics.
 8. Existing AppDaemon entities, verified persistent-write protections and go2rtc media behavior remain intact; no second routine controller competes for device writes.
 9. Secrets, network listeners, Ingress/direct exposure, Supervisor permissions and critical transaction operations pass explicit security tests.
 10. Browser/direct and Ingress integration, add-on startup/upgrade/backup behavior, protocol parity, interruption scenarios and live feeder installation have been qualified.
-11. Individual capability implementations can subsequently move from Python to TypeScript by changing their implementation adapters/dependency closure, not rewriting the action model or UI.
+11. Individual capability implementations can be replaced behind their TypeScript contracts and private dependency closures without rewriting the action model or UI.
 12. The future AppDaemon-to-TypeScript migration has an explicit observation/authority boundary and does not require redesigning the management application.
 
 ### Final invariant

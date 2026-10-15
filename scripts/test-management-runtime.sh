@@ -27,6 +27,21 @@ wait_for_http() {
   return 1
 }
 
+wait_for_worker() {
+  local url="$1"
+  local output="$2"
+  for _ in $(seq 1 20); do
+    if curl -fsS "${url}" >"${output}" 2>/dev/null &&
+      jq -e \
+        '.integrations[] | select(.id == "capability-worker" and .availability == "ready")' \
+        "${output}" >/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 run_addon() {
   local direct_access="$1"
   docker run -d --name "${container}" --network host \
@@ -46,6 +61,8 @@ run_addon() {
 cd "${repo_root}"
 run_addon 1
 wait_for_http "http://127.0.0.1:${direct_port}/api/v1/system/status"
+wait_for_worker "http://127.0.0.1:${direct_port}/api/v1/system/status" \
+  "${temporary}/system-status.json"
 
 curl -fsS "http://127.0.0.1:${direct_port}/" >"${temporary}/direct.html"
 curl -fsS "http://127.0.0.1:${direct_port}/operations" >"${temporary}/deep.html"
@@ -91,6 +108,10 @@ docker rm -f "${container}" >/dev/null
 run_addon 0
 wait_for_http "http://127.0.0.1:${ingress_port}/api/v1/system/status"
 curl -fsS "http://127.0.0.1:${ingress_port}/api/v1/devices/overview" \
+  >/dev/null
+curl -fsS "http://127.0.0.1:${ingress_port}/api/v1/diagnostics/report" \
+  >/dev/null
+curl -fsS "http://127.0.0.1:${ingress_port}/api/v1/operation-events?limit=20" \
   >/dev/null
 curl -fsS "http://127.0.0.1:${ingress_port}/api/v1/operations/${operation_id}" \
   >/dev/null

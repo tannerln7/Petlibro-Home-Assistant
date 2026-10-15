@@ -47,7 +47,8 @@ that publishes the app below a prefix may send `X-Forwarded-Prefix`; it must
 replace client-supplied forwarding headers and provide authentication itself.
 Never expose the direct port to the Internet.
 
-The Node HTTP server and Python worker listen only on private Unix sockets.
+The Node HTTP server and native-TypeScript capability worker listen only on
+private Unix sockets and remain independently supervised.
 Management state is stored under `/data/management`; feeder configuration
 errors do not prevent the management services from starting.
 

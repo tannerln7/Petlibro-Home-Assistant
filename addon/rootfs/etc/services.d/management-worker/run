@@ -2,11 +2,13 @@
 # shellcheck shell=bash
 set -euo pipefail
 
+/usr/local/bin/petlibro-local-run management
+
 socket_dir=/run/petlibro-management/worker
 install -d -m 0700 -o root -g root "${socket_dir}"
 rm -f -- "${socket_dir}/worker.sock"
 umask 0077
 
-bashio::log.info "Starting Petlibro Management capability worker"
-exec python3 /opt/petlibro-local/management-worker/run.py \
-    --socket "${socket_dir}/worker.sock"
+bashio::log.info "Starting Petlibro Management native capability worker"
+exec s6-envdir /run/petlibro-management/env \
+    /usr/local/bin/node /opt/petlibro-management-worker/run.mjs

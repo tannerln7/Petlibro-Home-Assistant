@@ -18,10 +18,13 @@ import { Route as LogsRouteImport } from './routes/logs'
 import { Route as OperationsRouteImport } from './routes/operations'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SetupRouteImport } from './routes/setup'
+import { Route as ApiV1OperationEventsRouteImport } from './routes/api.v1.operation-events'
 import { Route as ApiV1OperationsRouteImport } from './routes/api.v1.operations'
 import { Route as ApiV1ActionsStateAgentInspectionRouteImport } from './routes/api.v1.actions.state-agent-inspection'
 import { Route as ApiV1DevicesOverviewRouteImport } from './routes/api.v1.devices.overview'
+import { Route as ApiV1DiagnosticsReportRouteImport } from './routes/api.v1.diagnostics.report'
 import { Route as ApiV1OperationsOperationIdRouteImport } from './routes/api.v1.operations.$operationId'
+import { Route as ApiV1SetupPreflightRouteImport } from './routes/api.v1.setup.preflight'
 import { Route as ApiV1SystemStatusRouteImport } from './routes/api.v1.system.status'
 
 const IndexRoute = IndexRouteImport.update({
@@ -69,6 +72,11 @@ const SetupRoute = SetupRouteImport.update({
   path: '/setup',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiV1OperationEventsRoute = ApiV1OperationEventsRouteImport.update({
+  id: '/api/v1/operation-events',
+  path: '/api/v1/operation-events',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiV1OperationsRoute = ApiV1OperationsRouteImport.update({
   id: '/api/v1/operations',
   path: '/api/v1/operations',
@@ -85,12 +93,22 @@ const ApiV1DevicesOverviewRoute = ApiV1DevicesOverviewRouteImport.update({
   path: '/api/v1/devices/overview',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiV1DiagnosticsReportRoute = ApiV1DiagnosticsReportRouteImport.update({
+  id: '/api/v1/diagnostics/report',
+  path: '/api/v1/diagnostics/report',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiV1OperationsOperationIdRoute =
   ApiV1OperationsOperationIdRouteImport.update({
     id: '/$operationId',
     path: '/$operationId',
     getParentRoute: () => ApiV1OperationsRoute,
   } as any)
+const ApiV1SetupPreflightRoute = ApiV1SetupPreflightRouteImport.update({
+  id: '/api/v1/setup/preflight',
+  path: '/api/v1/setup/preflight',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiV1SystemStatusRoute = ApiV1SystemStatusRouteImport.update({
   id: '/api/v1/system/status',
   path: '/api/v1/system/status',
@@ -107,10 +125,13 @@ export interface FileRoutesByFullPath {
   '/operations': typeof OperationsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
+  '/api/v1/operation-events': typeof ApiV1OperationEventsRoute
   '/api/v1/operations': typeof ApiV1OperationsRouteWithChildren
   '/api/v1/actions/state-agent-inspection': typeof ApiV1ActionsStateAgentInspectionRoute
   '/api/v1/devices/overview': typeof ApiV1DevicesOverviewRoute
+  '/api/v1/diagnostics/report': typeof ApiV1DiagnosticsReportRoute
   '/api/v1/operations/$operationId': typeof ApiV1OperationsOperationIdRoute
+  '/api/v1/setup/preflight': typeof ApiV1SetupPreflightRoute
   '/api/v1/system/status': typeof ApiV1SystemStatusRoute
 }
 export interface FileRoutesByTo {
@@ -123,10 +144,13 @@ export interface FileRoutesByTo {
   '/operations': typeof OperationsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
+  '/api/v1/operation-events': typeof ApiV1OperationEventsRoute
   '/api/v1/operations': typeof ApiV1OperationsRouteWithChildren
   '/api/v1/actions/state-agent-inspection': typeof ApiV1ActionsStateAgentInspectionRoute
   '/api/v1/devices/overview': typeof ApiV1DevicesOverviewRoute
+  '/api/v1/diagnostics/report': typeof ApiV1DiagnosticsReportRoute
   '/api/v1/operations/$operationId': typeof ApiV1OperationsOperationIdRoute
+  '/api/v1/setup/preflight': typeof ApiV1SetupPreflightRoute
   '/api/v1/system/status': typeof ApiV1SystemStatusRoute
 }
 export interface FileRoutesById {
@@ -140,10 +164,13 @@ export interface FileRoutesById {
   '/operations': typeof OperationsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
+  '/api/v1/operation-events': typeof ApiV1OperationEventsRoute
   '/api/v1/operations': typeof ApiV1OperationsRouteWithChildren
   '/api/v1/actions/state-agent-inspection': typeof ApiV1ActionsStateAgentInspectionRoute
   '/api/v1/devices/overview': typeof ApiV1DevicesOverviewRoute
+  '/api/v1/diagnostics/report': typeof ApiV1DiagnosticsReportRoute
   '/api/v1/operations/$operationId': typeof ApiV1OperationsOperationIdRoute
+  '/api/v1/setup/preflight': typeof ApiV1SetupPreflightRoute
   '/api/v1/system/status': typeof ApiV1SystemStatusRoute
 }
 export interface FileRouteTypes {
@@ -158,10 +185,13 @@ export interface FileRouteTypes {
     | '/operations'
     | '/settings'
     | '/setup'
+    | '/api/v1/operation-events'
     | '/api/v1/operations'
     | '/api/v1/actions/state-agent-inspection'
     | '/api/v1/devices/overview'
+    | '/api/v1/diagnostics/report'
     | '/api/v1/operations/$operationId'
+    | '/api/v1/setup/preflight'
     | '/api/v1/system/status'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -174,10 +204,13 @@ export interface FileRouteTypes {
     | '/operations'
     | '/settings'
     | '/setup'
+    | '/api/v1/operation-events'
     | '/api/v1/operations'
     | '/api/v1/actions/state-agent-inspection'
     | '/api/v1/devices/overview'
+    | '/api/v1/diagnostics/report'
     | '/api/v1/operations/$operationId'
+    | '/api/v1/setup/preflight'
     | '/api/v1/system/status'
   id:
     | '__root__'
@@ -190,10 +223,13 @@ export interface FileRouteTypes {
     | '/operations'
     | '/settings'
     | '/setup'
+    | '/api/v1/operation-events'
     | '/api/v1/operations'
     | '/api/v1/actions/state-agent-inspection'
     | '/api/v1/devices/overview'
+    | '/api/v1/diagnostics/report'
     | '/api/v1/operations/$operationId'
+    | '/api/v1/setup/preflight'
     | '/api/v1/system/status'
   fileRoutesById: FileRoutesById
 }
@@ -207,9 +243,12 @@ export interface RootRouteChildren {
   OperationsRoute: typeof OperationsRoute
   SettingsRoute: typeof SettingsRoute
   SetupRoute: typeof SetupRoute
+  ApiV1OperationEventsRoute: typeof ApiV1OperationEventsRoute
   ApiV1OperationsRoute: typeof ApiV1OperationsRouteWithChildren
   ApiV1ActionsStateAgentInspectionRoute: typeof ApiV1ActionsStateAgentInspectionRoute
   ApiV1DevicesOverviewRoute: typeof ApiV1DevicesOverviewRoute
+  ApiV1DiagnosticsReportRoute: typeof ApiV1DiagnosticsReportRoute
+  ApiV1SetupPreflightRoute: typeof ApiV1SetupPreflightRoute
   ApiV1SystemStatusRoute: typeof ApiV1SystemStatusRoute
 }
 
@@ -278,6 +317,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SetupRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/v1/operation-events': {
+      id: '/api/v1/operation-events'
+      path: '/api/v1/operation-events'
+      fullPath: '/api/v1/operation-events'
+      preLoaderRoute: typeof ApiV1OperationEventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/v1/operations': {
       id: '/api/v1/operations'
       path: '/api/v1/operations'
@@ -299,12 +345,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiV1DevicesOverviewRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/v1/diagnostics/report': {
+      id: '/api/v1/diagnostics/report'
+      path: '/api/v1/diagnostics/report'
+      fullPath: '/api/v1/diagnostics/report'
+      preLoaderRoute: typeof ApiV1DiagnosticsReportRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/v1/operations/$operationId': {
       id: '/api/v1/operations/$operationId'
       path: '/$operationId'
       fullPath: '/api/v1/operations/$operationId'
       preLoaderRoute: typeof ApiV1OperationsOperationIdRouteImport
       parentRoute: typeof ApiV1OperationsRoute
+    }
+    '/api/v1/setup/preflight': {
+      id: '/api/v1/setup/preflight'
+      path: '/api/v1/setup/preflight'
+      fullPath: '/api/v1/setup/preflight'
+      preLoaderRoute: typeof ApiV1SetupPreflightRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/v1/system/status': {
       id: '/api/v1/system/status'
@@ -338,9 +398,12 @@ const rootRouteChildren: RootRouteChildren = {
   OperationsRoute: OperationsRoute,
   SettingsRoute: SettingsRoute,
   SetupRoute: SetupRoute,
+  ApiV1OperationEventsRoute: ApiV1OperationEventsRoute,
   ApiV1OperationsRoute: ApiV1OperationsRouteWithChildren,
   ApiV1ActionsStateAgentInspectionRoute: ApiV1ActionsStateAgentInspectionRoute,
   ApiV1DevicesOverviewRoute: ApiV1DevicesOverviewRoute,
+  ApiV1DiagnosticsReportRoute: ApiV1DiagnosticsReportRoute,
+  ApiV1SetupPreflightRoute: ApiV1SetupPreflightRoute,
   ApiV1SystemStatusRoute: ApiV1SystemStatusRoute,
 }
 export const routeTree = rootRouteImport

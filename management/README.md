@@ -5,7 +5,7 @@ the planned Petlibro Management application. It is independently runnable and
 packaged into the Home Assistant add-on. Existing AppDaemon and go2rtc services
 remain the production operational authorities.
 
-The application implements three vertical backend paths and presents their real
+The application implements cohesive vertical backend paths and presents their real
 state across the management route inventory:
 
 ```text
@@ -20,7 +20,7 @@ Operations page
   -> accepted State Agent inspection action
   -> durable TypeScript OperationManager + SQLite journal
   -> versioned HTTP/JSON over a private Unix socket
-  -> independent Python worker
+  -> independent native-TypeScript capability worker
   -> authenticated, read-only State Agent /health request
   -> structured result/evidence
   -> HTTP snapshot/history + reconnectable browser WebSocket notification
@@ -31,6 +31,22 @@ Overview / Devices / Diagnostics
   -> Supervisor-owned options + AppDaemon discovery/controller observations
   -> go2rtc physical-session status + bounded MQTT authentication probe
   -> source-, freshness-, and verification-aware device projection
+
+Setup
+  -> POST /api/v1/setup/preflight
+  -> bounded input validation + SSH recovery-key shape validation
+  -> final-broker MQTT authentication + transient TCP/1883 ownership check
+  -> explicit same-host handoff block without service reconfiguration
+
+Events / Diagnostics
+  -> bounded query over durable SQLite operation evidence
+  -> recursive secret-field redaction + filters + JSON export
+  -> source-backed diagnostic report with explicit limitations
+
+Live raw logs (not yet connected)
+  -> future on-demand source subscriptions over the browser transport
+  -> backend normalization/redaction + bounded browser-session retention
+  -> no automatic copy into the durable operation journal
 ```
 
 The system endpoint reports management and worker transport readiness. The
@@ -51,7 +67,8 @@ controller, State Agent, or camera health.
 - Vitest, jsdom, and Testing Library for deterministic tests.
 
 The packaged Nitro runtime listens on a private Unix socket behind Nginx. The
-Python capability worker uses a separate mode-`0600` Unix socket.
+native capability worker uses a separate mode-`0600` Unix socket and a separate
+durable invocation database.
 
 ## Source organization
 
@@ -64,9 +81,7 @@ src/
   routes/             # Thin TanStack page and HTTP route adapters
   server/             # Explicit server composition root
   test/               # Shared test setup
-worker/
-  petlibro_worker/    # Independent Python capability process
-  tests/              # Worker and capability contract tests
+worker/               # Independently bundled TypeScript capability process
 server/routes/        # Nitro WebSocket delivery route
 ```
 
@@ -95,12 +110,13 @@ provide a real protected token only through the environment:
 
 ```bash
 # Terminal 1
-PETLIBRO_WORKER_SOCKET=.data/worker.sock npm run worker
+PETLIBRO_CAPABILITY_WORKER_SOCKET=.data/worker.sock npm run build:worker
+PETLIBRO_CAPABILITY_WORKER_SOCKET=.data/worker.sock npm run worker
 
 # Terminal 2
 export PETLIBRO_MANAGEMENT_DATA_DIR=.data
 export PETLIBRO_RUNTIME_DATA_DIR=/path/to/synthetic-or-mounted-addon-data
-export PETLIBRO_WORKER_SOCKET=.data/worker.sock
+export PETLIBRO_CAPABILITY_WORKER_SOCKET=.data/worker.sock
 export PETLIBRO_STATE_AGENT_URL=http://FEEDER_IP:8765
 export PETLIBRO_STATE_AGENT_TOKEN='replace-with-protected-token'
 npm run dev
@@ -169,8 +185,11 @@ Implemented now:
   MQTT activity, reconciliation state, State Agent-verified revision/plan
   summary, physical camera session state, resolution, and health counters;
 - thin versioned HTTP adapter and explicit application-service composition;
-- private versioned Python worker with typed invocation deduplication;
+- private versioned native-TypeScript worker with durable typed invocation
+  deduplication and explicit no-replay restart reconciliation;
 - real authenticated State Agent health inspection with bounded safe results;
+- byte-exact native OEM provisioning, MQTT packet, and OTA command primitives
+  covered against the standalone installer's reference vectors;
 - durable operation snapshots and globally sequenced events in SQLite;
 - restart reconciliation without blind capability replay;
 - HTTP operation snapshot/history and reconnectable WebSocket notifications;
@@ -178,6 +197,8 @@ Implemented now:
   interruption, result evidence, and cursor-based live updates;
 - operation-backed recent activity on Overview and History, plus the real
   State Agent inspection capability on Actions and Diagnostics;
+- bounded, filterable, recursively redacted durable operation-event queries and
+  downloadable JSON exports, plus a source-backed diagnostic report export;
 - root and configurable-prefix build configuration;
 - add-on image packaging and independent s6 supervision;
 - Supervisor-source-restricted Ingress gateway and opt-in CIDR-restricted
@@ -187,15 +208,24 @@ Implemented now:
 
 Intentionally not implemented:
 
-- installer capability extraction beyond the isolated State Agent health probe;
-- device-changing capabilities, worker-owned durable transaction recovery, or cancellation;
+- complete native installer transaction orchestration beyond the tested OEM
+  protocol primitives and State Agent health probe;
+- artifact/payload custody, temporary MQTT identity capture, source-restricted
+  artifact serving, correlated OTA/recovery transactions, final-broker
+  handoff, post-install adoption, and capability-specific cancellation;
 - operator checkpoints or full action catalog/schema forms;
+- maintenance writes or signed State Agent update submission; existing
+  AppDaemon update and persistent-state authorities remain unchanged;
+- on-demand operational-service stdout/stderr adapters and the browser-retained
+  multi-source raw-log explorer; Events & Logs currently presents durable
+  management/capability evidence in a separately identified section only;
 - direct Supervisor/Home Assistant API access, service control, or option writes;
 - routine feeder controls, setup execution, or fabricated demo data;
 - a current Home Assistant health heartbeat (only historical birth events are
   available from AppDaemon without broader API permissions);
 - application authentication or TLS;
-- live Home Assistant Supervisor/Ingress qualification.
+- live Home Assistant Supervisor qualification for this uncommitted native-worker
+  change set (the preceding management release was exercised through Ingress).
 
 Authentication is intentionally outside this application's scope. Ingress is
 isolated to the Supervisor proxy. Direct access is disabled by default and must

@@ -111,6 +111,28 @@ describe('OperationManager', () => {
     expect(terminal.failure?.message).toContain('was not replayed');
     journal.close();
   });
+
+  it('preserves invocation ownership and records the reconciling worker', async () => {
+    const journal = new SqliteOperationJournal(':memory:');
+    const running = persistedRunningOperation();
+    journal.create(running, []);
+    const worker = new ReconciledInvocationWorker(running);
+    const restartedManager = createManager(journal, worker);
+
+    await restartedManager.ensureInitialized();
+    const terminal = await waitForTerminal(
+      restartedManager,
+      running.operationId,
+    );
+
+    expect(terminal).toMatchObject({
+      status: 'interrupted',
+      workerInstanceId: 'worker-instance',
+      reconciledByWorkerInstanceId: 'reconciling-worker-instance',
+    });
+    expect(worker.submitCalls).toBe(0);
+    journal.close();
+  });
 });
 
 class SequencedWorker implements CapabilityProvider {
@@ -201,6 +223,40 @@ class AmbiguousSubmitWorker extends SequencedWorker {
 class LostInvocationWorker extends UnavailableWorker {
   public override async getInvocation(): Promise<WorkerInvocationSnapshot> {
     throw new WorkerInvocationNotFoundError();
+  }
+}
+
+class ReconciledInvocationWorker extends SequencedWorker {
+  public override async getInvocation(): Promise<WorkerInvocationSnapshot> {
+    const operation = persistedRunningOperation();
+    return {
+      protocolVersion: 1,
+      workerInstanceId: 'worker-instance',
+      reconciledByWorkerInstanceId: 'reconciling-worker-instance',
+      invocationId: operation.invocationId,
+      operationId: operation.operationId,
+      capabilityId: STATE_AGENT_INSPECTION_CAPABILITY_ID,
+      status: 'interrupted',
+      stage: 'interrupted',
+      acceptedAt: timestamp,
+      updatedAt: timestamp,
+      events: [
+        {
+          sequence: 3,
+          type: 'capability.interrupted',
+          occurredAt: timestamp,
+          severity: 'warning',
+          payload: {
+            originalWorkerInstanceId: operation.workerInstanceId,
+            reconciledByWorkerInstanceId: 'reconciling-worker-instance',
+          },
+        },
+      ],
+      error: {
+        code: 'capability_worker_restarted',
+        message: 'The invocation was not replayed.',
+      },
+    };
   }
 }
 

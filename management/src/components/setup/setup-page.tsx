@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import {
   Check,
@@ -7,6 +7,7 @@ import {
   LockKeyhole,
   Router,
 } from 'lucide-react';
+import { type FormEvent, useState } from 'react';
 import { PageHeader } from '#/components/layout/application-shell';
 import {
   AvailabilityBadge,
@@ -21,6 +22,7 @@ import {
   CardHeader,
   CardTitle,
 } from '#/components/ui/card';
+import { runSetupPreflight } from '#/infrastructure/http/setup-client';
 import { fetchSystemStatus } from '#/infrastructure/http/system-status-client';
 
 const setupStages = [
@@ -33,13 +35,37 @@ const setupStages = [
 ] as const;
 
 export function SetupPage() {
+  const [form, setForm] = useState({
+    feederIp: '',
+    setupHostIp: '',
+    homeAssistantIp: '',
+    brokerHost: '',
+    brokerPort: '1883',
+    backendUsername: '',
+    backendPassword: '',
+    sshPublicKey: '',
+  });
   const statusQuery = useQuery({
     queryKey: ['system-status'],
     queryFn: ({ signal }) => fetchSystemStatus(signal),
   });
   const worker = statusQuery.data?.integrations.find(
-    (item) => item.id === 'python-worker',
+    (item) => item.id === 'capability-worker',
   );
+  const preflight = useMutation({
+    mutationFn: runSetupPreflight,
+    onSettled: () =>
+      setForm((current) => ({ ...current, backendPassword: '' })),
+  });
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    preflight.mutate({
+      ...form,
+      brokerPort: Number(form.brokerPort),
+    });
+  };
+  const update = (field: keyof typeof form, value: string) =>
+    setForm((current) => ({ ...current, [field]: value }));
 
   return (
     <div className="page-stack">
@@ -79,10 +105,130 @@ export function SetupPage() {
         </Card>
 
         <div className="setup-primary">
+          <Card>
+            <CardHeader>
+              <CardTitle>Installation preflight</CardTitle>
+              <CardDescription>
+                Validate recovery input, final-broker authentication, and
+                current TCP/1883 ownership without changing the feeder.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form className="setup-preflight-form" onSubmit={submit}>
+                <div className="setup-field-grid">
+                  <SetupField
+                    label="Feeder IPv4"
+                    value={form.feederIp}
+                    onChange={(value) => update('feederIp', value)}
+                  />
+                  <SetupField
+                    label="Setup host IPv4"
+                    value={form.setupHostIp}
+                    onChange={(value) => update('setupHostIp', value)}
+                  />
+                  <SetupField
+                    label="Home Assistant IPv4"
+                    value={form.homeAssistantIp}
+                    onChange={(value) => update('homeAssistantIp', value)}
+                  />
+                  <SetupField
+                    label="Final broker IPv4"
+                    value={form.brokerHost}
+                    onChange={(value) => update('brokerHost', value)}
+                  />
+                  <SetupField
+                    label="Final broker port"
+                    value={form.brokerPort}
+                    inputMode="numeric"
+                    onChange={(value) => update('brokerPort', value)}
+                  />
+                  <SetupField
+                    label="Backend broker username"
+                    value={form.backendUsername}
+                    autoComplete="username"
+                    onChange={(value) => update('backendUsername', value)}
+                  />
+                  <SetupField
+                    label="Backend broker password"
+                    value={form.backendPassword}
+                    type="password"
+                    autoComplete="new-password"
+                    onChange={(value) => update('backendPassword', value)}
+                  />
+                </div>
+                <label className="setup-wide-field">
+                  <span>SSH recovery public key</span>
+                  <textarea
+                    required
+                    rows={3}
+                    value={form.sshPublicKey}
+                    placeholder="ssh-ed25519 AAAA… plaf203-recovery"
+                    onChange={(event) =>
+                      update('sshPublicKey', event.target.value)
+                    }
+                  />
+                </label>
+                <div className="setup-form-actions">
+                  <Button type="submit" disabled={preflight.isPending}>
+                    <Router aria-hidden="true" />
+                    {preflight.isPending ? 'Checking…' : 'Run safe preflight'}
+                  </Button>
+                  <small>
+                    The broker password is used for this request and is not
+                    returned in evidence or retained by this workflow.
+                  </small>
+                </div>
+              </form>
+              {preflight.isError ? (
+                <p className="operation-inline-error" role="alert">
+                  {preflight.error.message}
+                </p>
+              ) : null}
+              {preflight.data === undefined ? null : (
+                <div className="setup-preflight-result" aria-live="polite">
+                  <div className="card-heading-row">
+                    <strong>Preflight result</strong>
+                    <Badge
+                      className={
+                        preflight.data.readyForBootstrapSession
+                          ? 'status-ready'
+                          : 'status-warning'
+                      }
+                    >
+                      {preflight.data.readyForBootstrapSession
+                        ? 'Ready to begin'
+                        : 'Needs attention'}
+                    </Badge>
+                  </div>
+                  <ul className="check-list">
+                    {preflight.data.checks.map((check) => (
+                      <li key={check.id}>
+                        <Check aria-hidden="true" />
+                        <span>
+                          <strong>{check.title}</strong>
+                          <small>{check.detail}</small>
+                        </span>
+                        <Badge
+                          className={
+                            check.status === 'passed'
+                              ? 'status-ready'
+                              : 'status-warning'
+                          }
+                        >
+                          {check.status}
+                        </Badge>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </CardContent>
+          </Card>
           <CapabilityGap
+            compact
             icon={Router}
-            title="Guided setup is not available yet"
-            description="The proven installer remains a CLI/reference path. Its private protocol dependencies, checkpoints, and transaction ownership have not yet been exposed through a stable worker capability."
+            title="Device-changing stages remain locked"
+            description="Native protocol primitives are parity-tested, but artifact custody, temporary MQTT/OTA session ownership, broker handoff checkpoints, and post-install adoption are not yet exposed. Continue to use the independent Python CLI for installation."
           />
           <Card>
             <CardHeader>
@@ -131,5 +277,35 @@ export function SetupPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+function SetupField({
+  label,
+  value,
+  onChange,
+  type = 'text',
+  inputMode,
+  autoComplete,
+}: {
+  readonly label: string;
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+  readonly type?: 'text' | 'password';
+  readonly inputMode?: 'numeric';
+  readonly autoComplete?: string;
+}) {
+  return (
+    <label>
+      <span>{label}</span>
+      <input
+        required
+        type={type}
+        inputMode={inputMode}
+        autoComplete={autoComplete}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
   );
 }

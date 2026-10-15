@@ -270,8 +270,8 @@ function OperationView({
                 {current.result.stateDecode.expectedBytes} bytes
               </p>
               <small>
-                Observed by the Python worker from the authenticated State Agent
-                response. This is not feeder connectivity or AppDaemon
+                Observed by the capability worker from the authenticated State
+                Agent response. This is not feeder connectivity or AppDaemon
                 readiness.
               </small>
             </div>

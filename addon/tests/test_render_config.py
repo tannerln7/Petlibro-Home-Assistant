@@ -173,6 +173,17 @@ class RenderConfigTests(unittest.TestCase):
                 (runtime_dir / "env" / "PETLIBRO_STATE_AGENT_URL").read_text(),
             )
             self.assertEqual(
+                str(runtime_dir / "worker" / "worker.sock"),
+                (
+                    runtime_dir
+                    / "env"
+                    / "PETLIBRO_CAPABILITY_WORKER_SOCKET"
+                ).read_text(),
+            )
+            self.assertFalse(
+                (runtime_dir / "env" / "PETLIBRO_WORKER_SOCKET").exists()
+            )
+            self.assertEqual(
                 0o700, (data_dir / "management").stat().st_mode & 0o777
             )
             self.assertEqual(

@@ -9,6 +9,7 @@ export interface ObservationMetadata {
   readonly source:
     | 'management-server'
     | 'management-configuration'
+    | 'capability-worker'
     | 'python-worker';
   readonly authority: 'management-application';
   readonly observedAt: string;
@@ -24,7 +25,11 @@ export interface ManagementServiceObservation {
 }
 
 export interface IntegrationObservation {
-  readonly id: 'python-worker' | 'routine-controller' | 'camera-runtime';
+  readonly id:
+    | 'capability-worker'
+    | 'python-worker'
+    | 'routine-controller'
+    | 'camera-runtime';
   readonly name: string;
   readonly availability: IntegrationAvailability;
   readonly detail: string;
@@ -71,7 +76,8 @@ function isManagementObservation(value: unknown): boolean {
 function isIntegrationObservation(value: unknown): boolean {
   return (
     isRecord(value) &&
-    (value.id === 'python-worker' ||
+    (value.id === 'capability-worker' ||
+      value.id === 'python-worker' ||
       value.id === 'routine-controller' ||
       value.id === 'camera-runtime') &&
     typeof value.name === 'string' &&
@@ -88,6 +94,7 @@ function isObservationMetadata(value: unknown): boolean {
     isRecord(value) &&
     (value.source === 'management-server' ||
       value.source === 'management-configuration' ||
+      value.source === 'capability-worker' ||
       value.source === 'python-worker') &&
     value.authority === 'management-application' &&
     typeof value.observedAt === 'string' &&

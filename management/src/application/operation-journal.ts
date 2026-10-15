@@ -21,4 +21,12 @@ export interface OperationJournal {
     afterSequence: number,
     limit: number,
   ): readonly OperationEvent[];
+  queryEvents(query: OperationEventQuery): readonly OperationEvent[];
+}
+
+export interface OperationEventQuery {
+  readonly limit: number;
+  readonly severity?: OperationEvent['severity'];
+  readonly source?: OperationEvent['source'];
+  readonly search?: string;
 }

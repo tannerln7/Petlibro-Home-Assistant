@@ -47,11 +47,11 @@ describe('SystemStatusService', () => {
 
     const snapshot = await service.getSnapshot();
     const worker = snapshot.integrations.find(
-      (integration) => integration.id === 'python-worker',
+      (integration) => integration.id === 'capability-worker',
     );
 
     expect(worker?.availability).toBe('ready');
-    expect(worker?.observation.source).toBe('python-worker');
+    expect(worker?.observation.source).toBe('capability-worker');
     expect(worker?.observation.scope).toContain(
       'does not imply State Agent or feeder health',
     );

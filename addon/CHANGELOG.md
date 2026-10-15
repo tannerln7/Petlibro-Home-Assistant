@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- Replace the management Python capability worker with an independently
+  supervised native-TypeScript worker and durable no-replay invocation
+  reconciliation; retain the standalone Python installer unchanged.
+- Add native parity-tested OEM provisioning, MQTT packet, OTA command, and SSH
+  recovery-key validation primitives without exposing device-changing actions.
+- Add a safe setup preflight for endpoint validation, broker authentication,
+  recovery-key checks, and explicit TCP/1883 ownership/handoff reporting.
+- Add bounded correlated queries and JSON export for durable operation evidence,
+  with recursive redaction and source-backed diagnostic reports. Raw service
+  logs remain an explicitly deferred, ephemeral on-demand stream rather than
+  being copied into the SQLite operation journal.
+- Preserve original capability-worker ownership across restart reconciliation,
+  recording the reconciling worker separately without replaying invocations.
+
 ## 0.3.13-mgmt.3
 
 - Add read-only AppDaemon controller and discovery observations.

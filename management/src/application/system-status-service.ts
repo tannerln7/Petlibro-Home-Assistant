@@ -69,7 +69,7 @@ export class SystemStatusService {
   ): Promise<IntegrationObservation> {
     if (this.worker === undefined) {
       return {
-        id: 'python-worker',
+        id: 'capability-worker',
         name: 'Device operations worker',
         availability: 'not-configured',
         detail: 'The worker adapter is not configured.',
@@ -79,12 +79,12 @@ export class SystemStatusService {
     try {
       const health = await this.worker.health();
       return {
-        id: 'python-worker',
+        id: 'capability-worker',
         name: 'Device operations worker',
         availability: 'ready',
         detail: `Worker ${health.workerVersion} accepted protocol version ${health.protocolVersion}.`,
         observation: {
-          source: 'python-worker',
+          source: 'capability-worker',
           authority: 'management-application',
           observedAt,
           scope:
@@ -93,7 +93,7 @@ export class SystemStatusService {
       };
     } catch {
       return {
-        id: 'python-worker',
+        id: 'capability-worker',
         name: 'Device operations worker',
         availability: 'unavailable',
         detail: 'The configured private worker socket is unavailable.',

@@ -75,7 +75,6 @@ fi
     addon/tests \
     state-agent/tests \
     installer/tests \
-    management/worker/tests \
     -q
 
 if (( has_appdaemon )); then

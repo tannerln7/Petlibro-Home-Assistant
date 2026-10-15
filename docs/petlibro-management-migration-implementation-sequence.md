@@ -1,5 +1,11 @@
 # Petlibro Management — Migration & Implementation Sequence
 
+> **Revised implementation target (October 14, 2026):** management
+> capabilities are ported natively to TypeScript and run in an independently
+> supervised worker. The standalone Python installer and its tests remain an
+> independent reference path; management does not import or execute them. Read
+> older “Python extraction” wording as historical sequencing guidance only.
+
 **Planning baseline:** October 13, 2026  
 **Related document:** `petlibro-management-architecture-coverage-map.md`  
 **Reference repository:** [Petlibro-Home-Assistant (`develop`)](https://github.com/tannerln7/Petlibro-Home-Assistant/tree/develop)
@@ -53,7 +59,7 @@ flowchart TB
     A["0. Reference baseline and capability map"]
     B["1. Shared boundaries and operational contracts"]
     C["2. Application and execution foundation"]
-    D["3. Python capability extraction"]
+    D["3. Native TypeScript capability porting"]
     E["3. Existing service integrations"]
     F["3. Frontend foundation"]
     G["4. Complete bootstrap and broker coordination"]
@@ -75,7 +81,7 @@ flowchart TB
     I --> J
 ```
 
-The shared contracts form the foundation; Python extraction, runtime integration, and frontend development then advance in parallel. The complete application comes together as those streams converge.
+The shared contracts form the foundation; native capability porting, runtime integration, and frontend development then advance in parallel. The complete application comes together as those streams converge.
 
 The numbering identifies implementation waves, not one enormous Codex assignment per wave.
 
@@ -87,7 +93,7 @@ For example:
 
 - The operation viewer defines what progress and log information it needs.
 - The event contract defines the common representation.
-- The Python worker implements production of those events.
+- The native capability worker implements production of those events.
 - The operation manager provides their context, history and lifecycle.
 - The frontend renders them.
 
@@ -162,18 +168,18 @@ Implement the complete infrastructure necessary to host any capability correctly
 
 This includes TypeScript service composition, worker communication, operation lifecycle, durable records, event publication, and process supervision.
 
-In parallel, establish the real TanStack Start application shell and independent Python worker process.
+In parallel, establish the real TanStack Start application shell and independent native-TypeScript worker process.
 
 | Workstream | Deliverable |
 |---|---|
-| Python migration | Worker host that can own a live capability session and expose a bounded operation |
+| Capability migration | Native worker host that can own a live capability session and expose a bounded operation; standalone Python installer retained as parity reference |
 | TypeScript foundation | Capability adapters, operation manager, journal, event distribution and lifecycle reconciliation |
 | Frontend | Application shell, routing, authentication boundary, reusable operation/progress/log components |
 | Integrations | Add-on process topology, management startup independence, Ingress and direct-browser transport |
 
 The key validation is one **complete vertical execution path**, using a safe read-only capability.
 
-For example, a State Agent health inspection can travel through the TypeScript application, Python worker, result contract, operation journal, and live event stream, then appear in the frontend.
+For example, a State Agent health inspection can travel through the TypeScript application, native worker, result contract, operation journal, and live event stream, then appear in the frontend.
 
 That proves the real architecture—not just that the individual services compile.
 
@@ -181,13 +187,15 @@ It should also demonstrate browser disconnection, management-server restart, wor
 
 This read-only operation is not intended as an initial product; it is a representative integration test for the infrastructure the final product uses.
 
-**Exit condition:** A real capability executes through the final architectural boundaries with correct state ownership, logs, results, and reconnection behavior.
+**Exit condition:** A real capability executes through the final architectural
+boundaries with correct state ownership, durable evidence/results, explicit
+ephemeral-log behavior, and reconnection semantics.
 
-### Wave 3 — Extract Python capabilities while building existing-system integrations
+### Wave 3 — Port native TypeScript capabilities while building existing-system integrations
 
 This is where workstreams genuinely progress in parallel.
 
-The execution foundation exists. Real installer behavior can move into modular capability units while the adapters exposing existing operational information are developed simultaneously.
+The execution foundation exists. Real installer behavior moves into native TypeScript capability units, preserving parity against the standalone Python reference, while adapters exposing existing operational information are developed simultaneously.
 
 #### Independent or relatively low-coupling capabilities
 
@@ -217,7 +225,7 @@ Establish their final responsibility boundaries in Wave 3; complete integration 
 
 #### Parallel work: existing operational adapters
 
-While Python extraction proceeds, another assignment can handle the runtime observation side.
+While native capability porting proceeds, runtime observation adapters can advance independently.
 
 | Integration | Initial responsibility |
 |---|---|
@@ -262,7 +270,7 @@ At this stage, the system has:
 
 - A durable operation manager.
 - Stable capability interfaces.
-- The Python worker.
+- The native capability worker.
 - Extracted supporting operations.
 - Defined event and logging facilities.
 - Platform and broker integration contracts.
@@ -364,7 +372,7 @@ The focus becomes completing the broader management experience—not inventing a
 | Actions / maintenance | Action catalog, capability registry | Execute supported actions |
 | Operations | Job journal, progress, logs, results | Inspect active and historical work |
 | Diagnostics | Runtime adapters, device inspection, observations | Explain and investigate failures |
-| Logs | Unified event/log interface | Filter and inspect execution and runtime logs |
+| Logs | Durable event history plus on-demand raw-log subscriptions | Filter durable evidence; inspect ephemeral execution/runtime output without changing producer retention |
 | Events / history | Event journal, operation history | Review significant system changes |
 | Settings | Configuration ownership, protected storage, Supervisor interface | Manage application and integration settings |
 
@@ -459,7 +467,7 @@ Its scope identifies:
 
 **A Codex assignment must not silently extend another subsystem's responsibilities merely because that makes its immediate implementation easier.**
 
-If Python worker development exposes a need for an operation-state change, that is a contract question involving coordination and events.
+If capability-worker development exposes a need for an operation-state change, that is a contract question involving coordination and events.
 
 If dashboard development exposes missing data, that is an observation-contract question involving the source authority.
 
@@ -524,7 +532,7 @@ The first implementation work should center on the **Capability and Execution Fo
 - Migration-unit boundaries.
 - Dependency closure.
 - Technical state.
-- Python worker.
+- Native capability worker.
 
 ### Application side
 

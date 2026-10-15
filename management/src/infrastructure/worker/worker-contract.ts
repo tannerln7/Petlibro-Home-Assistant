@@ -8,7 +8,8 @@ export type WorkerInvocationStatus =
   | 'accepted'
   | 'running'
   | 'succeeded'
-  | 'failed';
+  | 'failed'
+  | 'interrupted';
 
 export interface WorkerEvent {
   readonly sequence: number;
@@ -20,7 +21,10 @@ export interface WorkerEvent {
 
 export interface WorkerInvocationSnapshot {
   readonly protocolVersion: 1;
+  /** The worker process that accepted and owned this invocation. */
   readonly workerInstanceId: string;
+  /** The later worker process, if any, that reconciled it after a restart. */
+  readonly reconciledByWorkerInstanceId?: string;
   readonly invocationId: string;
   readonly operationId: string;
   readonly capabilityId: typeof STATE_AGENT_INSPECTION_CAPABILITY_ID;
@@ -87,8 +91,14 @@ export function parseWorkerInvocationSnapshot(
     updatedAt: stringValue(record.updatedAt, 'worker update time'),
     events: record.events.map(parseWorkerEvent),
   };
+  const reconciledByWorkerInstanceId = optionalString(
+    record.reconciledByWorkerInstanceId,
+  );
   const parsed = {
     ...snapshot,
+    ...(reconciledByWorkerInstanceId === undefined
+      ? {}
+      : { reconciledByWorkerInstanceId }),
     ...(record.result === null || record.result === undefined
       ? {}
       : { result: parseStateAgentHealthResult(record.result) }),
@@ -99,7 +109,10 @@ export function parseWorkerInvocationSnapshot(
   if (parsed.status === 'succeeded' && parsed.result === undefined) {
     throw new Error('A successful worker invocation must include its result.');
   }
-  if (parsed.status === 'failed' && parsed.error === undefined) {
+  if (
+    (parsed.status === 'failed' || parsed.status === 'interrupted') &&
+    parsed.error === undefined
+  ) {
     throw new Error('A failed worker invocation must include its error.');
   }
   return parsed;
@@ -129,7 +142,9 @@ function parseWorkerError(value: unknown) {
 }
 
 function isWorkerStatus(value: string): value is WorkerInvocationStatus {
-  return ['accepted', 'running', 'succeeded', 'failed'].includes(value);
+  return ['accepted', 'running', 'succeeded', 'failed', 'interrupted'].includes(
+    value,
+  );
 }
 
 function objectValue(value: unknown, name: string): Record<string, unknown> {
@@ -144,6 +159,11 @@ function stringValue(value: unknown, name: string): string {
     throw new Error(`${name} must be a non-empty string.`);
   }
   return value;
+}
+
+function optionalString(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  return stringValue(value, 'optional worker instance ID');
 }
 
 function nonNegativeInteger(value: unknown, name: string): number {

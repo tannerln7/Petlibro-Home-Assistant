@@ -24,7 +24,7 @@ interface WorkerResponse {
   readonly value: unknown;
 }
 
-export class PythonWorkerClient implements CapabilityProvider {
+export class CapabilityWorkerClient implements CapabilityProvider {
   public constructor(
     private readonly socketPath: string,
     private readonly timeoutMilliseconds = 2_000,
