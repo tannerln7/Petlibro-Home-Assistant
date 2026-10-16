@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.13
+
+- Fix the PLAF203 OTA bootstrap rejecting valid installations because a raw,
+  uncompressed firmware size was compared against compressed JFFS2 free space.
+- Restore the OEM firmware directly into the temporary OTA payload slot after
+  handing off to a separate shell, avoiding an extra firmware-sized allocation.
+- Keep the untouched OEM donor selected throughout restoration and preserve
+  existing State Agent and SSH startup on failed bootstrap or recovery.
+- Add regression tests for both OTA slots, copy failures, and maintenance-safe
+  fallback behavior. Validated on a physical feeder through the management UI.
+
 ## 0.3.12
 
 - Refactor the PLAF203 camera path into explicit Petlibro/TUTK transport,

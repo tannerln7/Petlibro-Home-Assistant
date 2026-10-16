@@ -53,7 +53,7 @@ class PayloadTests(unittest.TestCase):
         return dropbear
 
     def _run_installer(
-        self, execution_slot: str
+        self, execution_slot: str, *, from_slot: bool = False
     ) -> tuple[Path, bytes, tempfile.TemporaryDirectory[str]]:
         raw = tempfile.TemporaryDirectory()
         temp = Path(raw.name)
@@ -83,11 +83,16 @@ class PayloadTests(unittest.TestCase):
         (feeder / "app_start.sh").write_text(
             f"/user/{execution_slot}/AF203_FW &\n", encoding="ascii"
         )
+        executable = payload
+        if from_slot:
+            executable = feeder / execution_slot / "AF203_FW"
+            executable.write_bytes(payload.read_bytes())
+            executable.chmod(0o755)
         env = os.environ | {
             "PLAF203_BOOTSTRAP_TEST_ROOT": str(feeder),
             "PLAF203_BOOTSTRAP_TEST_SLOT": execution_slot,
         }
-        subprocess.run(["/bin/sh", str(payload)], env=env, check=True, timeout=15)
+        subprocess.run(["/bin/sh", str(executable)], env=env, check=True, timeout=15)
         return feeder, donor, raw
 
     def test_installer_restores_ota2_and_selects_ota1(self) -> None:
@@ -99,6 +104,74 @@ class PayloadTests(unittest.TestCase):
         feeder, donor, temporary = self._run_installer("ota1")
         with temporary:
             self._assert_successful_install(feeder, donor)
+
+    def test_exec_handoff_restores_a_payload_executing_from_either_slot(self) -> None:
+        # Exercise the real OTA file layout: the executing shell is the same
+        # file the restore handoff must unlink before recreating OEM firmware.
+        for slot in ("ota1", "ota2"):
+            with self.subTest(slot=slot):
+                feeder, donor, temporary = self._run_installer(slot, from_slot=True)
+                with temporary:
+                    self._assert_successful_install(feeder, donor)
+                    self.assertFalse(list(feeder.glob("ota*/AF203_FW.restore")))
+
+    def test_failed_restore_preserves_donor_and_existing_maintenance(self) -> None:
+        feeder, donor, temporary = self._run_installer("ota2", from_slot=True)
+        with temporary:
+            payload = Path(temporary.name) / "payload"
+            target = feeder / "ota2" / "AF203_FW"
+            target.write_bytes(payload.read_bytes())
+            target.chmod(0o755)
+            mock_bin = Path(temporary.name) / "mock-bin"
+            mock_bin.mkdir()
+            copy = mock_bin / "cp"
+            copy.write_text(
+                '#!/bin/sh\n'
+                'case "$2" in */ota2/AF203_FW) exit 1;; esac\n'
+                'exec /bin/cp "$@"\n',
+                encoding="ascii",
+            )
+            copy.chmod(0o755)
+            env = os.environ | {
+                "PLAF203_BOOTSTRAP_TEST_ROOT": str(feeder),
+                "PLAF203_BOOTSTRAP_TEST_SLOT": "ota2",
+                "PATH": str(mock_bin) + os.pathsep + os.environ["PATH"],
+            }
+            result = subprocess.run(
+                ["/bin/sh", str(target)], env=env, timeout=15, capture_output=True
+            )
+            self.assertEqual(77, result.returncode, result.stderr)
+            self.assertEqual(donor, (feeder / "ota1" / "AF203_FW").read_bytes())
+            self.assertFalse(target.exists())
+            self.assertEqual(
+                b"\x00\x00\x00\x00", (feeder / "data" / "ota" / "index.bin").read_bytes()
+            )
+            self.assertEqual(
+                "payload_slot_restore_copy_failed\n",
+                (feeder / "data" / "plaf203-bootstrap" / "status").read_text(),
+            )
+            startup = (feeder / "app_start.sh").read_text()
+            self.assertIn(str(feeder / "ota1" / "AF203_FW"), startup)
+            self.assertIn("/user/data/enable_state_agent", startup)
+            self.assertIn("/user/data/enable_ssh", startup)
+
+    def test_preflight_failure_keeps_existing_maintenance_hooks(self) -> None:
+        feeder, donor, temporary = self._run_installer("ota2", from_slot=True)
+        with temporary:
+            (feeder / "data" / "attr" / "state.bin").unlink()
+            env = os.environ | {
+                "PLAF203_BOOTSTRAP_TEST_ROOT": str(feeder),
+                "PLAF203_BOOTSTRAP_TEST_SLOT": "ota2",
+            }
+            result = subprocess.run(
+                ["/bin/sh", str(Path(temporary.name) / "payload")],
+                env=env, capture_output=True, timeout=15
+            )
+            self.assertNotEqual(0, result.returncode)
+            self.assertEqual(donor, (feeder / "ota1" / "AF203_FW").read_bytes())
+            startup = (feeder / "app_start.sh").read_text()
+            self.assertIn("/user/data/enable_state_agent", startup)
+            self.assertIn("/user/data/enable_ssh", startup)
 
     def test_installer_always_enables_key_only_dropbear(self) -> None:
         feeder, _donor, temporary = self._run_installer("ota2")
