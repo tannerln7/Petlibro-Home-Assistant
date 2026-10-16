@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.13-mgmt.6
+
+- Fix JFFS2 OTA restoration by removing the invalid uncompressed
+  firmware-size free-space check.
+- Restore OEM firmware directly into the temporary payload slot
+  without allocating a third firmware-sized file.
+- Preserve existing State Agent and Dropbear startup on bootstrap
+  failure while retaining the untouched OEM donor as fallback.
+- Add regression coverage for both OTA slots, restoration failures,
+  and bootstrap payload parity.
+
 ## 0.3.13-mgmt.5
 
 - Keep the final-broker MQTT verification session alive while waiting for the
