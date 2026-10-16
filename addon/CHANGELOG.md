@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.12-beta.8
+
+- Backport the physical-device-tested PLAF203 bootstrap flash-space fix.
+  Compressed JFFS2 space is no longer rejected based on raw OEM binary size.
+- Restore the OEM firmware in place after a separate shell takes over from the
+  temporary OTA payload, avoiding an additional full-sized firmware allocation.
+- Retain the known-good OEM donor as fallback and preserve already-installed
+  State Agent and SSH service startup when bootstrap recovery is needed.
+- Add OTA1/OTA2 restoration and failure-path regression tests.
+
 ## 0.3.12-beta.7
 
 - Restore PLAF203 ACK recovery by recognizing the firmware's retransmission

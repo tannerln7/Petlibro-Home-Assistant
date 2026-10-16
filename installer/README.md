@@ -171,10 +171,15 @@ it is not a claim that the selected firmware has compatible slots, startup,
 provisioning commands, or persistent-state files.
 
 The payload validates the opposite slot as an ELF donor and durably selects it
-before modifying the payload slot. It installs production services, copies and
-verifies the donor over the temporary payload, restores both slots to OEM
-firmware, writes a minimal startup script, and selects OTA1. A handled failure
-reselects the untouched donor. Do not remove feeder power during this window.
+before modifying the payload slot. It installs production services, then hands
+execution to a separate shell so it can unlink the temporary OTA payload before
+copying and verifying the donor directly into that slot. This avoids allocating
+a third full-size firmware file on the compressed JFFS2 volume; raw OEM file
+size is not a reliable free-flash admission check. Both slots end with OEM
+firmware and OTA1 is selected only after verification. A handled failure leaves
+the untouched donor selected and preserves previously installed State Agent/SSH
+startup hooks wherever the existing service files remain available. Do not
+remove feeder power during this window.
 
 Before changing startup or sidecar services, every payload execution captures
 and validates the current feeder-local `attr/` and `feed_plan/` trees under the
