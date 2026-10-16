@@ -1,5 +1,5 @@
 name: Petlibro Local backend
-version: "0.3.13-mgmt.3"
+version: "0.3.13-mgmt.4"
 slug: petlibro_local
 description: Local PLAF203 MQTT control and camera streaming backend
 url: https://github.com/tannerln7/Petlibro-Home-Assistant
@@ -69,6 +69,7 @@ options:
   management_direct_access: false
   management_direct_port: 8098
   management_direct_allowed_cidr: 192.168.1.0/24
+  management_bootstrap_device_changes: false
 schema:
   mqtt_host: str
   mqtt_port: port
@@ -117,3 +118,4 @@ schema:
   management_direct_access: bool
   management_direct_port: port
   management_direct_allowed_cidr: str
+  management_bootstrap_device_changes: bool

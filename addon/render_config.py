@@ -65,6 +65,7 @@ DEFAULTS = {
     "management_direct_access": False,
     "management_direct_port": 8098,
     "management_direct_allowed_cidr": "192.168.1.0/24",
+    "management_bootstrap_device_changes": False,
 }
 
 ENV_KEYS = {key: key.upper() for key in DEFAULTS}
@@ -85,6 +86,7 @@ BOOL_KEYS = {
     "camera_protocol_tracing",
     "enable_debug_dumps",
     "management_direct_access",
+    "management_bootstrap_device_changes",
 }
 INT_KEYS = {
     "mqtt_port",
@@ -422,6 +424,7 @@ def _management_proxy_settings(indent: str = "    ") -> str:
     proxy_buffering off;
     proxy_read_timeout 3600s;
     sub_filter '""" + MANAGEMENT_CLIENT_BASE_SENTINEL + """' $petlibro_response_base;
+    sub_filter '""" + MANAGEMENT_CLIENT_BASE_SENTINEL.lstrip("/") + """' $petlibro_response_base;
     sub_filter_once off;
     sub_filter_types text/css application/javascript text/javascript;"""
     return "\n".join(f"{indent}{line.strip()}" for line in settings.splitlines())
@@ -533,6 +536,17 @@ def render_management_runtime(
         direct_access = False
         warnings.append("Direct management access is invalid and remains disabled")
 
+    try:
+        bootstrap_device_changes = parse_bool(
+            raw.get("management_bootstrap_device_changes", False),
+            "management_bootstrap_device_changes",
+        )
+    except ValueError:
+        bootstrap_device_changes = False
+        warnings.append(
+            "Device-changing management bootstrap is invalid and remains disabled"
+        )
+
     direct_port = 8098
     direct_cidr = ""
     if direct_access:
@@ -575,6 +589,9 @@ def render_management_runtime(
         "PETLIBRO_CAPABILITY_WORKER_SOCKET": str(worker_socket),
         "PETLIBRO_STATE_AGENT_TOKEN_FILE": str(token_file),
         "PETLIBRO_STATE_AGENT_TIMEOUT_SECONDS": str(timeout_seconds),
+        "PETLIBRO_ENABLE_UNQUALIFIED_BOOTSTRAP": (
+            "1" if bootstrap_device_changes else "0"
+        ),
     }
     if state_agent_url:
         environment["PETLIBRO_STATE_AGENT_URL"] = state_agent_url
@@ -586,6 +603,7 @@ def render_management_runtime(
         "PETLIBRO_STATE_AGENT_TOKEN_FILE",
         "PETLIBRO_STATE_AGENT_TIMEOUT_SECONDS",
         "PETLIBRO_STATE_AGENT_URL",
+        "PETLIBRO_ENABLE_UNQUALIFIED_BOOTSTRAP",
     ):
         path = environment_dir / name
         if name in environment:

@@ -5,6 +5,7 @@ import { PageHeader } from '#/components/layout/application-shell';
 import {
   AvailabilityBadge,
   ObservationNote,
+  StatusBadge,
 } from '#/components/shared/presentation';
 import { Badge } from '#/components/ui/badge';
 import { Button } from '#/components/ui/button';
@@ -15,8 +16,12 @@ import {
   CardHeader,
   CardTitle,
 } from '#/components/ui/card';
+import { INSTALLATION_ACTION_ID } from '#/domain/operations';
 import { fetchDeviceOverview } from '#/infrastructure/http/device-overview-client';
-import { fetchStateAgentInspectionAction } from '#/infrastructure/http/operations-client';
+import {
+  fetchOperations,
+  fetchStateAgentInspectionAction,
+} from '#/infrastructure/http/operations-client';
 
 export function DiagnosticsPage() {
   const statusQuery = useQuery({
@@ -28,6 +33,14 @@ export function DiagnosticsPage() {
     queryKey: ['actions', 'state-agent-inspection'],
     queryFn: ({ signal }) => fetchStateAgentInspectionAction(signal),
   });
+  const operationsQuery = useQuery({
+    queryKey: ['operations'],
+    queryFn: ({ signal }) => fetchOperations(signal),
+    refetchInterval: 5_000,
+  });
+  const installation = operationsQuery.data?.find(
+    (operation) => operation.actionId === INSTALLATION_ACTION_ID,
+  );
   const firstService = statusQuery.data?.services[0];
 
   return (
@@ -129,6 +142,40 @@ export function DiagnosticsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {installation === undefined ? null : (
+        <Card>
+          <CardHeader>
+            <div className="card-heading-row">
+              <div>
+                <CardTitle>Latest installation evidence</CardTitle>
+                <CardDescription>
+                  {installation.operationId} · {installation.stage}
+                </CardDescription>
+              </div>
+              <StatusBadge status={installation.status} />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <p className="card-copy">
+              {installation.failure?.message ??
+                installation.checkpoint?.instructions ??
+                installation.evidence.at(-1)?.summary ??
+                'The installation has no durable evidence yet.'}
+            </p>
+            <div className="action-card-footer">
+              <span>
+                {installation.status === 'indeterminate'
+                  ? 'Automatic device-changing retry is blocked; inspect evidence before recovery.'
+                  : 'Raw logs are supplemental; durable transaction evidence remains in the operation journal.'}
+              </span>
+              <Button asChild variant="outline">
+                <Link to="/operations">Open operation</Link>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {statusQuery.data === undefined || firstService === undefined ? null : (
         <Card>

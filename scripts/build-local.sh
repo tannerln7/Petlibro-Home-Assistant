@@ -11,4 +11,5 @@ exec docker build \
     --build-arg BUILD_VERSION=local \
     --build-arg "GO_BUILD_PROCS=${go_build_procs}" \
     --tag "${image}" \
+    "$@" \
     "${repo_root}"

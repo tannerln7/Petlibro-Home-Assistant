@@ -53,6 +53,13 @@ export class SetupPreflightService {
     };
   }
 
+  public async verifyTemporaryListenerAvailable(
+    host: string,
+  ): Promise<PortProbeResult> {
+    if (!usableIpv4(host)) return 'address-unavailable';
+    return this.portProbe(host, 1883);
+  }
+
   private validateConfiguration(
     input: SetupPreflightRequest,
     checks: SetupPreflightCheck[],
@@ -72,6 +79,16 @@ export class SetupPreflightService {
         invalid.length === 0
           ? 'All installation endpoints are concrete usable IPv4 addresses.'
           : `${invalid.map(([name]) => name).join(', ')} must be a usable IPv4 address.`,
+    });
+
+    const topologyValid = input.setupHostIp === input.homeAssistantIp;
+    checks.push({
+      id: 'management-host-topology',
+      title: 'Management listener topology',
+      status: topologyValid ? 'passed' : 'failed',
+      detail: topologyValid
+        ? 'The temporary listener uses the Home Assistant host-network address.'
+        : 'Management runs with host networking, so the setup host must be the feeder-reachable Home Assistant IPv4 address.',
     });
 
     const credentialsValid =
@@ -118,14 +135,20 @@ export class SetupPreflightService {
         ? 'TCP/1883 matches the supported AF203_FW behavior.'
         : 'The feeder-facing final broker must use TCP/1883.',
     });
-    return invalid.length === 0 && credentialsValid && keyValid && portValid;
+    return (
+      invalid.length === 0 &&
+      topologyValid &&
+      credentialsValid &&
+      keyValid &&
+      portValid
+    );
   }
 }
 
 function usableIpv4(value: string): boolean {
   if (isIP(value) !== 4 || value === '0.0.0.0') return false;
   const first = Number(value.split('.')[0]);
-  return first < 224;
+  return first !== 127 && first < 224;
 }
 
 function brokerCheck(kind: string): SetupPreflightCheck {

@@ -12,9 +12,9 @@ import {
 import { OperationManager } from '#/application/operation-manager';
 import {
   isTerminalOperationStatus,
-  type OperationSnapshot,
   STATE_AGENT_INSPECTION_ACTION_ID,
   STATE_AGENT_INSPECTION_CAPABILITY_ID,
+  type StateAgentInspectionOperationSnapshot,
 } from '#/domain/operations';
 import { SqliteOperationJournal } from '#/infrastructure/persistence/sqlite-operation-journal';
 import type {
@@ -138,11 +138,11 @@ describe('OperationManager', () => {
 class SequencedWorker implements CapabilityProvider {
   public submitCalls = 0;
   public getCalls = 0;
-  private operation: OperationSnapshot | undefined;
+  private operation: StateAgentInspectionOperationSnapshot | undefined;
   private readonly immediatelyTerminal: boolean;
 
   public constructor(
-    operation?: OperationSnapshot,
+    operation?: StateAgentInspectionOperationSnapshot,
     immediatelyTerminal = false,
   ) {
     this.operation = operation;
@@ -282,10 +282,13 @@ function createManager(
 async function waitForTerminal(
   manager: OperationManager,
   operationId: string,
-): Promise<OperationSnapshot> {
+): Promise<StateAgentInspectionOperationSnapshot> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const operation = await manager.getOperation(operationId);
     if (isTerminalOperationStatus(operation.status)) {
+      if (operation.actionId !== STATE_AGENT_INSPECTION_ACTION_ID) {
+        throw new Error('unexpected operation contract');
+      }
       return operation;
     }
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -293,7 +296,7 @@ async function waitForTerminal(
   throw new Error('operation did not reach a terminal state');
 }
 
-function persistedRunningOperation(): OperationSnapshot {
+function persistedRunningOperation(): StateAgentInspectionOperationSnapshot {
   return {
     operationId: '077fb351-30c0-4935-a962-49bf11e8d327',
     invocationId: 'bf3fa744-c49e-49bd-b7af-e4eec2f5fa86',
@@ -320,7 +323,7 @@ function workerHealth(): WorkerHealth {
 }
 
 function workerSnapshot(
-  operation: OperationSnapshot,
+  operation: StateAgentInspectionOperationSnapshot,
   terminal: boolean,
 ): WorkerInvocationSnapshot {
   const events = [

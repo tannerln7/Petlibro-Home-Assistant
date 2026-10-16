@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { getApplicationServices } from '#/server/application-services';
+import { requireJsonMutation } from '#/server/request-security';
 
 export const Route = createFileRoute('/api/v1/actions/state-agent-inspection')({
   server: {
@@ -8,7 +9,9 @@ export const Route = createFileRoute('/api/v1/actions/state-agent-inspection')({
         noStoreJson(
           getApplicationServices().operations.getStateAgentInspectionAction(),
         ),
-      POST: async () => {
+      POST: async ({ request }) => {
+        const rejected = requireJsonMutation(request);
+        if (rejected !== undefined) return rejected;
         try {
           const operation =
             await getApplicationServices().operations.startStateAgentInspection();

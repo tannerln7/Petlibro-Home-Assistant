@@ -34,7 +34,7 @@ vi.mock('#/infrastructure/http/operation-event-history-client', () => ({
 }));
 
 describe('LogsPage', () => {
-  it('renders durable operation evidence without claiming live raw logs', async () => {
+  it('keeps durable operation evidence separate from opt-in live logs', async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -51,9 +51,7 @@ describe('LogsPage', () => {
     expect(
       screen.getByRole('link', { name: 'Export evidence' }),
     ).toHaveAttribute('href', '/api/v1/operation-events?download=1');
-    expect(
-      screen.getByText('Live raw logs are not connected yet'),
-    ).toBeVisible();
+    expect(screen.getByText('Live raw-log scope')).toBeVisible();
     expect(screen.queryByText(/token/i)).not.toBeInTheDocument();
   });
 });

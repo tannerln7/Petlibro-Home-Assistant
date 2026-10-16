@@ -16,6 +16,7 @@ export interface OperationJournal {
   get(operationId: string): OperationSnapshot | undefined;
   list(limit: number): readonly OperationSnapshot[];
   listNonTerminal(): readonly OperationSnapshot[];
+  listUnresolved(): readonly OperationSnapshot[];
   eventsAfter(
     operationId: string,
     afterSequence: number,

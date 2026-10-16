@@ -6,6 +6,11 @@ export interface RuntimeOptions {
   readonly mqttPort: number;
   readonly mqttUsername: string;
   readonly mqttPassword: string;
+  readonly persistFeederMqtt: boolean;
+  readonly feederMqttHost: string;
+  readonly feederMqttPort: number;
+  readonly stateAgentUrl: string;
+  readonly stateAgentTokenConfigured: boolean;
   readonly deviceDiscovery: boolean;
   readonly cameraQuality: string;
   readonly publishCameraMetadata: boolean;
@@ -84,6 +89,12 @@ export class RuntimeFileAdapter {
         mqttPort,
         mqttUsername: text(value.mqtt_username) ?? '',
         mqttPassword: text(value.mqtt_password) ?? '',
+        persistFeederMqtt: boolean(value.persist_feeder_mqtt, false),
+        feederMqttHost: text(value.feeder_mqtt_host) ?? '',
+        feederMqttPort: integer(value.feeder_mqtt_port) ?? 1883,
+        stateAgentUrl: text(value.petlibro_state_agent_url) ?? '',
+        stateAgentTokenConfigured:
+          (text(value.petlibro_state_agent_token) ?? '').length > 0,
         deviceDiscovery: boolean(value.device_discovery, true),
         cameraQuality: text(value.camera_quality) ?? 'hd',
         publishCameraMetadata: boolean(value.publish_camera_metadata, true),

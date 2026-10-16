@@ -16,7 +16,7 @@ Petlibro Local provides local Home Assistant control and camera streaming for th
 | `docs/` | Architecture, development, protocol, installation, component, and management-planning documents |
 | `docker/`, `scripts/` | Local development/runtime helpers, packaging and validation |
 
-The existing add-on is the production operational system; the new **Petlibro Management** application is a planned expansion. Do not describe planned management services as already implemented. The initial supported guided deployment is **one feeder per add-on**; do not silently expand that support.
+The existing add-on is the production operational system; **Petlibro Management** is an implemented expansion whose individual capabilities still have explicit qualification states. Do not describe unqualified bootstrap, recovery, Supervisor control, or future controller migration as production-ready. The initial supported guided deployment is **one feeder per add-on**; do not silently expand that support.
 
 ## Maintained references and decision authority
 
@@ -32,7 +32,7 @@ The planning documents distinguish **established**, **planned**, **candidate**, 
 
 ## Management architecture and ownership
 
-The target is **one integrated HA add-on** with a browser management application, independently supervised existing services, and initially a separate Python device-operations worker. The application eventually supports guided installation, recovery, dashboard/device views, actions, diagnostics, logs, operation history, settings, and maintenance.
+The target is **one integrated HA add-on** with a browser management application, independently supervised existing services, and an independently supervised native-TypeScript capability worker. The standalone Python installer remains supported and is the behavioral reference, but it is not a management runtime dependency.
 
 Keep these logical regions distinct; they are **responsibility boundaries, not mandatory packages/classes/processes**:
 
@@ -49,10 +49,10 @@ Keep these logical regions distinct; they are **responsibility boundaries, not m
 
 ## Management implementation conventions
 
-- **Frontend (planned):** strict TypeScript, React, TanStack Start in SPA mode, TanStack Router and Query, Tailwind CSS, shadcn/ui and Lucide. RJSF/`@rjsf/shadcn` for schema-driven action forms; TanStack Table/Virtual where appropriate. Charting choice and exact schema tooling remain subject to validation; do not elevate candidates to settled requirements. Use the implementation guide for the page inventory and interaction/design goals.
+- **Frontend:** strict TypeScript, React, TanStack Start in SPA mode, TanStack Router and Query, Tailwind CSS, shadcn/ui and Lucide. RJSF/`@rjsf/shadcn` and TanStack Table/Virtual remain candidates where actual action/table requirements justify them. Use the implementation guide for page and interaction goals.
 - **Backend:** conventional object-oriented TypeScript where beneficial: cohesive services/classes, explicit dependencies, descriptive methods, typed interfaces at genuine boundaries, and composition. Keep business/domain logic separate from React and web-framework handlers. Avoid generic DI frameworks, empty class/interface forests, and speculative feature scaffolding.
-- **Capability migration:** initially use the proven Python installer code behind stable, language-neutral capability contracts. Each migration unit includes its private dependency closure; shared pure dependencies may coexist in Python and TypeScript. Stateful resource ownership must be exclusive. Do not expose Python objects/thread events or low-level transport internals as application contracts. Preserve a working CLI/reference path until replacement is verified.
-- **Worker and streaming:** the Python worker is an independent long-lived service, not a subprocess tied to a browser connection. HTTP/JSON over a Unix domain socket is a **preferred planned** IPC transport, not yet a proved integration. Define semantic events once; transports may differ. Browser live events use WebSockets alongside HTTP snapshots/history. Support correlated logs, progress, evidence, reconnection, and durable critical outcomes without pretending a lost connection means an operation failed.
+- **Capability migration:** implement management capabilities natively in TypeScript behind stable contracts. Preserve the proven Python installer as an independent CLI and behavioral reference; management must not import or execute it. Stateful resource ownership remains exclusive.
+- **Worker and streaming:** the native-TypeScript worker is an independent long-lived s6 service using versioned HTTP/JSON over a mode-`0600` Unix socket. Browser live events and ephemeral logs use WebSockets alongside HTTP snapshots/history. Preserve correlated evidence, restart provenance, no-blind-replay behavior, bounded lossy raw-log transport, and durable critical outcomes.
 - **Operations:** distinguish user-facing job, capability invocation, live-resource session, and actual device transaction. Do not blindly replay an ambiguous device-changing operation after restart. Cancellation is a request subject to capability-defined safe interruption points.
 - **UI structure:** one action model reusable across pages, source-aware device projections, accessible responsive design, useful empty/error/loading states, and expandable live operation details. Do not implement fake device status or controls that appear functional but are not.
 

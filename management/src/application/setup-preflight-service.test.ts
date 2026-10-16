@@ -74,7 +74,7 @@ function input() {
   return {
     feederIp: '192.0.2.20',
     setupHostIp: '192.0.2.10',
-    homeAssistantIp: '192.0.2.11',
+    homeAssistantIp: '192.0.2.10',
     brokerHost: '192.0.2.10',
     brokerPort: 1883,
     backendUsername: 'backend-user',

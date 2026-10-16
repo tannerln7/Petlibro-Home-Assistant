@@ -1,7 +1,7 @@
 # Petlibro Management application
 
-This directory contains the initial browser and TypeScript server foundation for
-the planned Petlibro Management application. It is independently runnable and
+This directory contains the browser, TypeScript server, and native capability
+worker for Petlibro Management. It is independently runnable and
 packaged into the Home Assistant add-on. Existing AppDaemon and go2rtc services
 remain the production operational authorities.
 
@@ -17,11 +17,11 @@ Overview page
   -> source-aware management status contract
 
 Operations page
-  -> accepted State Agent inspection action
+  -> accepted State Agent inspection or guided-installation action
   -> durable TypeScript OperationManager + SQLite journal
   -> versioned HTTP/JSON over a private Unix socket
   -> independent native-TypeScript capability worker
-  -> authenticated, read-only State Agent /health request
+  -> allowlisted read-only or qualification-gated bootstrap capability
   -> structured result/evidence
   -> HTTP snapshot/history + reconnectable browser WebSocket notification
 
@@ -36,15 +36,17 @@ Setup
   -> POST /api/v1/setup/preflight
   -> bounded input validation + SSH recovery-key shape validation
   -> final-broker MQTT authentication + transient TCP/1883 ownership check
-  -> explicit same-host handoff block without service reconfiguration
+  -> one durable installation across operator-mediated broker handoffs
+  -> protected payload/identity/configuration custody
+  -> broker-bound guarded OTA and source-aware operational verification
 
 Events / Diagnostics
   -> bounded query over durable SQLite operation evidence
   -> recursive secret-field redaction + filters + JSON export
   -> source-backed diagnostic report with explicit limitations
 
-Live raw logs (not yet connected)
-  -> future on-demand source subscriptions over the browser transport
+Live raw logs
+  -> on-demand Supervisor combined add-on stream over WebSocket
   -> backend normalization/redaction + bounded browser-session retention
   -> no automatic copy into the durable operation journal
 ```
@@ -70,6 +72,21 @@ The packaged Nitro runtime listens on a private Unix socket behind Nginx. The
 native capability worker uses a separate mode-`0600` Unix socket and a separate
 durable invocation database.
 
+Operation snapshots are created only for explicit management intent: the
+guided installation and operator-requested State Agent inspection currently
+create them. Polling, service observations, MQTT telemetry, routine feeder
+activity, and raw logs do not. Installation admission queries all authoritative
+unresolved snapshots without a display/history limit; the normal operation list
+remains bounded for presentation.
+
+The browser log explorer retains up to 10,000 records but renders at most the
+latest 500 matching rows at once. Regular expressions use a deliberately
+conservative subset (no lookaround, backreferences, counted quantifiers,
+repeated groups, or multiple unbounded quantifiers) and inspect at most the
+first 4 KiB of each already transport-bounded record. Export still includes all
+matching retained records. These limits keep investigation reversible without
+allowing an adversarial expression or DOM volume to monopolize the UI thread.
+
 ## Source organization
 
 ```text
@@ -86,9 +103,15 @@ server/routes/        # Nitro WebSocket delivery route
 ```
 
 These are responsibility boundaries rather than a requirement to add a folder
-or interface for every planned subsystem. The operation journal, worker IPC and
-event delivery exist because the State Agent capability exercises them; there is
-no speculative general workflow or plugin framework.
+or interface for every planned subsystem. The operation journal, worker IPC,
+installation coordinator, and event delivery support concrete capabilities;
+there is no speculative general workflow or plugin framework.
+
+Device-changing bootstrap is fail-closed unless the add-on option
+`management_bootstrap_device_changes` is explicitly enabled. That option is a
+qualification gate, not evidence of real-feeder or same-host broker-handoff
+qualification. The coordinator uses durable operator checkpoints because the
+add-on does not request broad Supervisor service-control permissions.
 
 ## Development
 
@@ -190,7 +213,20 @@ Implemented now:
 - real authenticated State Agent health inspection with bounded safe results;
 - byte-exact native OEM provisioning, MQTT packet, and OTA command primitives
   covered against the standalone installer's reference vectors;
-- durable operation snapshots and globally sequenced events in SQLite;
+- image-built, provenance-checked ARM inputs, device-bound payload assembly,
+  protected artifact/credential custody, temporary MQTT identity capture,
+  final-broker proof, fresh-session firmware admission, guarded OTA, and
+  post-transition verification;
+- one durable installation workflow with serialized/idempotent checkpoints,
+  restart-driven progression, exclusive active-installation ownership,
+  explicit indeterminate outcomes, and no automatic replay of uncertain OTA;
+- protected no-store configuration handoff and source-backed completion checks
+  requiring effective options, captured product/serial correlation, fresh
+  device discovery, and fresh AppDaemon READY reconciliation rather than
+  treating a checkpoint click or reused IP address as proof;
+- durable operation snapshots and globally sequenced events in SQLite, plus
+  complete sequence-checked worker semantic evidence independent of ephemeral
+  raw-log retention;
 - restart reconciliation without blind capability replay;
 - HTTP operation snapshot/history and reconnectable WebSocket notifications;
 - source-aware Operations UI with selectable durable history, success, failure,
@@ -199,33 +235,43 @@ Implemented now:
   State Agent inspection capability on Actions and Diagnostics;
 - bounded, filterable, recursively redacted durable operation-event queries and
   downloadable JSON exports, plus a source-backed diagnostic report export;
+- on-demand sanitized Supervisor combined-runtime logs over the existing
+  WebSocket boundary, with shared source collection, bounded queues/framing,
+  explicit drops, and browser-owned filtering, pause, retention, and export;
 - root and configurable-prefix build configuration;
 - add-on image packaging and independent s6 supervision;
 - Supervisor-source-restricted Ingress gateway and opt-in CIDR-restricted
-  direct gateway over the same HTTP/WebSocket backend;
+  direct gateway over the same HTTP/WebSocket backend; mutation routes require
+  non-simple JSON requests while deployment access remains the authentication
+  boundary;
 - unit, contract, representative UI, responsive browser, and prefixed-path
   runtime tests.
 
 Intentionally not implemented:
 
-- complete native installer transaction orchestration beyond the tested OEM
-  protocol primitives and State Agent health probe;
-- artifact/payload custody, temporary MQTT identity capture, source-restricted
-  artifact serving, correlated OTA/recovery transactions, final-broker
-  handoff, post-install adoption, and capability-specific cancellation;
-- operator checkpoints or full action catalog/schema forms;
+- automatic Supervisor control of Mosquitto or writes to Supervisor-owned
+  options; broker transitions and option application remain verified,
+  operator-mediated checkpoints;
+- independently launchable destructive recovery or a broad maintenance action
+  catalog; safe identity/broker-proof re-entry is part of the continuing
+  installation, while ambiguous OTA is never retried automatically;
+- distinct AppDaemon and go2rtc raw-log streams where no trustworthy separate
+  source surface has yet been connected; the current source is honestly
+  identified as Supervisor combined add-on output;
 - maintenance writes or signed State Agent update submission; existing
   AppDaemon update and persistent-state authorities remain unchanged;
-- on-demand operational-service stdout/stderr adapters and the browser-retained
-  multi-source raw-log explorer; Events & Logs currently presents durable
-  management/capability evidence in a separately identified section only;
 - direct Supervisor/Home Assistant API access, service control, or option writes;
-- routine feeder controls, setup execution, or fabricated demo data;
+- routine feeder controls, arbitrary shell/device commands, or fabricated demo
+  data;
 - a current Home Assistant health heartbeat (only historical birth events are
   available from AppDaemon without broader API permissions);
+- qualified multi-interface feeder-facing address selection beyond the current
+  explicit Home Assistant host-network address constraint;
 - application authentication or TLS;
-- live Home Assistant Supervisor qualification for this uncommitted native-worker
-  change set (the preceding management release was exercised through Ingress).
+- live qualification of the current guided bootstrap against Home Assistant
+  Supervisor, same-host broker handoff, and a physical feeder. Earlier
+  management builds exercised Ingress, but this prerelease remains a controlled
+  qualification channel rather than a hardware-qualified release.
 
 Authentication is intentionally outside this application's scope. Ingress is
 isolated to the Supervisor proxy. Direct access is disabled by default and must

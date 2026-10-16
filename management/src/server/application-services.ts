@@ -2,12 +2,17 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DeviceOverviewService } from '#/application/device-overview-service';
 import { DiagnosticReportService } from '#/application/diagnostic-report-service';
+import { InstallationCoordinator } from '#/application/installation-coordinator';
+import { InstallationReadinessService } from '#/application/installation-readiness-service';
+import { LiveLogService } from '#/application/live-log-service';
 import { OperationEventHistoryService } from '#/application/operation-event-history-service';
 import { OperationManager } from '#/application/operation-manager';
 import { SetupPreflightService } from '#/application/setup-preflight-service';
 import { SystemStatusService } from '#/application/system-status-service';
+import { SupervisorLogAdapter } from '#/infrastructure/logging/supervisor-log-adapter';
 import { MqttBrokerAdapter } from '#/infrastructure/observations/mqtt-broker-adapter';
 import { RuntimeFileAdapter } from '#/infrastructure/observations/runtime-file-adapter';
+import { InstallationSecretStore } from '#/infrastructure/persistence/installation-secret-store';
 import { SqliteOperationJournal } from '#/infrastructure/persistence/sqlite-operation-journal';
 import { CapabilityWorkerClient } from '#/infrastructure/worker/capability-worker-client';
 
@@ -18,6 +23,8 @@ export interface ApplicationServices {
   readonly operationEventHistory: OperationEventHistoryService;
   readonly diagnostics: DiagnosticReportService;
   readonly setupPreflight: SetupPreflightService;
+  readonly installations: InstallationCoordinator;
+  readonly liveLogs: LiveLogService;
 }
 
 export function createApplicationServices(
@@ -51,11 +58,26 @@ export function createApplicationServices(
     environment.PETLIBRO_MANAGEMENT_VERSION ?? '0.1.0-development',
     worker,
   );
+  const runtimeFiles = new RuntimeFileAdapter(runtimeDataDirectory);
   const deviceOverview = new DeviceOverviewService(
-    new RuntimeFileAdapter(runtimeDataDirectory),
+    runtimeFiles,
     new MqttBrokerAdapter(),
   );
   const operationEventHistory = new OperationEventHistoryService(journal);
+  const setupPreflight = new SetupPreflightService();
+  const installations = new InstallationCoordinator(
+    journal,
+    worker,
+    setupPreflight,
+    new InstallationSecretStore(dataDirectory),
+    environment.PETLIBRO_ENABLE_UNQUALIFIED_BOOTSTRAP === '1',
+    undefined,
+    undefined,
+    250,
+    15 * 60_000,
+    new InstallationReadinessService(runtimeFiles),
+  );
+  void installations.ensureInitialized();
   return {
     systemStatus,
     deviceOverview,
@@ -66,7 +88,14 @@ export function createApplicationServices(
       deviceOverview,
       operationEventHistory,
     ),
-    setupPreflight: new SetupPreflightService(),
+    setupPreflight,
+    installations,
+    liveLogs: new LiveLogService(
+      new SupervisorLogAdapter(
+        environment.SUPERVISOR_TOKEN,
+        environment.PETLIBRO_SUPERVISOR_URL ?? 'http://supervisor',
+      ),
+    ),
   };
 }
 

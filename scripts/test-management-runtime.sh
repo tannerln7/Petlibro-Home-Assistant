@@ -81,6 +81,7 @@ if grep -q '__PETLIBRO_BASE__' "${temporary}/ingress.html"; then
 fi
 
 operation_json="$(curl -fsS -X POST \
+  -H 'Content-Type: application/json' -d '{}' \
   "http://127.0.0.1:${direct_port}/api/v1/actions/state-agent-inspection")"
 operation_id="$(printf '%s' "${operation_json}" | sed -n \
   's/.*"operationId":"\([^"]*\)".*/\1/p')"

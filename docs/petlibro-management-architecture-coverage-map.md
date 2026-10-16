@@ -371,9 +371,11 @@ These components cooperate, but each has different responsibilities.
 
 If the browser closes, the coordinator still owns the job.
 
-If Node restarts, Python may still own a live device transaction.
+If the management process restarts, the independent worker may still own a
+live device transaction.
 
-If Python crashes, the application may retain the job record but cannot assume the MQTT session still exists.
+If the worker crashes, the application may retain the job record but cannot
+assume the MQTT session still exists.
 
 If the feeder reboots, neither of those facts alone proves that its OTA transaction succeeded or failed.
 
@@ -420,7 +422,7 @@ flowchart TB
     U["User selects Install"]
     B["Application coordinator<br/>Creates job, establishes requirements, orders capabilities and checkpoints"]
     C["Capability boundary<br/>Validated requests, protected references, execution context"]
-    P["Python execution units<br/>Artifacts · temporary MQTT · identity capture · OTA · provisioning · verification"]
+    P["Native TypeScript capability worker<br/>Artifacts · temporary MQTT · identity capture · OTA · provisioning · verification"]
     X["Feeder, temporary listeners, broker and State Agent"]
     R["Capabilities report observations and transaction outcomes"]
     J["Coordinator advances, pauses, or records uncertainty"]
@@ -621,7 +623,7 @@ Likewise, if the frontend misses several progress events, it should be able to o
 
 This also enables a simple collapsible execution-details panel. It subscribes to the same operation as the progress indicator, just displaying different event types.
 
-### The Python/TypeScript migration benefit
+### The stable capability-contract benefit
 
 A worker capability reports through its IPC event adapter. An application-local capability reports through the native application event publisher. Both use the same semantic event contract.
 
@@ -740,7 +742,7 @@ The final broker and temporary listener cannot simultaneously own the same addre
 The application coordinator must therefore orchestrate a controlled ownership transition between independent actors:
 
 - Mosquitto, which owns the final broker service.
-- The Python bootstrap session, which owns its temporary listener.
+- The native bootstrap session, which owns its temporary listener.
 - The feeder, which independently controls where it attempts to connect.
 - AppDaemon, which depends on the final broker during routine operation.
 - Home Assistant, which may have unrelated MQTT clients affected by broker downtime.
@@ -820,7 +822,7 @@ Use this as the current architectural coverage checklist. It identifies the majo
 - [ ] **Presentation and navigation** — Page responsibilities, reusable components, action presentation. **Boundary:** A ↔ B.
 - [ ] **Action and workflow coordination** — Prerequisites, user checkpoints, execution lifecycles, conflict rules. **Boundary:** B ↔ C/D.
 - [ ] **Device capability system** — Migration units, private/shared dependencies, resource ownership. **Boundary:** B ↔ C.
-- [ ] **Python execution worker** — Execution sessions, technical transaction boundaries, safe interruption. **Boundary:** C ↔ H/F/G.
+- [x] **Native capability worker** — Execution sessions, technical transaction boundaries, safe interruption. **Boundary:** C ↔ H/F/G. Implemented; live device effects remain qualification-gated.
 - [ ] **Routine controller integration** — AppDaemon authority, observation interfaces, future cutover. **Boundary:** D ↔ B/E.
 - [ ] **Camera/media integration** — go2rtc observations, playback versus management responsibilities. **Boundary:** D ↔ A/G.
 - [ ] **Home Assistant integration** — Options, supervision, Ingress, standalone access, service state. **Boundary:** D/H ↔ B.

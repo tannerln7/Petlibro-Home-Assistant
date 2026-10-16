@@ -1,0 +1,21 @@
+#!/usr/bin/with-contenv bashio
+# shellcheck shell=bash
+set -u
+
+# nginx workers normally exit with their master. If the master is killed or
+# crashes, however, a worker can remain orphaned and retain both management
+# listeners. Clear only nginx processes owned by this dedicated service before
+# s6 starts a replacement master.
+nginx_pids=()
+for comm_path in /proc/[0-9]*/comm; do
+  if read -r process_name <"${comm_path}" && [[ "${process_name}" == "nginx" ]]; then
+    process_path="${comm_path%/comm}"
+    nginx_pids+=("${process_path##*/}")
+  fi
+done
+
+if ((${#nginx_pids[@]} > 0)); then
+  kill -TERM "${nginx_pids[@]}" 2>/dev/null || true
+fi
+
+exit 0

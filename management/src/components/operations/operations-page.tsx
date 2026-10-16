@@ -28,8 +28,11 @@ import {
 } from '#/components/ui/card';
 import { Skeleton } from '#/components/ui/skeleton';
 import {
+  INSTALLATION_ACTION_ID,
   isTerminalOperationStatus,
   type OperationSnapshot,
+  operationTitle,
+  STATE_AGENT_INSPECTION_ACTION_ID,
 } from '#/domain/operations';
 import {
   fetchOperationDetail,
@@ -228,7 +231,7 @@ function OperationView({
             </span>
             <div>
               <CardTitle id="latest-operation-title">
-                State Agent health inspection
+                {operationTitle(current)}
               </CardTitle>
               <CardDescription>{current.target.label}</CardDescription>
             </div>
@@ -251,7 +254,8 @@ function OperationView({
             </div>
           </dl>
 
-          {current.result === undefined ? null : (
+          {current.actionId !== STATE_AGENT_INSPECTION_ACTION_ID ||
+          current.result === undefined ? null : (
             <div className="operation-evidence">
               <div>
                 {current.result.healthy ? (
@@ -274,6 +278,28 @@ function OperationView({
                 Agent response. This is not feeder connectivity or AppDaemon
                 readiness.
               </small>
+            </div>
+          )}
+
+          {current.actionId !== INSTALLATION_ACTION_ID ? null : (
+            <div className="operation-evidence">
+              <div>
+                <Activity aria-hidden="true" />
+                <strong>Durable installation workflow</strong>
+              </div>
+              <p>
+                {
+                  current.stages.filter((stage) => stage.status === 'completed')
+                    .length
+                }
+                /{current.stages.length} stages completed
+              </p>
+              {current.checkpoint === undefined ? null : (
+                <small>
+                  Awaiting operator: {current.checkpoint.title}. Confirmation
+                  does not replace prerequisite verification.
+                </small>
+              )}
             </div>
           )}
 

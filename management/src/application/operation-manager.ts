@@ -15,9 +15,11 @@ import {
   type OperationDetail,
   type OperationEventDraft,
   type OperationSnapshot,
+  parseStateAgentHealthResult,
   STATE_AGENT_INSPECTION_ACTION_ID,
   STATE_AGENT_INSPECTION_CAPABILITY_ID,
   type StateAgentInspectionAction,
+  type StateAgentInspectionOperationSnapshot,
 } from '#/domain/operations';
 import type { WorkerInvocationSnapshot } from '#/infrastructure/worker/worker-contract';
 
@@ -156,7 +158,7 @@ export class OperationManager {
   }
 
   private async executeNewInvocation(
-    operation: OperationSnapshot,
+    operation: StateAgentInspectionOperationSnapshot,
   ): Promise<void> {
     if (!this.acquireInvocation(operation.invocationId)) {
       return;
@@ -189,8 +191,11 @@ export class OperationManager {
         this.ingestWorkerSnapshot(operation, workerSnapshot),
       );
     } catch (error) {
+      const persisted = this.journal.get(operation.operationId);
       this.recordInterruption(
-        this.journal.get(operation.operationId) ?? operation,
+        persisted?.actionId === STATE_AGENT_INSPECTION_ACTION_ID
+          ? persisted
+          : operation,
         reconciliationFailure(error),
       );
     } finally {
@@ -199,14 +204,20 @@ export class OperationManager {
   }
 
   private async resumeInvocation(operation: OperationSnapshot): Promise<void> {
+    if (operation.actionId !== STATE_AGENT_INSPECTION_ACTION_ID) {
+      return;
+    }
     if (!this.acquireInvocation(operation.invocationId)) {
       return;
     }
     try {
       await this.followInvocation(operation, true);
     } catch (error) {
+      const persisted = this.journal.get(operation.operationId);
       this.recordInterruption(
-        this.journal.get(operation.operationId) ?? operation,
+        persisted?.actionId === STATE_AGENT_INSPECTION_ACTION_ID
+          ? persisted
+          : operation,
         reconciliationFailure(error),
       );
     } finally {
@@ -215,7 +226,7 @@ export class OperationManager {
   }
 
   private async reconcileAfterSubmitFailure(
-    operation: OperationSnapshot,
+    operation: StateAgentInspectionOperationSnapshot,
     _submitError: unknown,
   ): Promise<void> {
     // The worker may have accepted the invocation before the response was
@@ -225,7 +236,7 @@ export class OperationManager {
   }
 
   private async followInvocation(
-    operation: OperationSnapshot,
+    operation: StateAgentInspectionOperationSnapshot,
     queryImmediately = false,
   ): Promise<void> {
     let current = operation;
@@ -259,9 +270,9 @@ export class OperationManager {
   }
 
   private ingestWorkerSnapshot(
-    operation: OperationSnapshot,
+    operation: StateAgentInspectionOperationSnapshot,
     worker: WorkerInvocationSnapshot,
-  ): OperationSnapshot {
+  ): StateAgentInspectionOperationSnapshot {
     if (
       worker.invocationId !== operation.invocationId ||
       worker.operationId !== operation.operationId
@@ -280,7 +291,7 @@ export class OperationManager {
     const status = worker.status;
     const terminal =
       status === 'succeeded' || status === 'failed' || status === 'interrupted';
-    const updated: OperationSnapshot = {
+    const updated: StateAgentInspectionOperationSnapshot = {
       ...operation,
       workerInstanceId: worker.workerInstanceId,
       ...(worker.reconciledByWorkerInstanceId === undefined
@@ -294,7 +305,9 @@ export class OperationManager {
       startedAt: operation.startedAt ?? worker.acceptedAt,
       lastWorkerEventSequence: lastWorkerSequence,
       ...(terminal ? { completedAt: worker.updatedAt } : {}),
-      ...(worker.result === undefined ? {} : { result: worker.result }),
+      ...(worker.result === undefined
+        ? {}
+        : { result: parseStateAgentHealthResult(worker.result) }),
       ...(worker.error === undefined ? {} : { failure: worker.error }),
     };
     const events: OperationEventDraft[] = workerEvents.map((event) => ({
@@ -332,7 +345,7 @@ export class OperationManager {
   }
 
   private recordTerminalFailure(
-    operation: OperationSnapshot,
+    operation: StateAgentInspectionOperationSnapshot,
     code: string,
     message: string,
   ): void {
@@ -357,7 +370,7 @@ export class OperationManager {
   }
 
   private recordInterruption(
-    operation: OperationSnapshot,
+    operation: StateAgentInspectionOperationSnapshot,
     message: string,
   ): void {
     if (isTerminalOperationStatus(operation.status)) {

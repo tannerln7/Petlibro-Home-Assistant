@@ -39,6 +39,7 @@ modes.
 | `management_direct_access`       | `false`          | Also expose the management gateway directly on the host network    |
 | `management_direct_port`         | `8098`           | Direct gateway TCP port; must not collide with Ingress or go2rtc   |
 | `management_direct_allowed_cidr` | `192.168.1.0/24` | IPv4 source network allowed to connect to the direct gateway       |
+| `management_bootstrap_device_changes` | `false` | Qualification gate for provisioning and OTA; keep disabled except during a controlled test |
 
 Petlibro Management does not implement authentication or TLS. Keep direct
 access disabled for Ingress-only operation. If enabled, restrict the CIDR to a
@@ -46,6 +47,20 @@ trusted LAN or to an externally authenticated reverse proxy. A reverse proxy
 that publishes the app below a prefix may send `X-Forwarded-Prefix`; it must
 replace client-supplied forwarding headers and provide authentication itself.
 Never expose the direct port to the Internet.
+
+Device-changing management bootstrap remains disabled by default. Enabling
+`management_bootstrap_device_changes` makes the host-side provisioning and OTA
+path available but does not imply that the same-host broker handoff or a
+physical feeder has been qualified. Stop/start the MQTT broker only through
+its supported Home Assistant controls and only in a controlled environment.
+
+Management qualification prereleases use the repository URL
+`https://github.com/tannerln7/Petlibro-Home-Assistant#feature/management-app-foundation`.
+Existing stable and development entries may remain installed, but only one
+Petlibro add-on may run against the feeder and broker at a time. Open the
+management UI through the add-on's Ingress entry. It is normal for unavailable
+or unconfigured AppDaemon, broker, State Agent, and camera observations to be
+shown as degraded rather than preventing the UI from starting.
 
 The Node HTTP server and native-TypeScript capability worker listen only on
 private Unix sockets and remain independently supervised.

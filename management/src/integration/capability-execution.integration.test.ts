@@ -8,7 +8,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { OperationManager } from '#/application/operation-manager';
-import { isTerminalOperationStatus } from '#/domain/operations';
+import {
+  isTerminalOperationStatus,
+  STATE_AGENT_INSPECTION_ACTION_ID,
+} from '#/domain/operations';
 import { SqliteOperationJournal } from '#/infrastructure/persistence/sqlite-operation-journal';
 import { CapabilityWorkerClient } from '#/infrastructure/worker/capability-worker-client';
 
@@ -170,6 +173,9 @@ async function waitForTerminal(manager: OperationManager, operationId: string) {
   while (Date.now() < deadline) {
     const operation = await manager.getOperation(operationId);
     if (isTerminalOperationStatus(operation.status)) {
+      if (operation.actionId !== STATE_AGENT_INSPECTION_ACTION_ID) {
+        throw new Error('unexpected operation contract');
+      }
       return operation;
     }
     await delay(20);

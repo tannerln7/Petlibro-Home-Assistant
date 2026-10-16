@@ -61,6 +61,9 @@ coverage/
 __unconfig*
 todos.json
 
+# One-off packaged-runtime qualification harness (preserved locally, not shipped)
+/scripts/fixtures/management-runtime-fixture.mjs
+
 # Local configuration and secrets
 **/go2rtc.yaml
 **/apps.yaml

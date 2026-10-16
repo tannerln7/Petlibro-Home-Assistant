@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { StateAgentHealthResult } from '#/domain/operations';
+import { BootstrapNetworkError } from '#/infrastructure/capabilities/bootstrap-network';
+import type { NativeBootstrapCapabilities } from '#/infrastructure/capabilities/native-bootstrap-capabilities';
 import { DurableInvocationManager } from './run';
 
 const directories: string[] = [];
@@ -85,6 +87,98 @@ describe('native capability invocation ownership', () => {
       reconciledByWorkerInstanceId: recovered.instanceId,
     });
     recovered.close();
+  });
+
+  it('persists an ambiguous device effect distinctly from a proven failure', async () => {
+    const bootstrap = {
+      execute: async () => {
+        throw new BootstrapNetworkError(
+          'ota_outcome_indeterminate',
+          'OTA confirmation was lost.',
+          'indeterminate',
+        );
+      },
+    } as unknown as NativeBootstrapCapabilities;
+    const manager = new DurableInvocationManager(
+      ':memory:',
+      async () => result(),
+      () => new Date(),
+      bootstrap,
+    );
+    const invocationId = randomUUID();
+    manager.submit(invocationId, {
+      protocolVersion: 1,
+      invocationId,
+      operationId: randomUUID(),
+      capabilityId: 'bootstrap.execute-ota.v1',
+      input: { protected: 'not-persisted' },
+    });
+    const terminal = await waitForTerminal(manager, invocationId);
+    expect(terminal).toMatchObject({
+      status: 'failed',
+      stage: 'indeterminate',
+      error: {
+        code: 'ota_outcome_indeterminate',
+        outcome: 'indeterminate',
+      },
+    });
+    expect(terminal.events.at(-1)?.type).toBe('capability.indeterminate');
+    manager.close();
+  });
+
+  it('retains all durable semantic events until coordinator ingestion', async () => {
+    const bootstrap = {
+      execute: async (
+        _capabilityId: string,
+        _input: unknown,
+        context: {
+          report: (
+            type: string,
+            severity: 'info',
+            payload: Record<string, unknown>,
+          ) => void;
+        },
+      ) => {
+        for (let index = 0; index < 160; index += 1) {
+          context.report(`fixture.evidence.${index}`, 'info', { index });
+        }
+        return { verified: true };
+      },
+    } as unknown as NativeBootstrapCapabilities;
+    const manager = new DurableInvocationManager(
+      ':memory:',
+      async () => result(),
+      () => new Date(),
+      bootstrap,
+    );
+    const invocationId = randomUUID();
+    manager.submit(invocationId, {
+      protocolVersion: 1,
+      invocationId,
+      operationId: randomUUID(),
+      capabilityId: 'bootstrap.prepare-artifacts.v1',
+      input: {},
+    });
+
+    const terminal = await waitForTerminal(manager, invocationId);
+
+    expect(terminal.events).toHaveLength(164);
+    expect(terminal.events[0]?.sequence).toBe(1);
+    expect(terminal.events.at(-1)?.sequence).toBe(164);
+    expect(terminal.events.map((event) => event.type)).toContain(
+      'fixture.evidence.0',
+    );
+    manager.close();
+  });
+
+  it('classifies integration verification as device-changing because it can provision the feeder', () => {
+    const manager = new DurableInvocationManager(':memory:', async () => result());
+    expect(
+      manager
+        .capabilities()
+        .find(({ id }) => id === 'bootstrap.verify-integration.v1'),
+    ).toMatchObject({ mode: 'device-changing' });
+    manager.close();
   });
 });
 

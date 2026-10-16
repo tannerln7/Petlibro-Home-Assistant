@@ -1,7 +1,7 @@
+import { BOOTSTRAP_CAPABILITY_IDS } from '#/domain/capabilities';
 import {
   parseStateAgentHealthResult,
   STATE_AGENT_INSPECTION_CAPABILITY_ID,
-  type StateAgentHealthResult,
 } from '#/domain/operations';
 
 export type WorkerInvocationStatus =
@@ -19,7 +19,7 @@ export interface WorkerEvent {
   readonly payload: Readonly<Record<string, unknown>>;
 }
 
-export interface WorkerInvocationSnapshot {
+export interface WorkerInvocationSnapshot<TResult = unknown> {
   readonly protocolVersion: 1;
   /** The worker process that accepted and owned this invocation. */
   readonly workerInstanceId: string;
@@ -27,16 +27,17 @@ export interface WorkerInvocationSnapshot {
   readonly reconciledByWorkerInstanceId?: string;
   readonly invocationId: string;
   readonly operationId: string;
-  readonly capabilityId: typeof STATE_AGENT_INSPECTION_CAPABILITY_ID;
+  readonly capabilityId: string;
   readonly status: WorkerInvocationStatus;
   readonly stage: string;
   readonly acceptedAt: string;
   readonly updatedAt: string;
   readonly events: readonly WorkerEvent[];
-  readonly result?: StateAgentHealthResult;
+  readonly result?: TResult;
   readonly error?: {
     readonly code: string;
     readonly message: string;
+    readonly outcome?: 'failed' | 'indeterminate';
   };
 }
 
@@ -70,11 +71,15 @@ export function parseWorkerInvocationSnapshot(
   const status = stringValue(record.status, 'worker invocation status');
   if (
     record.protocolVersion !== 1 ||
-    record.capabilityId !== STATE_AGENT_INSPECTION_CAPABILITY_ID ||
+    !isSupportedCapabilityId(record.capabilityId) ||
     !isWorkerStatus(status) ||
     !Array.isArray(record.events)
   ) {
     throw new Error('The worker returned an incompatible invocation response.');
+  }
+  const events = record.events.map(parseWorkerEvent);
+  if (events.some((event, index) => event.sequence !== index + 1)) {
+    throw new Error('The worker invocation event sequence is incomplete.');
   }
   const snapshot: WorkerInvocationSnapshot = {
     protocolVersion: 1,
@@ -84,12 +89,12 @@ export function parseWorkerInvocationSnapshot(
     ),
     invocationId: stringValue(record.invocationId, 'invocation ID'),
     operationId: stringValue(record.operationId, 'operation ID'),
-    capabilityId: STATE_AGENT_INSPECTION_CAPABILITY_ID,
+    capabilityId: record.capabilityId,
     status,
     stage: stringValue(record.stage, 'worker invocation stage'),
     acceptedAt: stringValue(record.acceptedAt, 'worker acceptance time'),
     updatedAt: stringValue(record.updatedAt, 'worker update time'),
-    events: record.events.map(parseWorkerEvent),
+    events,
   };
   const reconciledByWorkerInstanceId = optionalString(
     record.reconciledByWorkerInstanceId,
@@ -101,7 +106,12 @@ export function parseWorkerInvocationSnapshot(
       : { reconciledByWorkerInstanceId }),
     ...(record.result === null || record.result === undefined
       ? {}
-      : { result: parseStateAgentHealthResult(record.result) }),
+      : {
+          result:
+            record.capabilityId === STATE_AGENT_INSPECTION_CAPABILITY_ID
+              ? parseStateAgentHealthResult(record.result)
+              : record.result,
+        }),
     ...(record.error === null || record.error === undefined
       ? {}
       : { error: parseWorkerError(record.error) }),
@@ -116,6 +126,13 @@ export function parseWorkerInvocationSnapshot(
     throw new Error('A failed worker invocation must include its error.');
   }
   return parsed;
+}
+
+function isSupportedCapabilityId(value: unknown): value is string {
+  return (
+    value === STATE_AGENT_INSPECTION_CAPABILITY_ID ||
+    BOOTSTRAP_CAPABILITY_IDS.some((capabilityId) => capabilityId === value)
+  );
 }
 
 function parseWorkerEvent(value: unknown): WorkerEvent {
@@ -133,11 +150,24 @@ function parseWorkerEvent(value: unknown): WorkerEvent {
   };
 }
 
-function parseWorkerError(value: unknown) {
+function parseWorkerError(
+  value: unknown,
+): NonNullable<WorkerInvocationSnapshot['error']> {
   const record = objectValue(value, 'worker error');
+  const outcome = optionalString(record.outcome);
+  if (
+    outcome !== undefined &&
+    outcome !== 'failed' &&
+    outcome !== 'indeterminate'
+  ) {
+    throw new Error(
+      'The worker error has an unsupported outcome classification.',
+    );
+  }
   return {
     code: stringValue(record.code, 'worker error code'),
     message: stringValue(record.message, 'worker error message'),
+    ...(outcome === undefined ? {} : { outcome }),
   };
 }
 

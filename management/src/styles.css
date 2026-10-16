@@ -1733,6 +1733,13 @@
     padding: 1.35rem 1rem 2.5rem;
   }
 
+  .page-stack > *,
+  .page-header > *,
+  .setup-layout > *,
+  .setup-primary {
+    min-width: 0;
+  }
+
   .page-header {
     align-items: flex-start;
     flex-direction: column;
@@ -1776,6 +1783,13 @@
   .setup-form-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .setup-form-actions [data-slot='button'] {
+    width: 100%;
+    height: auto;
+    min-height: 2.25rem;
+    white-space: normal;
   }
 
   .device-facts {

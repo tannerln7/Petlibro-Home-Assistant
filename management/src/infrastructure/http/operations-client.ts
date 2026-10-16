@@ -21,7 +21,14 @@ export async function startStateAgentInspection(): Promise<
 > {
   const response = await fetch(
     apiUrl('api/v1/actions/state-agent-inspection'),
-    { method: 'POST', headers: { Accept: 'application/json' } },
+    {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: '{}',
+    },
   );
   return parseOperationSnapshot(await responseValue(response));
 }

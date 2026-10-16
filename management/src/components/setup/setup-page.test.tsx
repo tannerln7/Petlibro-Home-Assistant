@@ -33,6 +33,17 @@ vi.mock('#/infrastructure/http/system-status-client', () => ({
 
 vi.mock('#/infrastructure/http/setup-client', () => ({
   runSetupPreflight: runPreflight,
+  fetchInstallationAvailability: async () => ({
+    available: false,
+    reason: 'Qualification required.',
+  }),
+  startInstallation: vi.fn(),
+  satisfyInstallationCheckpoint: vi.fn(),
+  downloadProtectedConfiguration: vi.fn(),
+}));
+
+vi.mock('#/infrastructure/http/operations-client', () => ({
+  fetchOperations: async () => [],
 }));
 
 describe('SetupPage', () => {
@@ -73,14 +84,27 @@ describe('SetupPage', () => {
         'An explicit operator-controlled handoff is required.',
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText('Needs attention')).toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.getByLabelText('Backend broker password')).toHaveValue(''),
+    expect(screen.getByText('Checkpoint required')).toBeInTheDocument();
+    await waitFor(() => expect(runPreflight).toHaveBeenCalled());
+    expect(screen.getByLabelText('Backend broker password')).toHaveValue(
+      'secret',
     );
     expect(runPreflight).toHaveBeenCalledWith(
       expect.objectContaining({ brokerPort: 1883, backendPassword: 'secret' }),
       expect.anything(),
     );
+
+    fireEvent.change(screen.getByLabelText('Final broker IPv4'), {
+      target: { value: '192.0.2.12' },
+    });
+    expect(
+      screen.queryByText(
+        'An explicit operator-controlled handoff is required.',
+      ),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Start durable installation' }),
+    ).not.toBeInTheDocument();
   });
 });
 

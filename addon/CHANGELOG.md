@@ -1,20 +1,35 @@
 # Changelog
 
-## Unreleased
+## 0.3.13-mgmt.4
 
 - Replace the management Python capability worker with an independently
-  supervised native-TypeScript worker and durable no-replay invocation
-  reconciliation; retain the standalone Python installer unchanged.
-- Add native parity-tested OEM provisioning, MQTT packet, OTA command, and SSH
-  recovery-key validation primitives without exposing device-changing actions.
-- Add a safe setup preflight for endpoint validation, broker authentication,
-  recovery-key checks, and explicit TCP/1883 ownership/handoff reporting.
-- Add bounded correlated queries and JSON export for durable operation evidence,
-  with recursive redaction and source-backed diagnostic reports. Raw service
-  logs remain an explicitly deferred, ephemeral on-demand stream rather than
-  being copied into the SQLite operation journal.
-- Preserve original capability-worker ownership across restart reconciliation,
-  recording the reconciling worker separately without replaying invocations.
+  supervised native-TypeScript worker while retaining the standalone Python
+  installer as an unchanged CLI and behavioral reference.
+- Add one durable guided installation across preflight, provenance-checked
+  artifacts, protected key/credential custody, factory identity capture,
+  operator-mediated MQTT broker handoffs, final-broker proof, guarded OTA,
+  configuration handoff, and source-aware operational readiness checks.
+- Preserve no-blind-replay safety through durable invocation identity,
+  original/reconciling worker provenance, restart continuation, idempotent
+  checkpoints, exclusive installation admission, and explicit indeterminate
+  outcomes after a possible device-changing transmission.
+- Require qualified firmware and captured product/serial identity again at the
+  fresh OTA session, reject stale connection-generation evidence, and verify a
+  clean post-redirection heartbeat before claiming final-broker connectivity.
+- Correlate installation completion to fresh AppDaemon discovery and controller
+  readiness for the captured identity; a reused IP address or acknowledged
+  checkpoint is not treated as proof of operational adoption.
+- Add protected no-store configuration export, expanded source-aware
+  diagnostics and operation history, and an on-demand sanitized Supervisor
+  combined-log explorer with bounded browser retention, filtering, pause, and
+  export.
+- Package the management application, worker, Nginx gateway, and verified ARM
+  bootstrap inputs in the add-on image with independent s6 supervision and
+  direct/Ingress routing support.
+- Keep device-changing management bootstrap disabled by default. Host-side and
+  packaged behavior is qualified with deterministic and synthetic fixtures;
+  same-host Mosquitto handoff, Supervisor option adoption, ARM feeder execution,
+  and physical PLAF203 provisioning/OTA still require controlled live testing.
 
 ## 0.3.13-mgmt.3
 

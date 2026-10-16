@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { Eye, ShieldCheck, Wrench } from 'lucide-react';
+import { Eye, Router, ShieldCheck, Wrench } from 'lucide-react';
 import { PageHeader } from '#/components/layout/application-shell';
 import {
   CapabilityGap,
@@ -81,11 +81,49 @@ export function ActionsPage() {
         </Card>
       </section>
 
+      <section aria-labelledby="installation-actions-title">
+        <SectionHeading eyebrow="Install & recover" title="Guided workflows" />
+        <Card className="action-catalog-card" id="installation-actions-title">
+          <CardHeader>
+            <div className="card-heading-row">
+              <span className="card-icon" aria-hidden="true">
+                <Router />
+              </span>
+              <div>
+                <CardTitle>Install PLAF203</CardTitle>
+                <CardDescription>
+                  Durable workflow · device-changing · qualification gated
+                </CardDescription>
+              </div>
+              <Badge className="status-warning">Controlled use</Badge>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <p className="card-copy">
+              Preflight, protected artifacts, identity capture, final-broker
+              proof, guarded OTA, configuration handoff, and source-backed
+              readiness verification share one durable operation.
+            </p>
+            <div className="action-card-footer">
+              <span>
+                <ShieldCheck aria-hidden="true" /> No blind replay after
+                uncertainty
+              </span>
+              <Button asChild>
+                <a href={`${import.meta.env.BASE_URL}setup`}>
+                  Open guided setup
+                </a>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
       <CapabilityGap
         compact
         icon={Wrench}
-        title="Install and maintenance actions are not migrated"
-        description="Unsupported actions are intentionally not rendered as controls. They will appear only after their capability contracts and safety requirements are implemented."
+        title="Independent device-changing recovery remains qualification gated"
+        description="Safe checkpoint continuation and runtime re-verification are available inside installation. Arbitrary OTA retry, broker mutation, shell access, and routine feeder writes are intentionally unavailable."
       />
     </div>
   );

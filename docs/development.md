@@ -212,14 +212,15 @@ npm run dev
 ```
 
 The shell and status endpoint run when the worker and operational services are
-absent. A configured worker enables the read-only State Agent inspection path;
-its URL and token are server/worker configuration and never browser inputs. See
+absent. A configured worker enables allowlisted State Agent inspection and
+qualification-gated bootstrap capabilities; protected tokens, credentials,
+keys, and artifacts remain server/worker custody rather than browser state. See
 [`management/README.md`](../management/README.md) for source organization,
 commands, environment variables, operation persistence, implemented scope, and
 explicit deferrals.
 
-The production image supervises the management Node process, private Python
-worker, and Nginx gateway independently from AppDaemon and go2rtc. Build the
+The production image supervises the management Node process, private native
+TypeScript capability worker, and Nginx gateway independently from AppDaemon and go2rtc. Build the
 integrated image with `./scripts/build-local.sh`; local Compose enables a
 loopback-only direct listener because no Supervisor Ingress proxy is present.
 The application provides no authentication or TLS, so broader direct exposure

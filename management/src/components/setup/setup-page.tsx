@@ -1,7 +1,8 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import {
   Check,
+  CircleAlert,
   CircleDashed,
   KeyRound,
   LockKeyhole,
@@ -12,6 +13,8 @@ import { PageHeader } from '#/components/layout/application-shell';
 import {
   AvailabilityBadge,
   CapabilityGap,
+  humanize,
+  StatusBadge,
 } from '#/components/shared/presentation';
 import { Badge } from '#/components/ui/badge';
 import { Button } from '#/components/ui/button';
@@ -22,19 +25,31 @@ import {
   CardHeader,
   CardTitle,
 } from '#/components/ui/card';
-import { runSetupPreflight } from '#/infrastructure/http/setup-client';
+import {
+  INSTALLATION_ACTION_ID,
+  type InstallationOperationSnapshot,
+} from '#/domain/operations';
+import { fetchOperations } from '#/infrastructure/http/operations-client';
+import {
+  downloadProtectedConfiguration,
+  fetchInstallationAvailability,
+  runSetupPreflight,
+  satisfyInstallationCheckpoint,
+  startInstallation,
+} from '#/infrastructure/http/setup-client';
 import { fetchSystemStatus } from '#/infrastructure/http/system-status-client';
 
 const setupStages = [
   ['Preflight', 'Management and local network readiness'],
-  ['Target & broker', 'Feeder target and final broker configuration'],
-  ['Recovery', 'Protected recovery key and bootstrap artifacts'],
+  ['Artifacts', 'Protected recovery material and payload integrity'],
   ['Identity capture', 'Temporary broker and feeder identity evidence'],
-  ['Guarded install', 'Credential proof, OTA, and restart'],
-  ['Verification', 'Broker handoff and runtime adoption'],
+  ['Broker proof', 'Backend and captured feeder credential proof'],
+  ['Guarded install', 'Correlated OTA, payload transfer, and restart'],
+  ['Verification', 'Broker restoration and runtime adoption'],
 ] as const;
 
 export function SetupPage() {
+  const queryClient = useQueryClient();
   const [form, setForm] = useState({
     feederIp: '',
     setupHostIp: '',
@@ -49,30 +64,77 @@ export function SetupPage() {
     queryKey: ['system-status'],
     queryFn: ({ signal }) => fetchSystemStatus(signal),
   });
+  const availability = useQuery({
+    queryKey: ['installation-availability'],
+    queryFn: ({ signal }) => fetchInstallationAvailability(signal),
+    refetchInterval: 2_000,
+  });
+  const operations = useQuery({
+    queryKey: ['operations'],
+    queryFn: ({ signal }) => fetchOperations(signal),
+    refetchInterval: 2_000,
+  });
+  const currentInstallation =
+    availability.data?.installation ??
+    operations.data?.find(
+      (operation): operation is InstallationOperationSnapshot =>
+        operation.actionId === INSTALLATION_ACTION_ID,
+    );
   const worker = statusQuery.data?.integrations.find(
     (item) => item.id === 'capability-worker',
   );
-  const preflight = useMutation({
-    mutationFn: runSetupPreflight,
-    onSettled: () =>
-      setForm((current) => ({ ...current, backendPassword: '' })),
+  const preflight = useMutation({ mutationFn: runSetupPreflight });
+  const installation = useMutation({
+    mutationFn: startInstallation,
+    onSuccess: async () => {
+      setForm((current) => ({ ...current, backendPassword: '' }));
+      await queryClient.invalidateQueries({ queryKey: ['operations'] });
+      await queryClient.invalidateQueries({
+        queryKey: ['installation-availability'],
+      });
+    },
   });
+  const checkpoint = useMutation({
+    mutationFn: satisfyInstallationCheckpoint,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['operations'] });
+      await queryClient.invalidateQueries({
+        queryKey: ['installation-availability'],
+      });
+    },
+  });
+  const protectedConfiguration = useMutation({
+    mutationFn: downloadProtectedConfiguration,
+  });
+  const request = () => ({ ...form, brokerPort: Number(form.brokerPort) });
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    preflight.mutate({
-      ...form,
-      brokerPort: Number(form.brokerPort),
-    });
+    preflight.mutate(request());
   };
-  const update = (field: keyof typeof form, value: string) =>
+  const update = (field: keyof typeof form, value: string) => {
+    // A successful preflight is evidence about one exact request. Editing any
+    // field invalidates that presentation even though the server also reruns
+    // preflight before accepting an installation.
+    preflight.reset();
+    installation.reset();
     setForm((current) => ({ ...current, [field]: value }));
+  };
+  const canStart =
+    availability.data?.available === true &&
+    preflight.data !== undefined &&
+    preflight.data.checks.every(
+      (check) =>
+        check.status === 'passed' ||
+        check.status === 'warning' ||
+        (check.id === 'temporary-mqtt-port' && check.status === 'blocked'),
+    );
 
   return (
     <div className="page-stack">
       <PageHeader
         eyebrow="Guided installation"
         title="Setup"
-        description="Prepare a safe, checkpointed installation without hiding device-changing boundaries or claiming unverified broker handoff behavior."
+        description="Run one durable installation through verified technical stages and explicit broker-handoff checkpoints."
       >
         <Button asChild variant="outline">
           <Link to="/operations">View operations</Link>
@@ -84,27 +146,46 @@ export function SetupPage() {
           <CardHeader>
             <CardTitle>Installation stages</CardTitle>
             <CardDescription>
-              Conceptual groups; execution ordering remains capability-owned.
+              Progress is restored from the durable operation journal.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <ol className="setup-stage-list">
-              {setupStages.map(([title, detail], index) => (
-                <li key={title} data-state={index === 0 ? 'current' : 'locked'}>
-                  <span aria-hidden="true">
-                    {index === 0 ? <CircleDashed /> : <LockKeyhole />}
-                  </span>
-                  <div>
-                    <strong>{title}</strong>
-                    <small>{detail}</small>
-                  </div>
-                </li>
-              ))}
+              {(currentInstallation?.stages ?? fallbackStages()).map(
+                (stage) => (
+                  <li key={stage.id} data-state={stageState(stage.status)}>
+                    <span aria-hidden="true">{stageIcon(stage.status)}</span>
+                    <div>
+                      <strong>{stage.title}</strong>
+                      <small>{stage.detail}</small>
+                    </div>
+                  </li>
+                ),
+              )}
             </ol>
           </CardContent>
         </Card>
 
         <div className="setup-primary">
+          {currentInstallation === undefined ? null : (
+            <InstallationProgressCard
+              operation={currentInstallation}
+              pending={checkpoint.isPending}
+              error={checkpoint.error}
+              handoffPending={protectedConfiguration.isPending}
+              handoffError={protectedConfiguration.error}
+              onDownloadHandoff={() =>
+                protectedConfiguration.mutate(currentInstallation.operationId)
+              }
+              onContinue={(checkpointId) =>
+                checkpoint.mutate({
+                  operationId: currentInstallation.operationId,
+                  checkpointId,
+                })
+              }
+            />
+          )}
+
           <Card>
             <CardHeader>
               <CardTitle>Installation preflight</CardTitle>
@@ -174,8 +255,10 @@ export function SetupPage() {
                     {preflight.isPending ? 'Checking…' : 'Run safe preflight'}
                   </Button>
                   <small>
-                    The broker password is used for this request and is not
-                    returned in evidence or retained by this workflow.
+                    Preflight does not retain the broker password. Starting a
+                    workflow stores it in protected server custody. Secrets are
+                    returned only through an explicit no-store configuration
+                    download and never enter operation events or diagnostics.
                   </small>
                 </div>
               </form>
@@ -196,8 +279,8 @@ export function SetupPage() {
                       }
                     >
                       {preflight.data.readyForBootstrapSession
-                        ? 'Ready to begin'
-                        : 'Needs attention'}
+                        ? 'Listener currently available'
+                        : 'Checkpoint required'}
                     </Badge>
                   </div>
                   <ul className="check-list">
@@ -220,21 +303,49 @@ export function SetupPage() {
                       </li>
                     ))}
                   </ul>
+                  <div className="setup-form-actions">
+                    <Button
+                      type="button"
+                      disabled={!canStart || installation.isPending}
+                      onClick={() => installation.mutate(request())}
+                    >
+                      <Router aria-hidden="true" />
+                      {installation.isPending
+                        ? 'Starting…'
+                        : 'Start durable installation'}
+                    </Button>
+                    <small>
+                      The server reruns preflight and binds the result to these
+                      exact non-secret inputs before accepting the operation.
+                    </small>
+                  </div>
+                  {installation.isError ? (
+                    <p className="operation-inline-error" role="alert">
+                      {installation.error.message}
+                    </p>
+                  ) : null}
                 </div>
               )}
             </CardContent>
           </Card>
-          <CapabilityGap
-            compact
-            icon={Router}
-            title="Device-changing stages remain locked"
-            description="Native protocol primitives are parity-tested, but artifact custody, temporary MQTT/OTA session ownership, broker handoff checkpoints, and post-install adoption are not yet exposed. Continue to use the independent Python CLI for installation."
-          />
+
+          {availability.data?.available === true ? null : (
+            <CapabilityGap
+              compact
+              icon={Router}
+              title="Device-changing execution is qualification-gated"
+              description={
+                availability.data?.reason ??
+                'Installation availability has not been confirmed.'
+              }
+            />
+          )}
+
           <Card>
             <CardHeader>
-              <CardTitle>Foundation readiness</CardTitle>
+              <CardTitle>Runtime readiness</CardTitle>
               <CardDescription>
-                These checks do not inspect the feeder or broker.
+                Process health is not feeder or broker readiness.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -260,7 +371,7 @@ export function SetupPage() {
                 <li>
                   <KeyRound aria-hidden="true" />
                   <span>
-                    <strong>Device operations worker</strong>
+                    <strong>Capability worker</strong>
                     <small>
                       {worker?.detail ?? 'Worker status has not been observed.'}
                     </small>
@@ -278,6 +389,129 @@ export function SetupPage() {
       </div>
     </div>
   );
+}
+
+function InstallationProgressCard({
+  operation,
+  pending,
+  error,
+  handoffPending,
+  handoffError,
+  onContinue,
+  onDownloadHandoff,
+}: {
+  readonly operation: InstallationOperationSnapshot;
+  readonly pending: boolean;
+  readonly error: Error | null;
+  readonly handoffPending: boolean;
+  readonly handoffError: Error | null;
+  readonly onContinue: (checkpointId: string) => void;
+  readonly onDownloadHandoff: () => void;
+}) {
+  const handoffAvailable =
+    operation.checkpoint?.kind === 'start-final-broker' ||
+    operation.checkpoint?.kind === 'apply-addon-options';
+  return (
+    <Card className="operation-action-card">
+      <CardHeader>
+        <div className="card-heading-row">
+          <span className="card-icon" aria-hidden="true">
+            <Router />
+          </span>
+          <div>
+            <CardTitle>
+              Installation {operation.operationId.slice(0, 8)}
+            </CardTitle>
+            <CardDescription>
+              {operation.target.label} · {humanize(operation.stage)}
+            </CardDescription>
+          </div>
+          <StatusBadge status={operation.status} />
+        </div>
+      </CardHeader>
+      <CardContent>
+        {operation.checkpoint === undefined ? (
+          <p className="guardrail-copy">
+            The backend owns the active stage. You can leave this page without
+            cancelling it.
+          </p>
+        ) : (
+          <div className="operation-evidence">
+            <div>
+              <CircleAlert aria-hidden="true" />
+              <strong>{operation.checkpoint.title}</strong>
+            </div>
+            <p>{operation.checkpoint.instructions}</p>
+            <small>{operation.checkpoint.consequence}</small>
+            <div className="setup-form-actions">
+              {handoffAvailable ? (
+                <Button
+                  variant="outline"
+                  disabled={handoffPending}
+                  onClick={onDownloadHandoff}
+                >
+                  <LockKeyhole aria-hidden="true" />
+                  {handoffPending
+                    ? 'Preparing private file…'
+                    : 'Download protected configuration'}
+                </Button>
+              ) : null}
+              <Button
+                disabled={pending}
+                onClick={() =>
+                  onContinue(operation.checkpoint?.checkpointId as string)
+                }
+              >
+                {pending
+                  ? 'Verifying…'
+                  : 'I completed this step — verify and continue'}
+              </Button>
+              <Button asChild variant="outline">
+                <Link to="/operations">Execution evidence</Link>
+              </Button>
+            </div>
+          </div>
+        )}
+        {operation.failure === undefined ? null : (
+          <p className="operation-inline-error" role="alert">
+            {operation.failure.message}
+          </p>
+        )}
+        {error === null ? null : (
+          <p className="operation-inline-error" role="alert">
+            {error.message}
+          </p>
+        )}
+        {handoffError === null ? null : (
+          <p className="operation-inline-error" role="alert">
+            {handoffError.message}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function fallbackStages() {
+  return setupStages.map(([title, detail], index) => ({
+    id: title,
+    title,
+    detail,
+    status: index === 0 ? ('active' as const) : ('pending' as const),
+  }));
+}
+
+function stageState(status: string): string {
+  if (status === 'active' || status === 'awaiting-user') return 'current';
+  return status === 'pending' ? 'locked' : status;
+}
+
+function stageIcon(status: string) {
+  if (status === 'completed') return <Check />;
+  if (status === 'active' || status === 'awaiting-user')
+    return <CircleDashed />;
+  if (status === 'failed' || status === 'indeterminate') return <CircleAlert />;
+  return <LockKeyhole />;
 }
 
 function SetupField({

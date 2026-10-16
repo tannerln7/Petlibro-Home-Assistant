@@ -25,6 +25,12 @@ describe('native OEM protocol capability', () => {
     );
   });
 
+  it('uses the sequence value exercised by the standalone installer', () => {
+    const frame = buildSetMqttServerFrame('192.0.2.10', 1883, '123456789');
+
+    expect(frame[4]).toBe(1);
+  });
+
   it('preserves reference provisioning constraints', () => {
     expect(() => buildSetMqttServerFrame('host:bad', 1883, '1')).toThrow(
       "without ':'",

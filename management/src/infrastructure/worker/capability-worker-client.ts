@@ -9,6 +9,10 @@ import {
   WorkerRejectedError,
   WorkerUnavailableError,
 } from '#/application/capability-provider';
+import type {
+  GenericCapabilityRequest,
+  ProtectedConfigurationHandoff,
+} from '#/domain/capabilities';
 import { STATE_AGENT_INSPECTION_CAPABILITY_ID } from '#/domain/operations';
 import {
   parseWorkerHealth,
@@ -62,6 +66,24 @@ export class CapabilityWorkerClient implements CapabilityProvider {
     return this.parseInvocation(response.value);
   }
 
+  public async submitInvocation(
+    request: GenericCapabilityRequest,
+  ): Promise<WorkerInvocationSnapshot> {
+    const response = await this.request(
+      'PUT',
+      `/v1/invocations/${encodeURIComponent(request.invocationId)}`,
+      {
+        protocolVersion: 1,
+        invocationId: request.invocationId,
+        operationId: request.operationId,
+        capabilityId: request.capabilityId,
+        input: request.input,
+      },
+    );
+    this.requireSuccess(response);
+    return this.parseInvocation(response.value);
+  }
+
   public async getInvocation(
     invocationId: string,
   ): Promise<WorkerInvocationSnapshot> {
@@ -74,6 +96,27 @@ export class CapabilityWorkerClient implements CapabilityProvider {
     }
     this.requireSuccess(response);
     return this.parseInvocation(response.value);
+  }
+
+  public async getConfigurationHandoff(installationId: string): Promise<
+    Omit<ProtectedConfigurationHandoff, 'addonOptionsPatch'> & {
+      generatedAddonOptions: Readonly<Record<string, unknown>>;
+    }
+  > {
+    const response = await this.request(
+      'GET',
+      `/v1/installations/${encodeURIComponent(installationId)}/configuration-handoff`,
+    );
+    this.requireSuccess(response);
+    const value = response.value;
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      throw new WorkerProtocolError(
+        'Worker returned an invalid protected handoff.',
+      );
+    }
+    return value as Omit<ProtectedConfigurationHandoff, 'addonOptionsPatch'> & {
+      generatedAddonOptions: Readonly<Record<string, unknown>>;
+    };
   }
 
   private async request(

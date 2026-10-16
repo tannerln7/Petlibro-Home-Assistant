@@ -18,6 +18,7 @@ import { Route as LogsRouteImport } from './routes/logs'
 import { Route as OperationsRouteImport } from './routes/operations'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SetupRouteImport } from './routes/setup'
+import { Route as ApiV1InstallationsRouteImport } from './routes/api.v1.installations'
 import { Route as ApiV1OperationEventsRouteImport } from './routes/api.v1.operation-events'
 import { Route as ApiV1OperationsRouteImport } from './routes/api.v1.operations'
 import { Route as ApiV1ActionsStateAgentInspectionRouteImport } from './routes/api.v1.actions.state-agent-inspection'
@@ -26,6 +27,8 @@ import { Route as ApiV1DiagnosticsReportRouteImport } from './routes/api.v1.diag
 import { Route as ApiV1OperationsOperationIdRouteImport } from './routes/api.v1.operations.$operationId'
 import { Route as ApiV1SetupPreflightRouteImport } from './routes/api.v1.setup.preflight'
 import { Route as ApiV1SystemStatusRouteImport } from './routes/api.v1.system.status'
+import { Route as ApiV1InstallationsOperationIdConfigurationHandoffRouteImport } from './routes/api.v1.installations.$operationId.configuration-handoff'
+import { Route as ApiV1InstallationsOperationIdCheckpointsCheckpointIdRouteImport } from './routes/api.v1.installations.$operationId.checkpoints.$checkpointId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -72,6 +75,11 @@ const SetupRoute = SetupRouteImport.update({
   path: '/setup',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiV1InstallationsRoute = ApiV1InstallationsRouteImport.update({
+  id: '/api/v1/installations',
+  path: '/api/v1/installations',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiV1OperationEventsRoute = ApiV1OperationEventsRouteImport.update({
   id: '/api/v1/operation-events',
   path: '/api/v1/operation-events',
@@ -114,6 +122,18 @@ const ApiV1SystemStatusRoute = ApiV1SystemStatusRouteImport.update({
   path: '/api/v1/system/status',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiV1InstallationsOperationIdConfigurationHandoffRoute =
+  ApiV1InstallationsOperationIdConfigurationHandoffRouteImport.update({
+    id: '/$operationId/configuration-handoff',
+    path: '/$operationId/configuration-handoff',
+    getParentRoute: () => ApiV1InstallationsRoute,
+  } as any)
+const ApiV1InstallationsOperationIdCheckpointsCheckpointIdRoute =
+  ApiV1InstallationsOperationIdCheckpointsCheckpointIdRouteImport.update({
+    id: '/$operationId/checkpoints/$checkpointId',
+    path: '/$operationId/checkpoints/$checkpointId',
+    getParentRoute: () => ApiV1InstallationsRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -125,6 +145,7 @@ export interface FileRoutesByFullPath {
   '/operations': typeof OperationsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
+  '/api/v1/installations': typeof ApiV1InstallationsRouteWithChildren
   '/api/v1/operation-events': typeof ApiV1OperationEventsRoute
   '/api/v1/operations': typeof ApiV1OperationsRouteWithChildren
   '/api/v1/actions/state-agent-inspection': typeof ApiV1ActionsStateAgentInspectionRoute
@@ -133,6 +154,8 @@ export interface FileRoutesByFullPath {
   '/api/v1/operations/$operationId': typeof ApiV1OperationsOperationIdRoute
   '/api/v1/setup/preflight': typeof ApiV1SetupPreflightRoute
   '/api/v1/system/status': typeof ApiV1SystemStatusRoute
+  '/api/v1/installations/$operationId/configuration-handoff': typeof ApiV1InstallationsOperationIdConfigurationHandoffRoute
+  '/api/v1/installations/$operationId/checkpoints/$checkpointId': typeof ApiV1InstallationsOperationIdCheckpointsCheckpointIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -144,6 +167,7 @@ export interface FileRoutesByTo {
   '/operations': typeof OperationsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
+  '/api/v1/installations': typeof ApiV1InstallationsRouteWithChildren
   '/api/v1/operation-events': typeof ApiV1OperationEventsRoute
   '/api/v1/operations': typeof ApiV1OperationsRouteWithChildren
   '/api/v1/actions/state-agent-inspection': typeof ApiV1ActionsStateAgentInspectionRoute
@@ -152,6 +176,8 @@ export interface FileRoutesByTo {
   '/api/v1/operations/$operationId': typeof ApiV1OperationsOperationIdRoute
   '/api/v1/setup/preflight': typeof ApiV1SetupPreflightRoute
   '/api/v1/system/status': typeof ApiV1SystemStatusRoute
+  '/api/v1/installations/$operationId/configuration-handoff': typeof ApiV1InstallationsOperationIdConfigurationHandoffRoute
+  '/api/v1/installations/$operationId/checkpoints/$checkpointId': typeof ApiV1InstallationsOperationIdCheckpointsCheckpointIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -164,6 +190,7 @@ export interface FileRoutesById {
   '/operations': typeof OperationsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
+  '/api/v1/installations': typeof ApiV1InstallationsRouteWithChildren
   '/api/v1/operation-events': typeof ApiV1OperationEventsRoute
   '/api/v1/operations': typeof ApiV1OperationsRouteWithChildren
   '/api/v1/actions/state-agent-inspection': typeof ApiV1ActionsStateAgentInspectionRoute
@@ -172,6 +199,8 @@ export interface FileRoutesById {
   '/api/v1/operations/$operationId': typeof ApiV1OperationsOperationIdRoute
   '/api/v1/setup/preflight': typeof ApiV1SetupPreflightRoute
   '/api/v1/system/status': typeof ApiV1SystemStatusRoute
+  '/api/v1/installations/$operationId/configuration-handoff': typeof ApiV1InstallationsOperationIdConfigurationHandoffRoute
+  '/api/v1/installations/$operationId/checkpoints/$checkpointId': typeof ApiV1InstallationsOperationIdCheckpointsCheckpointIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -185,6 +214,7 @@ export interface FileRouteTypes {
     | '/operations'
     | '/settings'
     | '/setup'
+    | '/api/v1/installations'
     | '/api/v1/operation-events'
     | '/api/v1/operations'
     | '/api/v1/actions/state-agent-inspection'
@@ -193,6 +223,8 @@ export interface FileRouteTypes {
     | '/api/v1/operations/$operationId'
     | '/api/v1/setup/preflight'
     | '/api/v1/system/status'
+    | '/api/v1/installations/$operationId/configuration-handoff'
+    | '/api/v1/installations/$operationId/checkpoints/$checkpointId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -204,6 +236,7 @@ export interface FileRouteTypes {
     | '/operations'
     | '/settings'
     | '/setup'
+    | '/api/v1/installations'
     | '/api/v1/operation-events'
     | '/api/v1/operations'
     | '/api/v1/actions/state-agent-inspection'
@@ -212,6 +245,8 @@ export interface FileRouteTypes {
     | '/api/v1/operations/$operationId'
     | '/api/v1/setup/preflight'
     | '/api/v1/system/status'
+    | '/api/v1/installations/$operationId/configuration-handoff'
+    | '/api/v1/installations/$operationId/checkpoints/$checkpointId'
   id:
     | '__root__'
     | '/'
@@ -223,6 +258,7 @@ export interface FileRouteTypes {
     | '/operations'
     | '/settings'
     | '/setup'
+    | '/api/v1/installations'
     | '/api/v1/operation-events'
     | '/api/v1/operations'
     | '/api/v1/actions/state-agent-inspection'
@@ -231,6 +267,8 @@ export interface FileRouteTypes {
     | '/api/v1/operations/$operationId'
     | '/api/v1/setup/preflight'
     | '/api/v1/system/status'
+    | '/api/v1/installations/$operationId/configuration-handoff'
+    | '/api/v1/installations/$operationId/checkpoints/$checkpointId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -243,6 +281,7 @@ export interface RootRouteChildren {
   OperationsRoute: typeof OperationsRoute
   SettingsRoute: typeof SettingsRoute
   SetupRoute: typeof SetupRoute
+  ApiV1InstallationsRoute: typeof ApiV1InstallationsRouteWithChildren
   ApiV1OperationEventsRoute: typeof ApiV1OperationEventsRoute
   ApiV1OperationsRoute: typeof ApiV1OperationsRouteWithChildren
   ApiV1ActionsStateAgentInspectionRoute: typeof ApiV1ActionsStateAgentInspectionRoute
@@ -317,6 +356,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SetupRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/v1/installations': {
+      id: '/api/v1/installations'
+      path: '/api/v1/installations'
+      fullPath: '/api/v1/installations'
+      preLoaderRoute: typeof ApiV1InstallationsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/v1/operation-events': {
       id: '/api/v1/operation-events'
       path: '/api/v1/operation-events'
@@ -373,8 +419,37 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiV1SystemStatusRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/v1/installations/$operationId/configuration-handoff': {
+      id: '/api/v1/installations/$operationId/configuration-handoff'
+      path: '/$operationId/configuration-handoff'
+      fullPath: '/api/v1/installations/$operationId/configuration-handoff'
+      preLoaderRoute: typeof ApiV1InstallationsOperationIdConfigurationHandoffRouteImport
+      parentRoute: typeof ApiV1InstallationsRoute
+    }
+    '/api/v1/installations/$operationId/checkpoints/$checkpointId': {
+      id: '/api/v1/installations/$operationId/checkpoints/$checkpointId'
+      path: '/$operationId/checkpoints/$checkpointId'
+      fullPath: '/api/v1/installations/$operationId/checkpoints/$checkpointId'
+      preLoaderRoute: typeof ApiV1InstallationsOperationIdCheckpointsCheckpointIdRouteImport
+      parentRoute: typeof ApiV1InstallationsRoute
+    }
   }
 }
+
+interface ApiV1InstallationsRouteChildren {
+  ApiV1InstallationsOperationIdConfigurationHandoffRoute: typeof ApiV1InstallationsOperationIdConfigurationHandoffRoute
+  ApiV1InstallationsOperationIdCheckpointsCheckpointIdRoute: typeof ApiV1InstallationsOperationIdCheckpointsCheckpointIdRoute
+}
+
+const ApiV1InstallationsRouteChildren: ApiV1InstallationsRouteChildren = {
+  ApiV1InstallationsOperationIdConfigurationHandoffRoute:
+    ApiV1InstallationsOperationIdConfigurationHandoffRoute,
+  ApiV1InstallationsOperationIdCheckpointsCheckpointIdRoute:
+    ApiV1InstallationsOperationIdCheckpointsCheckpointIdRoute,
+}
+
+const ApiV1InstallationsRouteWithChildren =
+  ApiV1InstallationsRoute._addFileChildren(ApiV1InstallationsRouteChildren)
 
 interface ApiV1OperationsRouteChildren {
   ApiV1OperationsOperationIdRoute: typeof ApiV1OperationsOperationIdRoute
@@ -398,6 +473,7 @@ const rootRouteChildren: RootRouteChildren = {
   OperationsRoute: OperationsRoute,
   SettingsRoute: SettingsRoute,
   SetupRoute: SetupRoute,
+  ApiV1InstallationsRoute: ApiV1InstallationsRouteWithChildren,
   ApiV1OperationEventsRoute: ApiV1OperationEventsRoute,
   ApiV1OperationsRoute: ApiV1OperationsRouteWithChildren,
   ApiV1ActionsStateAgentInspectionRoute: ApiV1ActionsStateAgentInspectionRoute,

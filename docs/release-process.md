@@ -8,17 +8,20 @@ The repository uses Git branches as its add-on release-channel boundary:
 | Development | `develop` | `https://github.com/tannerln7/Petlibro-Home-Assistant#develop` | `x.y.z-beta.N` |
 | Management qualification | `feature/management-app-foundation` | `https://github.com/tannerln7/Petlibro-Home-Assistant#feature/management-app-foundation` | `x.y.z-mgmt.N` |
 
-Each installation tracks one branch. Do not add both URLs to one Home Assistant
-instance. A `develop` change is invisible to `main` users, and a `main` change
-is invisible to `develop` users until it is carried forward.
+Each installed channel tracks one branch. Qualification environments may retain
+separate stable, development, and management entries, but only one Petlibro
+add-on may run against a feeder and broker at a time. A `develop` change is
+invisible to `main` users, and a `main` change is invisible to `develop` users
+until it is carried forward.
 
 The management qualification channel is temporary and manually published. It
 exists only to qualify the management application without merging it into
 `main` or `develop`. Its workflow dispatch must explicitly select
 `management-test`, accepts only the exact management branch and `-mgmt.N`
 version form, and publishes only the immutable version tag. It never updates
-`latest`. Install this repository URL only on a test Home Assistant instance;
-the add-on slug is shared with the normal channels.
+`latest`. Use this repository URL only for controlled qualification; existing
+channel installations do not need to be deleted, but they must not run
+concurrently against the same operational environment.
 
 ## Stable releases
 

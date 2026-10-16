@@ -335,7 +335,7 @@ Avoid:
 - Route handlers with protocol, orchestration, transaction, or database business logic.
 - One class per action purely for ideological consistency, or one giant manager class for unrelated actions.
 - Static global service registries and mutable singletons that hide state ownership.
-- Workers exposing arbitrary Python method names or filesystem operations to the application.
+- Workers exposing arbitrary implementation methods or filesystem operations to the application.
 - Copying implementation-specific worker objects into domain models.
 - Defensive abstractions for hypothetical products or protocols not in scope.
 
@@ -346,7 +346,7 @@ Avoid:
 | **Application API adapter** | HTTP request handling, authentication context, request/response validation, API presentation | Device protocol decisions or workflow scheduling |
 | **Action Catalog** | Registered action identities, input schemas, applicability and presentation metadata | Executing device packets |
 | **Action Service** | Interpret accepted intent, validate/authorize and submit actions | Implementing the capability's internal algorithm |
-| **Operation Manager** | Job lifecycle, checkpoints, execution scheduling, conflict handling, reconciliation | Owning Python sockets or the OEM OTA state machine |
+| **Operation Manager** | Job lifecycle, checkpoints, execution scheduling, conflict handling, reconciliation | Owning capability sockets or the OEM OTA state machine |
 | **Capability Registry/Provider** | Resolve contract interfaces to available implementation adapters | Deciding business workflow policy |
 | **Device Registry/Projection** | Stable management identity and source-aware composite device views | Replacing AppDaemon discovery or State Agent truth |
 | **Configuration Service** | Application-owned options and supported, verified integration changes | Direct uncoordinated rewriting of Supervisor-managed settings |
@@ -451,29 +451,44 @@ Implemented and exercised in management:
 - byte-exact OEM provisioning-frame, MQTT CONNECT/SUBSCRIBE/PUBLISH, ACK,
   publish, and OTA-command primitives with reference-equivalent vectors;
 - exact-shape OpenSSH recovery public-key validation;
-- a read-only setup preflight for endpoint constraints, final-broker backend
-  authentication, recovery input, and transient TCP/1883 ownership; and
-- bounded redacted queries over durable operation/capability evidence and a
-  source-aware diagnostic export. Raw service-log streaming remains deferred.
+- role-specific setup preflight, final-broker authentication, recovery input,
+  and transient TCP/1883 ownership checks;
+- image-built device-independent ARM artifacts plus native device-bound payload
+  assembly and protected worker custody;
+- source-restricted temporary MQTT identity capture, supported OEM startup
+  responses, broker proof, guarded artifact delivery/OTA correlation, final
+  endpoint restoration, fresh heartbeat, and State Agent verification;
+- production admission for firmware `3.1.48`, revalidated against the fresh
+  temporary MQTT session immediately before OTA publication; reusable packet
+  and protocol helpers remain version-neutral for fixture/parity testing;
+- one durable installation coordinator with idempotent operator checkpoints,
+  serialized progression, restart continuation, installation exclusivity, and
+  explicit indeterminate/no-replay outcomes;
+- atomic recoverable-failure/checkpoint persistence, fresh invocation identity
+  for explicitly authorized retries, and an unbounded authoritative query for
+  active or indeterminate installation admission;
+- explicit no-store protected configuration handoff, followed by effective
+  option read-back and AppDaemon READY/reconciliation observation before
+  end-to-end success, correlated to the captured product/serial identity rather
+  than IP address alone; and
+- durable evidence queries plus an on-demand, sanitized Supervisor combined-log
+  stream retained only by active browser sessions, including bounded multiline
+  private-key redaction and conservative browser regex/render limits.
 
-The next coherent device-changing boundary is deliberately not split further:
-artifact provenance/custody and payload assembly, temporary MQTT identity
-capture, source-restricted artifact serving, provisioning, correlated OTA,
-terminal/startup evidence, final-broker credential/heartbeat proof, explicit
-same-host port transfer, and runtime adoption must be implemented as one
-resource-owning bootstrap session coordinated by durable operator checkpoints.
-Until that boundary is complete, management exposes no OTA, recovery-write, or
-maintenance-write action and the independent Python CLI remains the supported
-installer. Supervisor service-control permissions and apply/restart semantics
-remain a concrete dependency for same-host Mosquitto handoff.
+Device-changing execution remains disabled by default behind
+`management_bootstrap_device_changes`. The host-side path is deterministically
+testable, but same-host Mosquitto handoff and physical feeder behavior still
+require controlled qualification. Because the add-on has no appropriately
+narrow Supervisor service-control permission, broker stop/start and option
+application are operator-mediated checkpoints. The coordinator verifies actual
+port release and runtime adoption; a click is never treated as evidence. The
+independent Python CLI remains supported and is the behavioral reference, not a
+runtime dependency.
 
-Two protocol/bootstrap questions intentionally remain with that next boundary.
-The current read-only preflight validates address shape, reachability, broker
-authentication, and local TCP/1883 ownership, but it does not yet impose one
-blanket endpoint-address policy across listener, broker, and feeder-destination
-roles. Likewise, the native provisioning-frame default sequence is not being
-changed solely to resemble the Python helper; its default and call-site policy
-must be resolved from protocol evidence during the complete bootstrap review.
+The setup host is intentionally the feeder-reachable Home Assistant host-network
+IPv4 address. This does not require the final broker to use the same address,
+but supported feeder-facing broker traffic remains TCP/1883. Multi-address host
+selection beyond this explicit deployment constraint remains unqualified.
 
 ### 4.3 Capability implementation requirements
 
@@ -501,6 +516,9 @@ The new implementation must explicitly preserve verified behaviors already docum
 - Only one feeder factory MQTT identity is accepted per bootstrap session; mismatched identity is rejected.
 - Broker credentials are checked before destructive OTA execution in the supported production workflow.
 - OTA evidence remains correlated to the correct `msgId`, packet acknowledgment, and session/connection generation.
+- The guarded OTA boundary records publication intent before attempting the
+  MQTT write; any failure after the write begins is indeterminate and is never
+  converted into an automatically retryable failure.
 - No fabricated successful empty feeding-plan response during bootstrap; the temporary broker cannot claim authoritative plans.
 - The bootstrap payload respects donor-slot/restore protections and feeder-local preinstall snapshots.
 - Key-based SSH recovery is required; no password SSH fallback is introduced for convenience.
@@ -745,9 +763,9 @@ The read-only dashboard uses a cached, two-second MQTT CONNECT/CONNACK probe
 with the Supervisor-owned configured credentials. It disconnects without
 subscribing or publishing and never returns credentials to the browser.
 
-The current installer assumes a separate setup host in its normal flow. In the new colocated add-on design, both final and temporary feeder-facing listeners need port **1883**. A broker handoff is an explicit exclusive-resource transition; verify the chosen sequence in live tests before assuming it works.
+The current installer assumes a separate setup host in its normal flow. In the colocated add-on design, both final and temporary feeder-facing listeners need port **1883**. Management now implements an operator-mediated durable handoff and verifies actual bind acquisition, but the sequence remains subject to live Home Assistant/feeder qualification.
 
-Required conceptual states include final broker active, requested stop, verified bind released, temporary listener active, identity captured, credential verification checkpoint, temporary listener reacquired if necessary, guarded OTA, final listener restored, and fresh feeder heartbeat observation. Specific switching mechanics remain **requires validation**.
+Implemented states include final broker active, requested stop, verified bind released, temporary listener acquired, identity captured, credential verification checkpoint, temporary listener reacquired, guarded OTA, final listener restored, and fresh feeder heartbeat observation. Final-heartbeat verification uses a clean MQTT observer connection established only after the redirection callback completes, so packets queued with the initial SUBACK cannot establish post-redirection freshness. Automatic Mosquitto control is intentionally absent; exact operator and Supervisor behavior remains **requires live validation**.
 
 Operator messaging must warn of consequences to unrelated MQTT devices during Mosquitto downtime. Supervisor permissions must be least-privilege; do not assume unrestricted service control.
 
@@ -768,7 +786,7 @@ health heartbeat.
 
 ### 8.6 Device identity and registry
 
-Distinguish: installer intended target, captured MQTT identity, established serial/UID, AppDaemon discovery/current IP, camera stream mapping, and management historical device record. Correlate them through stable identifiers and provenance; do not establish a second competing authority for dynamic network identity.
+Distinguish: installer intended target, captured MQTT identity, established serial/UID, AppDaemon discovery/current IP, camera stream mapping, and management historical device record. Correlate them through stable identifiers and provenance; do not establish a second competing authority for dynamic network identity. Current end-to-end readiness requires the captured PLAF203 MQTT client identity to match the fresh AppDaemon registry product/serial at the expected address; address reuse alone cannot establish readiness.
 
 ---
 
@@ -809,7 +827,11 @@ Direct browser access is disabled by default. Its configured source CIDR is an e
 - No generic shell execution, arbitrary Python imports, arbitrary path access, or unrestricted device command endpoints.
 - Keep secrets out of normal snapshots, notifications, logs, error messages, and exports.
 - Sensitive settings and recovery material use protected storage and explicit reveal/export actions where warranted.
-- Guard browser mutations against CSRF and unauthorized WebSocket subscriptions; validate origins/proxy assumptions in real Ingress tests.
+- Browser mutation routes require non-simple JSON requests, preventing ordinary
+  cross-origin form submission; the Ingress or authenticated reverse proxy and
+  trusted direct-access CIDR remain the authentication boundary. Unauthorized
+  WebSocket subscriptions and proxy/origin assumptions still require real
+  Ingress/deployment qualification.
 - Follow least privilege for Supervisor operations; if access needed isn't supported, prefer operator-mediated steps rather than silent escalation.
 - Feeder State Agent source-IP ACL and bearer token remain enforced by the device.
 - Preserve signed State Agent update trust validation and no-redirect/immutable-artifact protections in any future client migration.
@@ -1082,12 +1104,12 @@ The first end-to-end proof should use a safe read-only capability and the actual
 | TanStack Table and Virtual | **Planned** | Responsive tables and large log/event streams |
 | TanStack Charts for telemetry | **Candidate** | Assess current API, update behavior, accessibility and resource fit |
 | TypeScript backend organized around explicit classes/interfaces | **Established** | Domain/application layering by meaningful responsibilities |
-| Long-lived Python operations worker initially | **Established** | Independently supervised; safe resource/transaction ownership |
+| Long-lived native-TypeScript capability worker | **Implemented foundation** | Independently supervised; safe resource/transaction ownership; standalone Python installer remains independent reference behavior |
 | HTTP/JSON worker RPC on Unix socket | **Implemented foundation** | Versioned allowlisted invocation protocol, mode-`0600` socket, add-on supervision and restart/loss semantics validated locally |
 | Shared event vocabulary and browser WebSockets | **Implemented foundation** | Durable global event sequence, HTTP replay and reconnectable WebSocket notification; Nginx upgrade validated locally, real Supervisor qualification remains |
-| Exact Python-worker event wire transport | **Implemented for initial bounded capability** | Invocation snapshots carry bounded replayable events; reassess a streaming worker transport before high-volume/long-running capabilities |
+| Exact worker semantic-event transport | **Implemented foundation** | Invocation snapshots retain complete sequence-contiguous durable semantic evidence; raw/high-volume logs use the separate bounded ephemeral browser stream |
 | SQLite durable app state | **Selected; operation journal implemented** | Transactional snapshot/event writes and schema version validated; qualify `/data` backup/restore, volume and production concurrency |
-| Worker binary builds moved to image build | **Candidate** | Prove equivalence and device-specific assembly separation |
+| Device-independent ARM binary builds moved to image build | **Implemented, host-qualified** | Pinned/provenance-checked inputs and device-specific runtime assembly are covered by build/parity tests; feeder execution remains unqualified |
 | Management independent of AppDaemon/go2rtc startup | **Established** | Separate supervised process and fault presentation |
 | Source-aware operational device projection | **Implemented read-only milestone** | AppDaemon registry/controller files, go2rtc status, Supervisor options and bounded MQTT authentication probe; missing/stale sources remain separate |
 | Ingress default; direct-browser capable | **Implemented foundation** | One backend/build, dynamic Ingress prefix, source-restricted Ingress and opt-in CIDR-restricted direct listener |

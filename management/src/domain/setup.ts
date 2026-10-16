@@ -25,6 +25,41 @@ export interface SetupPreflightResult {
   readonly scope: string;
 }
 
+export function parseSetupPreflightRequest(
+  value: unknown,
+): SetupPreflightRequest {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('The setup request must be an object.');
+  }
+  const record = value as Record<string, unknown>;
+  const fields = [
+    'feederIp',
+    'setupHostIp',
+    'homeAssistantIp',
+    'brokerHost',
+    'brokerPort',
+    'backendUsername',
+    'backendPassword',
+    'sshPublicKey',
+  ] as const;
+  if (
+    Object.keys(record).some(
+      (field) => !fields.includes(field as (typeof fields)[number]),
+    )
+  ) {
+    throw new TypeError('The setup request contains unknown fields.');
+  }
+  for (const field of fields.filter((item) => item !== 'brokerPort')) {
+    if (typeof record[field] !== 'string') {
+      throw new TypeError('The setup request has invalid field types.');
+    }
+  }
+  if (!Number.isSafeInteger(record.brokerPort)) {
+    throw new TypeError('The setup request has an invalid broker port.');
+  }
+  return record as unknown as SetupPreflightRequest;
+}
+
 export function parseSetupPreflightResult(
   value: unknown,
 ): SetupPreflightResult {

@@ -2,6 +2,9 @@ export const STATE_AGENT_INSPECTION_ACTION_ID =
   'state-agent.inspect-health' as const;
 export const STATE_AGENT_INSPECTION_CAPABILITY_ID =
   'state-agent.inspect-health.v1' as const;
+export const INSTALLATION_ACTION_ID = 'installation.bootstrap' as const;
+export const INSTALLATION_WORKFLOW_CAPABILITY_ID =
+  'installation.workflow.v1' as const;
 
 export type OperationStatus =
   | 'accepted'
@@ -37,10 +40,22 @@ export interface StateAgentHealthResult {
 export interface OperationFailure {
   readonly code: string;
   readonly message: string;
+  readonly outcome?: 'failed' | 'indeterminate';
 }
 
-export interface OperationSnapshot {
+interface OperationSnapshotBase {
   readonly operationId: string;
+  readonly status: OperationStatus;
+  readonly stage: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly startedAt?: string;
+  readonly completedAt?: string;
+  readonly failure?: OperationFailure;
+}
+
+export interface StateAgentInspectionOperationSnapshot
+  extends OperationSnapshotBase {
   readonly actionId: typeof STATE_AGENT_INSPECTION_ACTION_ID;
   readonly capabilityId: typeof STATE_AGENT_INSPECTION_CAPABILITY_ID;
   readonly invocationId: string;
@@ -52,16 +67,98 @@ export interface OperationSnapshot {
     readonly kind: 'state-agent';
     readonly label: string;
   };
-  readonly status: OperationStatus;
-  readonly stage: string;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-  readonly startedAt?: string;
-  readonly completedAt?: string;
   readonly lastWorkerEventSequence: number;
   readonly result?: StateAgentHealthResult;
-  readonly failure?: OperationFailure;
 }
+
+export type InstallationStageStatus =
+  | 'pending'
+  | 'active'
+  | 'awaiting-user'
+  | 'completed'
+  | 'blocked'
+  | 'failed'
+  | 'indeterminate';
+
+export interface InstallationStageSnapshot {
+  readonly id: string;
+  readonly title: string;
+  readonly status: InstallationStageStatus;
+  readonly detail: string;
+  readonly updatedAt?: string;
+}
+
+export interface InstallationCheckpoint {
+  readonly checkpointId: string;
+  readonly kind:
+    | 'stop-final-broker'
+    | 'start-final-broker'
+    | 'backup-recovery-key'
+    | 'retry-safe-capability'
+    | 'apply-addon-options'
+    | 'verify-operational-readiness';
+  readonly title: string;
+  readonly instructions: string;
+  readonly consequence: string;
+  readonly createdAt: string;
+  readonly responseRecordedAt?: string;
+}
+
+export interface InstallationConfigurationSummary {
+  readonly feederIp: string;
+  readonly setupHostIp: string;
+  readonly homeAssistantIp: string;
+  readonly brokerHost: string;
+  readonly brokerPort: number;
+  readonly backendUsername: string;
+  readonly sshPublicKeyFingerprint: string;
+  readonly configurationFingerprint: string;
+}
+
+export interface InstallationInvocation {
+  readonly invocationId: string;
+  readonly capabilityId: string;
+  readonly status:
+    | 'accepted'
+    | 'running'
+    | 'succeeded'
+    | 'failed'
+    | 'interrupted';
+  readonly stage: string;
+  readonly lastWorkerEventSequence: number;
+  readonly workerInstanceId?: string;
+  readonly reconciledByWorkerInstanceId?: string;
+}
+
+export interface InstallationOperationSnapshot extends OperationSnapshotBase {
+  readonly actionId: typeof INSTALLATION_ACTION_ID;
+  readonly capabilityId: typeof INSTALLATION_WORKFLOW_CAPABILITY_ID;
+  readonly target: {
+    readonly kind: 'feeder-installation';
+    readonly label: string;
+  };
+  readonly configuration: InstallationConfigurationSummary;
+  readonly deviceIdentity?: {
+    readonly product: 'PLAF203';
+    readonly serial: string;
+    readonly source: 'factory-mqtt-connect';
+    readonly capturedAt: string;
+  };
+  readonly stages: readonly InstallationStageSnapshot[];
+  readonly checkpoint?: InstallationCheckpoint | undefined;
+  readonly currentInvocation?: InstallationInvocation | undefined;
+  readonly evidence: readonly {
+    readonly kind: string;
+    readonly summary: string;
+    readonly observedAt: string;
+    readonly source: string;
+  }[];
+  readonly satisfiedCheckpointIds: readonly string[];
+}
+
+export type OperationSnapshot =
+  | StateAgentInspectionOperationSnapshot
+  | InstallationOperationSnapshot;
 
 export interface OperationEvent {
   readonly sequence: number;
@@ -112,6 +209,9 @@ export function parseOperationSnapshot(value: unknown): OperationSnapshot {
   if (!isOperationStatus(status)) {
     throw new Error('The operation response has an unsupported status.');
   }
+  if (record.actionId === INSTALLATION_ACTION_ID) {
+    return parseInstallationOperation(record, target, status);
+  }
   if (
     record.actionId !== STATE_AGENT_INSPECTION_ACTION_ID ||
     record.capabilityId !== STATE_AGENT_INSPECTION_CAPABILITY_ID ||
@@ -160,6 +260,208 @@ export function parseOperationSnapshot(value: unknown): OperationSnapshot {
       ? {}
       : { failure: parseFailure(record.failure) }),
   };
+}
+
+function parseInstallationOperation(
+  record: Record<string, unknown>,
+  target: Record<string, unknown>,
+  status: OperationStatus,
+): InstallationOperationSnapshot {
+  if (
+    record.capabilityId !== INSTALLATION_WORKFLOW_CAPABILITY_ID ||
+    target.kind !== 'feeder-installation' ||
+    !Array.isArray(record.stages) ||
+    !Array.isArray(record.evidence) ||
+    !Array.isArray(record.satisfiedCheckpointIds)
+  ) {
+    throw new Error('The installation operation contract is malformed.');
+  }
+  const configuration = objectValue(
+    record.configuration,
+    'installation configuration',
+  );
+  const common = {
+    operationId: stringValue(record.operationId, 'operation ID'),
+    actionId: INSTALLATION_ACTION_ID,
+    capabilityId: INSTALLATION_WORKFLOW_CAPABILITY_ID,
+    target: {
+      kind: 'feeder-installation' as const,
+      label: stringValue(target.label, 'target label'),
+    },
+    status,
+    stage: stringValue(record.stage, 'operation stage'),
+    createdAt: stringValue(record.createdAt, 'operation creation time'),
+    updatedAt: stringValue(record.updatedAt, 'operation update time'),
+    configuration: {
+      feederIp: stringValue(configuration.feederIp, 'feeder IP'),
+      setupHostIp: stringValue(configuration.setupHostIp, 'setup host IP'),
+      homeAssistantIp: stringValue(
+        configuration.homeAssistantIp,
+        'Home Assistant IP',
+      ),
+      brokerHost: stringValue(configuration.brokerHost, 'broker host'),
+      brokerPort: nonNegativeInteger(configuration.brokerPort, 'broker port'),
+      backendUsername: stringValue(
+        configuration.backendUsername,
+        'broker username',
+      ),
+      sshPublicKeyFingerprint: stringValue(
+        configuration.sshPublicKeyFingerprint,
+        'SSH key fingerprint',
+      ),
+      configurationFingerprint: stringValue(
+        configuration.configurationFingerprint,
+        'configuration fingerprint',
+      ),
+    },
+    stages: record.stages.map(parseInstallationStage),
+    evidence: record.evidence.map(parseInstallationEvidence),
+    satisfiedCheckpointIds: record.satisfiedCheckpointIds.map((value) =>
+      stringValue(value, 'satisfied checkpoint ID'),
+    ),
+  };
+  const checkpoint =
+    record.checkpoint === undefined
+      ? undefined
+      : parseInstallationCheckpoint(record.checkpoint);
+  const currentInvocation =
+    record.currentInvocation === undefined
+      ? undefined
+      : parseInstallationInvocation(record.currentInvocation);
+  const deviceIdentity =
+    record.deviceIdentity === undefined
+      ? undefined
+      : parseInstallationDeviceIdentity(record.deviceIdentity);
+  const startedAt = optionalString(record.startedAt);
+  const completedAt = optionalString(record.completedAt);
+  return {
+    ...common,
+    ...(checkpoint === undefined ? {} : { checkpoint }),
+    ...(currentInvocation === undefined ? {} : { currentInvocation }),
+    ...(deviceIdentity === undefined ? {} : { deviceIdentity }),
+    ...(startedAt === undefined ? {} : { startedAt }),
+    ...(completedAt === undefined ? {} : { completedAt }),
+    ...(record.failure === undefined
+      ? {}
+      : { failure: parseFailure(record.failure) }),
+  };
+}
+
+function parseInstallationStage(value: unknown): InstallationStageSnapshot {
+  const record = objectValue(value, 'installation stage');
+  const status = stringValue(record.status, 'installation stage status');
+  if (
+    ![
+      'pending',
+      'active',
+      'awaiting-user',
+      'completed',
+      'blocked',
+      'failed',
+      'indeterminate',
+    ].includes(status)
+  ) {
+    throw new Error('The installation stage has an unsupported status.');
+  }
+  const updatedAt = optionalString(record.updatedAt);
+  return {
+    id: stringValue(record.id, 'installation stage ID'),
+    title: stringValue(record.title, 'installation stage title'),
+    status: status as InstallationStageStatus,
+    detail: stringValue(record.detail, 'installation stage detail'),
+    ...(updatedAt === undefined ? {} : { updatedAt }),
+  };
+}
+
+function parseInstallationCheckpoint(value: unknown): InstallationCheckpoint {
+  const record = objectValue(value, 'installation checkpoint');
+  const kind = stringValue(record.kind, 'checkpoint kind');
+  if (
+    ![
+      'stop-final-broker',
+      'start-final-broker',
+      'backup-recovery-key',
+      'retry-safe-capability',
+      'apply-addon-options',
+      'verify-operational-readiness',
+    ].includes(kind)
+  ) {
+    throw new Error('The installation checkpoint has an unsupported kind.');
+  }
+  const responseRecordedAt = optionalString(record.responseRecordedAt);
+  return {
+    checkpointId: stringValue(record.checkpointId, 'checkpoint ID'),
+    kind: kind as InstallationCheckpoint['kind'],
+    title: stringValue(record.title, 'checkpoint title'),
+    instructions: stringValue(record.instructions, 'checkpoint instructions'),
+    consequence: stringValue(record.consequence, 'checkpoint consequence'),
+    createdAt: stringValue(record.createdAt, 'checkpoint creation time'),
+    ...(responseRecordedAt === undefined ? {} : { responseRecordedAt }),
+  };
+}
+
+function parseInstallationDeviceIdentity(
+  value: unknown,
+): NonNullable<InstallationOperationSnapshot['deviceIdentity']> {
+  const record = objectValue(value, 'installation device identity');
+  if (
+    record.product !== 'PLAF203' ||
+    record.source !== 'factory-mqtt-connect'
+  ) {
+    throw new Error('The installation device identity is malformed.');
+  }
+  return {
+    product: 'PLAF203',
+    serial: stringValue(record.serial, 'captured feeder serial'),
+    source: 'factory-mqtt-connect',
+    capturedAt: stringValue(record.capturedAt, 'identity capture time'),
+  };
+}
+
+function parseInstallationInvocation(value: unknown): InstallationInvocation {
+  const record = objectValue(value, 'installation invocation');
+  const status = stringValue(record.status, 'invocation status');
+  if (
+    !['accepted', 'running', 'succeeded', 'failed', 'interrupted'].includes(
+      status,
+    )
+  ) {
+    throw new Error('The installation invocation has an unsupported status.');
+  }
+  const workerInstanceId = optionalString(record.workerInstanceId);
+  const reconciledByWorkerInstanceId = optionalString(
+    record.reconciledByWorkerInstanceId,
+  );
+  return {
+    invocationId: stringValue(record.invocationId, 'invocation ID'),
+    capabilityId: stringValue(record.capabilityId, 'capability ID'),
+    status: status as InstallationInvocation['status'],
+    stage: stringValue(record.stage, 'invocation stage'),
+    lastWorkerEventSequence: nonNegativeInteger(
+      record.lastWorkerEventSequence,
+      'last worker event sequence',
+    ),
+    ...(workerInstanceId === undefined ? {} : { workerInstanceId }),
+    ...(reconciledByWorkerInstanceId === undefined
+      ? {}
+      : { reconciledByWorkerInstanceId }),
+  };
+}
+
+function parseInstallationEvidence(value: unknown) {
+  const record = objectValue(value, 'installation evidence');
+  return {
+    kind: stringValue(record.kind, 'evidence kind'),
+    summary: stringValue(record.summary, 'evidence summary'),
+    observedAt: stringValue(record.observedAt, 'evidence time'),
+    source: stringValue(record.source, 'evidence source'),
+  };
+}
+
+export function operationTitle(operation: OperationSnapshot): string {
+  return operation.actionId === INSTALLATION_ACTION_ID
+    ? 'Feeder installation'
+    : 'State Agent health inspection';
 }
 
 export function parseOperationEvent(value: unknown): OperationEvent {
@@ -218,9 +520,20 @@ export function parseStateAgentHealthResult(
 
 function parseFailure(value: unknown): OperationFailure {
   const record = objectValue(value, 'operation failure');
+  const outcome = optionalString(record.outcome);
+  if (
+    outcome !== undefined &&
+    outcome !== 'failed' &&
+    outcome !== 'indeterminate'
+  ) {
+    throw new Error(
+      'The operation failure has an unsupported outcome classification.',
+    );
+  }
   return {
     code: stringValue(record.code, 'failure code'),
     message: stringValue(record.message, 'failure message'),
+    ...(outcome === undefined ? {} : { outcome }),
   };
 }
 

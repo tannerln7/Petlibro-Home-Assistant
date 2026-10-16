@@ -29,6 +29,28 @@ class RenderConfigTests(unittest.TestCase):
         self.assertIn("ingress: true\n", manifest)
         self.assertIn("ingress_port: 8099\n", manifest)
         self.assertIn("  management_direct_access: false\n", manifest)
+        self.assertIn("  management_bootstrap_device_changes: false\n", manifest)
+
+    def test_device_changing_bootstrap_gate_is_rendered_explicitly(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            data_dir = root / "data"
+            runtime_dir = root / "run"
+            data_dir.mkdir()
+            options = self.options()
+            options["management_bootstrap_device_changes"] = True
+            (data_dir / "options.json").write_text(json.dumps(options))
+            with patch.dict(
+                os.environ,
+                {"PETLIBRO_MANAGEMENT_RUNTIME_DIR": str(runtime_dir)},
+                clear=True,
+            ):
+                render_config.render_management_runtime(data_dir, TEMPLATES)
+            self.assertEqual(
+                "1",
+                (runtime_dir / "env" / "PETLIBRO_ENABLE_UNQUALIFIED_BOOTSTRAP")
+                .read_text(),
+            )
 
     def test_state_agent_manifest_default_matches_signed_release_feed(self):
         expected = (
@@ -160,6 +182,14 @@ class RenderConfigTests(unittest.TestCase):
             self.assertIn("allow 172.30.32.2/32;", nginx)
             self.assertIn(
                 "rewrite ^ /__PETLIBRO_BASE__$uri break;", nginx
+            )
+            self.assertIn(
+                "sub_filter '/__PETLIBRO_BASE__' $petlibro_response_base;",
+                nginx,
+            )
+            self.assertIn(
+                "sub_filter '__PETLIBRO_BASE__' $petlibro_response_base;",
+                nginx,
             )
             self.assertIn("location ^~ /api/", nginx)
             self.assertNotIn("listen 0.0.0.0:8098;", nginx)

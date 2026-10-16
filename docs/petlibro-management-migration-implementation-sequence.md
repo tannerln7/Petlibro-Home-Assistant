@@ -12,7 +12,7 @@
 
 Using the architecture coverage map, the recommended approach is a **coordinated, dependency-driven implementation** with several workstreams advancing together.
 
-We shouldn't build the whole frontend before the backend, finish the Python migration before developing the application, or start implementing TypeScript services without understanding what the existing capabilities actually require.
+We shouldn't build the whole frontend before the backend, finish capability porting before developing the application, or start implementing TypeScript services without understanding what the existing capabilities actually require.
 
 Instead, we establish the critical boundaries first, then progressively connect real implementations through them.
 
@@ -26,7 +26,11 @@ For implementation planning, however, group the work into four practical workstr
 
 ### Track 1 — Existing capability migration
 
-Extract and reorganize the existing Python installer into independently usable capabilities, preserving behavior, tests, safety constraints, and technical transaction ownership.
+Port proven installer responsibilities into independently usable native
+TypeScript capabilities while preserving behavior, tests, safety constraints,
+and technical transaction ownership. Keep the standalone Python installer
+working as an independent CLI and parity reference; management neither imports
+nor executes it.
 
 **Architecture regions:** C, E.
 
@@ -97,7 +101,7 @@ For example:
 - The operation manager provides their context, history and lifecycle.
 - The frontend renders them.
 
-Establish those requirements together, but the finished frontend is not required before writing the Python event publisher.
+Establish those requirements together, but the finished frontend is not required before writing the worker event publisher.
 
 Likewise, the device's protocol constraints define what the capability must enforce, but the application coordinator may need to know about those constraints before the capability has been extracted.
 
@@ -121,7 +125,7 @@ The existing repository contains real, tested behavior. The migration repository
 
 | Track | Work in this wave |
 |---|---|
-| Python migration | Inventory installer modules, dependency relationships, shared resources and transaction boundaries |
+| Capability migration | Inventory installer modules, dependency relationships, shared resources and transaction boundaries |
 | TypeScript foundation | Derive initial capability boundaries and identify cross-language information |
 | New frontend | Confirm page responsibilities and the kinds of operations and observations each page needs |
 | Existing integration | Inventory current AppDaemon, go2rtc, broker, configuration and add-on authority contracts |
@@ -280,7 +284,7 @@ Now connect them into the **complete installation lifecycle**.
 
 #### Capability side
 
-The Python bootstrap subsystem must support the actual technical transaction:
+The native bootstrap subsystem must support the actual technical transaction:
 
 - Temporary broker acquisition and session handling.
 - OEM identity capture and connection correlation.
@@ -393,7 +397,7 @@ This is the final convergence wave, although important validation runs continuou
 
 | Area | Validation |
 |---|---|
-| Add-on packaging | Python, Node, AppDaemon and go2rtc are packaged and independently supervised |
+| Add-on packaging | Management Node/worker, AppDaemon and go2rtc are packaged and independently supervised |
 | Fresh setup | Management UI starts before device and broker configuration is complete |
 | Existing installations | Previously configured users can access the dashboard without reinstalling |
 | Home Assistant compatibility | Existing MQTT entities, identities, commands and state behavior remain intact |
@@ -402,7 +406,7 @@ This is the final convergence wave, although important validation runs continuou
 | OTA safety | Correlation, evidence, fail-closed behavior and ambiguous results remain correct |
 | Configuration | Options and service transitions are applied and verified through the approved mechanism |
 | Secrets | Logs, event history, browser payloads, exports and backups preserve secret handling |
-| Source equivalence | Migrated Python behavior matches the reference implementation |
+| Source equivalence | Native capability behavior matches the standalone Python reference implementation |
 | Performance | Idle resource use, logs, telemetry and active operations remain within acceptable bounds |
 
 Distinguish **host-side deterministic tests** from **live feeder tests**. Live validation is necessary for final qualification but is not a substitute for repeatable protocol and transaction tests.
@@ -415,19 +419,21 @@ A new management add-on must not create a second active AppDaemon controller for
 
 ## 4. How the tracks advance together
 
-| Wave | Python migration | TypeScript backend | Frontend / new features | Existing integrations |
+| Wave | Capability migration | TypeScript backend | Frontend / new features | Existing integrations |
 |---|---|---|---|---|
 | **0 — Baseline** | Inventory dependencies and behaviors | Map authority boundaries | Define page/data needs | Inventory existing contracts |
 | **1 — Contracts** | Define capability units | Define shared semantics and lifecycle | Define input/output needs | Resolve platform feasibility |
-| **2 — Foundation** | Worker host + safe test operation | Execution, persistence, events, adapters | Application shell, operation UI | Process topology and browser hosting |
-| **3 — Modularization** | Extract supporting capabilities and bootstrap session boundaries | Implement capability wiring and device projections | Forms, logs, diagnostics, reusable views | AppDaemon, go2rtc, broker, State Agent |
+| **2 — Foundation** | Native worker host + safe test operation | Execution, persistence, events, adapters | Application shell, operation UI | Process topology and browser hosting |
+| **3 — Modularization** | Port supporting capabilities and bootstrap session boundaries | Implement capability wiring and device projections | Forms, logs, diagnostics, reusable views | AppDaemon, go2rtc, broker, State Agent |
 | **4 — Bootstrap** | Complete guarded transaction capabilities | Installation coordinator, broker handoff, recovery state | Complete installation experience | Configuration application and service transitions |
 | **5 — Management** | Add supporting inspection/recovery capabilities where needed | Finish actions, diagnostics and configuration services | Complete dashboard and management pages | Finalize supported observation and action integrations |
 | **6 — Qualification** | Regression and fault testing | Lifecycle, durability and security testing | Full UI/browser testing | Add-on packaging and compatibility |
 
 The major advantage is that work never becomes isolated from its consumers.
 
-When Python functionality is extracted, TypeScript already knows what it must accept. When dashboard components are built, their data contracts exist. When integrations are added, their authority boundaries are defined.
+When reference behavior is ported, the coordinator already knows what it must
+accept. When dashboard components are built, their data contracts exist. When
+integrations are added, their authority boundaries are defined.
 
 ## 5. Cross-track synchronization points
 
@@ -489,7 +495,8 @@ This keeps assignments bounded while preserving system-wide context.
 
 The existing repository remains the source of tested behavior. The migration repository becomes the environment for the new management architecture.
 
-Maintain explicit provenance for imported Python modules and tests.
+Maintain explicit provenance for ported behavior and parity tests. Do not
+import Python installer modules into the management runtime.
 
 Changes to the original implementation during development must be deliberately reconciled into the migration repository. If the migration finds a genuine defect in the original implementation, decide whether to fix it in both places rather than allowing an unexplained behavioral difference.
 
@@ -510,7 +517,7 @@ The coverage map identifies 13 areas requiring consideration. Tie each to the wa
 | Presentation and navigation | Waves 0–1 | Waves 2–5 |
 | Action and workflow coordination | Wave 1 | Waves 2–5 |
 | Device capability system | Waves 0–1 | Waves 2–4 |
-| Python execution worker | Wave 1 | Waves 2–4 |
+| Native capability worker | Wave 1 | Waves 2–4 |
 | Routine controller integration | Waves 0–1 | Waves 3–5 |
 | Camera/media integration | Waves 0–1 | Waves 3–5 |
 | Home Assistant integration | Wave 1 | Waves 2–6 |

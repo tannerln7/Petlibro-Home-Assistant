@@ -93,6 +93,9 @@ class FakeJournal implements OperationJournal {
   public listNonTerminal(): readonly OperationSnapshot[] {
     return [];
   }
+  public listUnresolved(): readonly OperationSnapshot[] {
+    return [];
+  }
   public eventsAfter(
     _operationId: string,
     _afterSequence: number,

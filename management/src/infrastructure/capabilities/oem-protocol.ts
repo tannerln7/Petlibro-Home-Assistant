@@ -29,7 +29,7 @@ export function buildSetMqttServerFrame(
   host: string,
   port: number,
   memberId: string,
-  sequence = 0,
+  sequence = 1,
 ): Uint8Array {
   if (host.length === 0 || host.includes(':')) {
     throw new TypeError("host must be non-empty and without ':'");

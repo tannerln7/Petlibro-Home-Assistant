@@ -18,6 +18,7 @@ import {
   type OperationEventHistoryClientFilter,
   operationEventHistoryUrl,
 } from '#/infrastructure/http/operation-event-history-client';
+import { LiveLogExplorer } from './live-log-explorer';
 
 export function LogsPage() {
   const [severity, setSeverity] = useState('');
@@ -47,6 +48,8 @@ export function LogsPage() {
           </a>
         </Button>
       </PageHeader>
+
+      <LiveLogExplorer />
 
       <Card className="log-viewer-shell">
         <CardContent>
@@ -144,12 +147,13 @@ export function LogsPage() {
       <div className="truth-callout">
         <BookOpenText aria-hidden="true" />
         <div>
-          <strong>Live raw logs are not connected yet</strong>
+          <strong>Live raw-log scope</strong>
           <p>
-            AppDaemon, go2rtc, management, and capability-worker output will be
-            transported only while a browser subscribes. No supported source
-            adapter is enabled in this build, so this page does not present
-            durable events as raw logs or imply live collection.
+            The initial adapter streams the add-on&apos;s existing combined
+            Supervisor output only while a browser subscribes. Source-specific
+            AppDaemon and go2rtc adapters remain deferred; this viewer labels
+            combined output honestly as addon-runtime rather than guessing its
+            producer. Capture history is browser-owned and bounded.
           </p>
         </div>
       </div>

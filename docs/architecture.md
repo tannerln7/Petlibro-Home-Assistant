@@ -83,24 +83,27 @@ The capability worker is built and supervised independently from the web
 process, persists invocation acceptance/evidence separately, and never exposes
 its Unix socket through the gateway. The standalone Python installer remains
 the supported independent installation path and behavioral reference; the
-management runtime does not import or execute it. Native OEM wire primitives
-are parity-tested, but the management UI exposes no OTA/bootstrap transaction
-until temporary-broker ownership, artifact custody, operator checkpoints, and
-post-install verification are ported as one coherent resource-owning session.
+management runtime does not import or execute it. Management implements a
+durable, qualification-gated bootstrap workflow with protected artifact and
+credential custody, temporary-MQTT ownership, fresh firmware and identity
+admission, final-broker proof, guarded OTA, operator checkpoints, and
+source-aware post-install verification. Device-changing execution is disabled
+by default; same-host broker handoff and physical feeder effects still require
+controlled live qualification.
 
 Management separates durable semantic evidence from ephemeral raw logs.
 Operation lifecycle, checkpoints, transaction correlation, verified results,
 and significant capability evidence remain in the SQLite journal and are not
-pruned by a raw-log display limit. The Events & Logs view exposes a bounded,
-redacted query of that durable evidence; diagnostic exports may include the
+pruned by a raw-log display limit. History and operation details expose bounded,
+redacted views of that durable evidence; diagnostic exports may include the
 same evidence plus source-aware runtime projections.
 
-Raw AppDaemon, go2rtc, management, worker, and future build output will use
-on-demand source adapters and browser-session retention. Raw output is not
-automatically copied into SQLite, and browser subscriptions neither change a
-producer's native logging configuration nor affect capability execution. No
-raw-log source adapter is enabled yet, so the UI states that limitation rather
-than presenting operation events as a live service-log stream.
+Raw operational output uses on-demand source adapters and browser-session
+retention. The currently connected adapter exposes the Supervisor combined
+add-on stream with backend normalization, bounded framing, and redaction;
+source-separated AppDaemon and go2rtc adapters remain deferred. Raw output is
+not automatically copied into SQLite, and browser subscriptions neither change
+a producer's native logging configuration nor affect capability execution.
 
 ## State ownership
 

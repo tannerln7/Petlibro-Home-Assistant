@@ -45,7 +45,7 @@ export class DiagnosticReportService {
       limitations: [
         'This report contains bounded observations, not a live packet capture or media trace.',
         'Home Assistant and Supervisor current health are unavailable without a supported least-privilege API integration.',
-        'Raw operational-service logs are ephemeral and unavailable until a supported on-demand source adapter is connected.',
+        'Raw add-on logs are ephemeral, available only through an active on-demand browser subscription, and intentionally excluded from this durable report.',
         'Historical MQTT and controller observations are not proof of current device state.',
       ],
     };

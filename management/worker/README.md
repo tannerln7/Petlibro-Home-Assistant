@@ -5,11 +5,14 @@ allowlisted technical capabilities. It is not a browser API or application
 workflow coordinator. The standalone Python installer remains an independent,
 supported reference implementation and is never imported or executed here.
 
-The initial active capability, `state-agent.inspect-health.v1`, performs one
-authenticated, read-only State Agent `/health` request. Native byte-exact OEM
-provisioning/MQTT/OTA protocol primitives also have parity tests, but no
-device-changing bootstrap action is exposed until the complete temporary
-broker/OTA resource-owning session has been ported and qualified.
+The worker exposes the authenticated read-only
+`state-agent.inspect-health.v1` capability and the allowlisted native bootstrap
+capabilities used by the durable installation coordinator: artifact
+preparation, factory identity capture, final-broker proof, guarded OTA, and
+integration verification. Bootstrap owns its temporary listeners and protocol
+sessions, uses protected custody references rather than browser-supplied
+secrets, and remains disabled unless the add-on's explicit device-changing
+qualification gate is enabled.
 
 ## Private transport
 
@@ -31,13 +34,15 @@ Redirects are rejected and responses are bounded to 64 KiB.
 
 ## Lifecycle and durability
 
-Invocation acceptance, snapshots, terminal evidence, and a bounded event
-replay are stored in `/data/management/capability-worker.sqlite`. Reusing an
+Invocation acceptance, snapshots, terminal evidence, and complete
+sequence-contiguous semantic events are stored in
+`/data/management/capability-worker.sqlite`. Reusing an
 invocation ID with the same request is idempotent; changing its request is a
 conflict. If the worker restarts with an accepted/running invocation, it
 durably records an interrupted failure and does not replay the request. The
 TypeScript application coordinator reconciles that result into its separate
-operation journal.
+operation journal. High-volume raw process logs are not stored in this event
+record; they use a separately bounded, ephemeral browser subscription path.
 
 `workerInstanceId` identifies the process that originally accepted and owned
 the invocation. Restart reconciliation preserves that value and records the
@@ -47,8 +52,10 @@ provenance without treating reconciliation as ownership transfer.
 
 This worker process owns technical execution only. The application coordinator
 owns user-facing operations, checkpoints, scheduling, and browser delivery.
-Future device-changing capabilities must add capability-specific durable
-transaction evidence and safe interruption rules before they are allowlisted.
+Guarded OTA records publication intent before attempting its MQTT write and
+preserves any post-attempt uncertainty as indeterminate; restart reconciliation
+never blindly repeats it. Safely recoverable local/read-only stages require an
+explicit coordinator checkpoint before a new invocation is authorized.
 
 Build and run from `management/`:
 

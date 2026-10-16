@@ -7,13 +7,22 @@ import {
   inspectStateAgentHealth,
   StateAgentInspectionError,
 } from '#/infrastructure/capabilities/state-agent-inspector';
+import {
+  BOOTSTRAP_CAPABILITY_IDS,
+  type BootstrapCapabilityId,
+} from '#/domain/capabilities';
+import {
+  bootstrapFailure,
+  NativeBootstrapCapabilities,
+} from '#/infrastructure/capabilities/native-bootstrap-capabilities';
 
-const CAPABILITY_ID = 'state-agent.inspect-health.v1';
+const STATE_AGENT_CAPABILITY_ID = 'state-agent.inspect-health.v1';
 const PROTOCOL_VERSION = 1;
 const WORKER_VERSION = '0.2.0-native';
 const MAX_REQUEST_BYTES = 64 * 1024;
-const MAX_EVENTS = 128;
 const INVOCATION_PATH = /^\/v1\/invocations\/([0-9a-f-]{36})$/;
+const CONFIGURATION_HANDOFF_PATH =
+  /^\/v1\/installations\/([0-9a-f-]{36})\/configuration-handoff$/;
 
 type Status = 'accepted' | 'running' | 'succeeded' | 'failed' | 'interrupted';
 type Severity = 'info' | 'warning' | 'error';
@@ -34,17 +43,21 @@ interface InvocationSnapshot {
   readonly reconciledByWorkerInstanceId?: string;
   readonly invocationId: string;
   readonly operationId: string;
-  readonly capabilityId: typeof CAPABILITY_ID;
+  readonly capabilityId: string;
   readonly status: Status;
   readonly stage: string;
   readonly acceptedAt: string;
   readonly updatedAt: string;
   readonly events: readonly WorkerEvent[];
   readonly result?: unknown;
-  readonly error?: { readonly code: string; readonly message: string };
+  readonly error?: {
+    readonly code: string;
+    readonly message: string;
+    readonly outcome?: 'failed' | 'indeterminate';
+  };
 }
 
-interface CapabilityInput {
+interface StateAgentCapabilityInput {
   readonly baseUrl: string;
   readonly token: string;
   readonly timeoutSeconds: number;
@@ -54,8 +67,8 @@ interface InvocationRequest {
   readonly protocolVersion: 1;
   readonly invocationId: string;
   readonly operationId: string;
-  readonly capabilityId: typeof CAPABILITY_ID;
-  readonly input: CapabilityInput;
+  readonly capabilityId: string;
+  readonly input: Readonly<Record<string, unknown>>;
 }
 
 interface Row {
@@ -73,6 +86,7 @@ export class DurableInvocationManager {
     databasePath: string,
     private readonly inspector: Inspector = inspectStateAgentHealth,
     private readonly clock: () => Date = () => new Date(),
+    private readonly bootstrap?: NativeBootstrapCapabilities,
   ) {
     if (databasePath !== ':memory:') {
       mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 });
@@ -94,12 +108,23 @@ export class DurableInvocationManager {
   public capabilities() {
     return [
       {
-        id: CAPABILITY_ID,
+        id: STATE_AGENT_CAPABILITY_ID,
         contractVersion: 1,
         mode: 'read-only',
         cancellation: 'not-supported-after-start',
         replayAfterRestart: 'never-automatic',
       },
+      ...BOOTSTRAP_CAPABILITY_IDS.map((id) => ({
+        id,
+        contractVersion: 1,
+        mode:
+          id === 'bootstrap.prepare-artifacts.v1' ||
+          id === 'bootstrap.verify-final-broker.v1'
+            ? 'read-only-or-local'
+            : 'device-changing',
+        cancellation: 'capability-defined-safe-points',
+        replayAfterRestart: 'never-automatic',
+      })),
     ];
   }
 
@@ -125,7 +150,7 @@ export class DurableInvocationManager {
       workerInstanceId: this.instanceId,
       invocationId,
       operationId: request.operationId,
-      capabilityId: CAPABILITY_ID,
+      capabilityId: request.capabilityId,
       status: 'accepted',
       stage: 'queued',
       acceptedAt: timestamp,
@@ -136,7 +161,7 @@ export class DurableInvocationManager {
           type: 'capability.accepted',
           occurredAt: timestamp,
           severity: 'info',
-          payload: { capabilityId: CAPABILITY_ID, stage: 'queued' },
+          payload: { capabilityId: request.capabilityId, stage: 'queued' },
         },
       ],
     };
@@ -166,35 +191,70 @@ export class DurableInvocationManager {
     return parseStored(row);
   }
 
+  public configurationHandoff(installationId: string) {
+    if (this.bootstrap === undefined) {
+      throw new Error('Bootstrap capabilities are unavailable in this worker.');
+    }
+    return this.bootstrap.configurationHandoff(installationId);
+  }
+
   public close(): void {
     this.database.close();
   }
 
   private async execute(
     accepted: InvocationSnapshot,
-    input: CapabilityInput,
+    input: Readonly<Record<string, unknown>>,
   ): Promise<void> {
+    const initialStage =
+      accepted.capabilityId === STATE_AGENT_CAPABILITY_ID
+        ? 'requesting-state-agent-health'
+        : 'executing-capability';
     let current = this.transition(
       accepted,
       'running',
-      'requesting-state-agent-health',
+      initialStage,
       'capability.started',
       'info',
-      { stage: 'requesting-state-agent-health' },
+      { stage: initialStage, capabilityId: accepted.capabilityId },
     );
     try {
-      const result = await this.inspector(
-        input.baseUrl,
-        input.token,
-        input.timeoutSeconds,
-      );
+      const result =
+        accepted.capabilityId === STATE_AGENT_CAPABILITY_ID
+          ? await this.executeStateAgent(input)
+          : await this.executeBootstrap(
+              accepted.capabilityId as BootstrapCapabilityId,
+              input,
+              (type, severity, payload) => {
+                current = this.transition(
+                  current,
+                  'running',
+                  'executing-capability',
+                  type,
+                  severity,
+                  payload,
+                );
+              },
+            );
       current = this.transition(
         current,
         'running',
-        'health-observed',
+        'evidence-recorded',
         'capability.evidence',
-        result.healthy ? 'info' : 'warning',
-        { kind: 'state-agent-health', observation: result },
+        accepted.capabilityId === STATE_AGENT_CAPABILITY_ID &&
+          typeof result === 'object' &&
+          result !== null &&
+          'healthy' in result &&
+          result.healthy === false
+          ? 'warning'
+          : 'info',
+        {
+          kind:
+            accepted.capabilityId === STATE_AGENT_CAPABILITY_ID
+              ? 'state-agent-health'
+              : 'capability-result',
+          observation: result,
+        },
         { result },
       );
       this.transition(
@@ -206,17 +266,48 @@ export class DurableInvocationManager {
         { stage: 'completed' },
       );
     } catch (error) {
-      const failure = safeFailure(error);
+      const failure =
+        accepted.capabilityId === STATE_AGENT_CAPABILITY_ID
+          ? safeFailure(error)
+          : bootstrapFailure(error);
+      const indeterminate =
+        'outcome' in failure && failure.outcome === 'indeterminate';
       this.transition(
         current,
         'failed',
-        'failed',
-        'capability.failed',
-        'error',
+        indeterminate ? 'indeterminate' : 'failed',
+        indeterminate ? 'capability.indeterminate' : 'capability.failed',
+        indeterminate ? 'warning' : 'error',
         failure,
         { error: failure },
       );
     }
+  }
+
+  private async executeStateAgent(
+    input: Readonly<Record<string, unknown>>,
+  ) {
+    const parsed = stateAgentInput(input);
+    return this.inspector(
+      parsed.baseUrl,
+      parsed.token,
+      parsed.timeoutSeconds,
+    );
+  }
+
+  private async executeBootstrap(
+    capabilityId: BootstrapCapabilityId,
+    input: Readonly<Record<string, unknown>>,
+    report: (
+      type: string,
+      severity: Severity,
+      payload: Readonly<Record<string, unknown>>,
+    ) => void,
+  ) {
+    if (this.bootstrap === undefined) {
+      throw new Error('Bootstrap capabilities are unavailable in this worker.');
+    }
+    return this.bootstrap.execute(capabilityId, input, { report });
   }
 
   private transition(
@@ -236,7 +327,7 @@ export class DurableInvocationManager {
     const events = [
       ...snapshot.events,
       { sequence: nextSequence, type, occurredAt: timestamp, severity, payload },
-    ].slice(-MAX_EVENTS);
+    ];
     const updated: InvocationSnapshot = {
       ...snapshot,
       status,
@@ -330,30 +421,19 @@ function validateRequest(
   if (
     request.protocolVersion !== 1 ||
     request.invocationId !== invocationId ||
-    request.capabilityId !== CAPABILITY_ID
+    !isSupportedCapabilityId(request.capabilityId)
   ) {
     throw new TypeError('unsupported or mismatched capability request');
   }
   canonicalUuid(request.operationId, 'operation ID');
   const input = object(request.input, 'capability input');
-  exactKeys(input, ['baseUrl', 'token', 'timeoutSeconds']);
-  if (
-    typeof input.baseUrl !== 'string' ||
-    typeof input.token !== 'string' ||
-    typeof input.timeoutSeconds !== 'number'
-  ) {
-    throw new TypeError('capability input fields have invalid types');
-  }
+  if (request.capabilityId === STATE_AGENT_CAPABILITY_ID) stateAgentInput(input);
   return {
     protocolVersion: 1,
     invocationId,
     operationId: request.operationId as string,
-    capabilityId: CAPABILITY_ID,
-    input: {
-      baseUrl: input.baseUrl,
-      token: input.token,
-      timeoutSeconds: input.timeoutSeconds,
-    },
+    capabilityId: request.capabilityId,
+    input,
   };
 }
 
@@ -419,6 +499,33 @@ function safeFailure(error: unknown) {
   };
 }
 
+function stateAgentInput(
+  input: Readonly<Record<string, unknown>>,
+): StateAgentCapabilityInput {
+  exactKeys(input, ['baseUrl', 'token', 'timeoutSeconds']);
+  if (
+    typeof input.baseUrl !== 'string' ||
+    typeof input.token !== 'string' ||
+    typeof input.timeoutSeconds !== 'number'
+  ) {
+    throw new TypeError('capability input fields have invalid types');
+  }
+  return {
+    baseUrl: input.baseUrl,
+    token: input.token,
+    timeoutSeconds: input.timeoutSeconds,
+  };
+}
+
+function isSupportedCapabilityId(
+  value: unknown,
+): value is string {
+  return (
+    value === STATE_AGENT_CAPABILITY_ID ||
+    BOOTSTRAP_CAPABILITY_IDS.some((capabilityId) => capabilityId === value)
+  );
+}
+
 async function readJson(request: IncomingMessage): Promise<unknown> {
   if (request.headers['content-type']?.split(';', 1)[0] !== 'application/json') {
     throw new TypeError('content type must be application/json');
@@ -481,6 +588,21 @@ export function createWorkerServer(manager: DurableInvocationManager) {
       });
       return;
     }
+    const handoffMatch = CONFIGURATION_HANDOFF_PATH.exec(path);
+    if (request.method === 'GET' && handoffMatch !== null) {
+      try {
+        json(response, 200, manager.configurationHandoff(handoffMatch[1] as string));
+      } catch (error) {
+        json(response, 409, {
+          error: 'configuration_handoff_unavailable',
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Protected configuration is unavailable.',
+        });
+      }
+      return;
+    }
     const match = INVOCATION_PATH.exec(path);
     if (match === null || (request.method !== 'GET' && request.method !== 'PUT')) {
       json(response, 404, { error: 'not_found' });
@@ -524,6 +646,12 @@ async function main(): Promise<void> {
   rmSync(socketPath, { force: true });
   const manager = new DurableInvocationManager(
     resolve(dataDirectory, 'capability-worker.sqlite'),
+    inspectStateAgentHealth,
+    () => new Date(),
+    new NativeBootstrapCapabilities(
+      dataDirectory,
+      process.env.PETLIBRO_ENABLE_UNQUALIFIED_BOOTSTRAP === '1',
+    ),
   );
   const server = createWorkerServer(manager);
   const shutdown = () => {

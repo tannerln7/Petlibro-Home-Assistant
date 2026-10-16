@@ -72,6 +72,30 @@ describe('SqliteOperationJournal', () => {
     );
     journal.close();
   });
+
+  it('finds unresolved operations without a bounded history window', () => {
+    const journal = new SqliteOperationJournal(':memory:');
+    const unresolved = snapshot();
+    journal.create(unresolved, []);
+    for (let index = 0; index < 125; index += 1) {
+      const operation = {
+        ...snapshot(),
+        operationId: `completed-${index.toString().padStart(3, '0')}`,
+        status: 'succeeded' as const,
+        createdAt: new Date(
+          Date.parse(unresolved.createdAt) + index + 1,
+        ).toISOString(),
+        updatedAt: new Date(
+          Date.parse(unresolved.updatedAt) + index + 1,
+        ).toISOString(),
+      };
+      journal.create(operation, []);
+    }
+
+    expect(journal.list(100)).not.toContainEqual(unresolved);
+    expect(journal.listUnresolved()).toEqual([unresolved]);
+    journal.close();
+  });
 });
 
 function snapshot(): OperationSnapshot {

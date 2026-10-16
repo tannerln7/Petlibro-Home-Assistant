@@ -36,3 +36,12 @@ addon/tests
 addon/appdaemon/tests
 state-agent/*
 !state-agent/release-public-key.hex
+!state-agent/Makefile
+!state-agent/VERSION
+!state-agent/*.c
+!state-agent/*.h
+!state-agent/app_start_snippet.sh
+!state-agent/vendor/
+!state-agent/vendor/**
+!state-agent/runit/
+!state-agent/runit/**

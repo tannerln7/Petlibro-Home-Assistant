@@ -6,7 +6,6 @@ import type {
   OperationJournal,
 } from '#/application/operation-journal';
 import {
-  isTerminalOperationStatus,
   type OperationEvent,
   type OperationEventDraft,
   type OperationSnapshot,
@@ -146,9 +145,11 @@ export class SqliteOperationJournal implements OperationJournal {
   }
 
   public listNonTerminal(): readonly OperationSnapshot[] {
-    return this.list(1_000).filter(
-      (snapshot) => !isTerminalOperationStatus(snapshot.status),
-    );
+    return this.selectByStatuses(false);
+  }
+
+  public listUnresolved(): readonly OperationSnapshot[] {
+    return this.selectByStatuses(true);
   }
 
   public eventsAfter(
@@ -166,6 +167,22 @@ export class SqliteOperationJournal implements OperationJournal {
       )
       .all(operationId, afterSequence, limit) as unknown as EventRow[];
     return rows.map(eventFromRow);
+  }
+
+  private selectByStatuses(
+    includeIndeterminate: boolean,
+  ): readonly OperationSnapshot[] {
+    const rows = this.database
+      .prepare(
+        `SELECT snapshot_json FROM operations
+         WHERE status NOT IN ('succeeded', 'failed', 'cancelled', 'interrupted', 'indeterminate')
+            OR (? = 1 AND status = 'indeterminate')
+         ORDER BY created_at ASC`,
+      )
+      .all(includeIndeterminate ? 1 : 0) as unknown as SnapshotRow[];
+    return rows.map((row) =>
+      parseOperationSnapshot(JSON.parse(row.snapshot_json)),
+    );
   }
 
   public queryEvents(query: OperationEventQuery): readonly OperationEvent[] {

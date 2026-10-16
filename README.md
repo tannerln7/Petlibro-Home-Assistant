@@ -31,7 +31,7 @@ with Petlibro.
 | [`state-agent/`](state-agent/) | Authenticated feeder-resident service that decodes persistent state and stages signed State Agent updates |
 | [`installer/`](installer/) | Guided no-UART bootstrap that migrates an already claimed stock feeder to the local architecture |
 | [`docker/`](docker/) | Docker Compose deployment for Linux hosts outside Home Assistant OS |
-| [`management/`](management/) | Packaged React/TypeScript management application, durable operation journal, and private Python capability worker |
+| [`management/`](management/) | Packaged React/TypeScript management application, durable operation journal, and private native-TypeScript capability worker |
 
 The add-on is the long-running coordinator. The State Agent does not replace the
 OEM firmware: it runs beside it and exposes only narrowly defined local files.
@@ -132,6 +132,25 @@ A successful installation leaves the feeder running OEM firmware with:
 
 See the [complete installation guide](docs/installation.md) and the
 [installer reference](installer/README.md) before modifying a feeder.
+
+## Management qualification channel
+
+Management prereleases are published independently from the stable and
+development channels. Add this repository URL to a Home Assistant test system
+to follow the feature branch:
+
+```text
+https://github.com/tannerln7/Petlibro-Home-Assistant#feature/management-app-foundation
+```
+
+Existing stable or development installations do not need to be removed. Keep
+only one Petlibro add-on running against the feeder and MQTT broker at a time.
+Use Home Assistant Ingress for the default management entry point; optional
+direct access is intended only for a trusted LAN or an authenticated reverse
+proxy. Device-changing management bootstrap remains disabled by default and a
+management prerelease is not evidence of physical-feeder qualification. See
+the [add-on management access notes](addon/DOCS.md#management-access) and
+[release-channel rules](docs/release-process.md#management-qualification-releases).
 
 ## Runtime endpoints
 

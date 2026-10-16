@@ -1,6 +1,7 @@
 import { Link } from '@tanstack/react-router';
 import { ArrowRight, Clock3 } from 'lucide-react';
 import type { OperationSnapshot } from '#/domain/operations';
+import { operationTitle } from '#/domain/operations';
 import { formatDateTime, humanize, StatusBadge } from './presentation';
 
 export function OperationList({
@@ -51,7 +52,7 @@ function OperationListContent({
         <Clock3 />
       </span>
       <span className="operation-list-copy">
-        <strong>State Agent health inspection</strong>
+        <strong>{operationTitle(operation)}</strong>
         <small>
           {humanize(operation.stage)} · {formatDateTime(operation.updatedAt)}
         </small>
