@@ -77,21 +77,28 @@ write_index() {
 select_safe_donor() {
     cat > "$ROOT/app_start.sh.new" << SAFE_START
 #!/bin/sh
+# Boot the known-good OEM donor and retain any already-installed maintenance.
 $SAFE_FW &
+if [ -f /user/data/enable_state_agent ] && [ -f /user/data/local-state-agent/app_start_snippet.sh ]; then
+    /bin/sh /user/data/local-state-agent/app_start_snippet.sh
+fi
+if [ -f /user/data/enable_ssh ] && [ -x /user/data/dropbear/dropbear ] && [ -x /user/data/dropbear/dropbearkey ] && [ -s /user/data/dropbear/authorized_keys ]; then
+    mkdir -p /dev/pts /root/.ssh
+    grep -q ' /dev/pts ' /proc/mounts 2>/dev/null || mount -t devpts devpts /dev/pts 2>/dev/null || true
+    chmod 700 /root /root/.ssh
+    cp /user/data/dropbear/authorized_keys /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys
+    if [ ! -s /user/data/dropbear/dropbear_ed25519_host_key ]; then
+        /user/data/dropbear/dropbearkey -t ed25519 -f /user/data/dropbear/dropbear_ed25519_host_key
+        chmod 600 /user/data/dropbear/dropbear_ed25519_host_key
+    fi
+    /user/data/dropbear/dropbear -r /user/data/dropbear/dropbear_ed25519_host_key -p 2222 -s -P /tmp/dropbear.pid
+fi
 SAFE_START
     chmod 755 "$ROOT/app_start.sh.new"
     mv "$ROOT/app_start.sh.new" "$ROOT/app_start.sh"
     mkdir -p "$DATA/ota"
     write_index "$SAFE_INDEX"
-    sync
-}
-
-select_production_ota1() {
-    cp "$STAGE/app_start.sh" "$ROOT/app_start.sh.new"
-    chmod 755 "$ROOT/app_start.sh.new"
-    mv "$ROOT/app_start.sh.new" "$ROOT/app_start.sh"
-    mkdir -p "$DATA/ota"
-    write_index 0
     sync
 }
 
@@ -151,19 +158,10 @@ for required in \
     fi
 done
 
-available_kb="$(df -Pk "$DATA" 2>/dev/null | awk 'END {print $4}')"
-donor_bytes="$(wc -c < "$DONOR" | tr -d ' ')"
-case "$available_kb:$donor_bytes" in
-    *[!0-9:]*|:*|*:)
-        FAIL_REASON=flash_space_check_failed
-        exit 75
-        ;;
-esac
-required_kb=$(( (donor_bytes + 1023) / 1024 + 512 ))
-if [ "$available_kb" -lt "$required_kb" ]; then
-    FAIL_REASON="insufficient_flash_${available_kb}k_available_${required_kb}k_required"
-    exit 76
-fi
+# JFFS2 is compressed and log-structured: the donor's uncompressed byte
+# count cannot predict free flash after the OTA swap or during restoration.
+# The independent restore shell below unlinks the temporary payload first;
+# the actual write and byte-for-byte verification remain failure-checked.
 
 # Preserve a fresh copy of feeder-local settings and schedules before changing
 # startup or sidecar services. mkdir atomically claims an attempt number; an
@@ -254,34 +252,69 @@ touch "$DATA/enable_ssh"
 
 PHASE=restoring_payload_slot
 printf '%s\n' "restoring_$EXECUTION_SLOT" > "$JOURNAL"
-if ! cp "$DONOR" "$TARGET.restore"; then
+
+# Move execution away from the OTA script before unlinking it. The donor boot
+# target and maintenance-capable fallback were selected and synced above.
+# This avoids allocating a third full firmware file (TARGET.restore).
+export ROOT DATA STATE_HOME INDEX JOURNAL STAGE DONOR TARGET
+exec /bin/sh -c '
+set -eu
+PHASE=restoring_payload_slot
+FAIL_REASON=
+restore_failure() {
+    result=$?
+    trap - EXIT HUP INT TERM
+    set +e
+    printf "%s\n" "${FAIL_REASON:-install_failed_${PHASE}_${result}}" > "$JOURNAL"
+    sync
+    if [ -n "${PLAF203_BOOTSTRAP_TEST_ROOT:-}" ]; then
+        exit "${result:-1}"
+    fi
+    reboot
+    sleep 30
+    exit "${result:-1}"
+}
+trap restore_failure EXIT HUP INT TERM
+
+# Free the temporary OTA script before allocating its firmware replacement.
+# If this fails partway through, the selected donor stays intact and bootable.
+if ! rm -f "$TARGET"; then
+    FAIL_REASON=payload_slot_remove_failed
+    exit 76
+fi
+sync
+if ! cp "$DONOR" "$TARGET"; then
     FAIL_REASON=payload_slot_restore_copy_failed
+    rm -f "$TARGET"
     exit 77
 fi
-if ! cmp "$DONOR" "$TARGET.restore"; then
+if ! cmp "$DONOR" "$TARGET"; then
     FAIL_REASON=payload_slot_restore_verify_failed
+    rm -f "$TARGET"
     exit 78
 fi
-chmod 755 "$TARGET.restore"
-mv "$TARGET.restore" "$TARGET"
+chmod 755 "$TARGET"
 sync
 
-# Both slots now contain OEM firmware. OTA1 is safe regardless of which slot
-# held the payload, so make it the fallback before installing final startup.
-SAFE_FW="$OTA1"
-SAFE_INDEX=0
+# Switch to OTA1 only after the restored executable has been verified.
 PHASE=selecting_production_ota1
-select_production_ota1
+cp "$STAGE/app_start.sh" "$ROOT/app_start.sh.new"
+chmod 755 "$ROOT/app_start.sh.new"
+mv "$ROOT/app_start.sh.new" "$ROOT/app_start.sh"
+mkdir -p "$DATA/ota"
+printf "\000\000\000\000" > "$INDEX.new"
+mv "$INDEX.new" "$INDEX"
+sync
 
 rm -rf "$STATE_HOME.pre-bootstrap" "$DATA/dropbear.pre-bootstrap"
 rm -rf "$STAGE"
-printf '%s\n' installed_rebooting_to_ota1 > "$JOURNAL"
+printf "%s\n" installed_rebooting_to_ota1 > "$JOURNAL"
 sync
 trap - EXIT HUP INT TERM
-
 if [ -n "${PLAF203_BOOTSTRAP_TEST_ROOT:-}" ]; then
     exit 0
 fi
 reboot
 exit 0
+'
 __PLAF203_BOOTSTRAP_ARCHIVE_BELOW__
