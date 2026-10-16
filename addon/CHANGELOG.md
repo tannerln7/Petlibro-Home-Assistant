@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.13-mgmt.5
+
+- Keep the final-broker MQTT verification session alive while waiting for the
+  feeder's next heartbeat, and report an early broker disconnect instead of
+  waiting for a misleading heartbeat timeout.
+- Allow the final integration check enough time for the observed PLAF203
+  reconnect and approximately 72-second heartbeat cadence without weakening
+  freshness or connection-generation requirements.
+- Add native-TypeScript bootstrap-payload execution coverage against a
+  controlled feeder filesystem, including donor-slot preservation, State Agent
+  configuration, recovery-service enablement, and application-start handoff.
+- Preserve the device-changing qualification gate. This candidate addresses a
+  live final-broker verification defect; feeder-side State Agent and recovery
+  service startup still require controlled physical qualification.
+
 ## 0.3.13-mgmt.4
 
 - Replace the management Python capability worker with an independently

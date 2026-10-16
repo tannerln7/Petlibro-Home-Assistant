@@ -223,6 +223,59 @@ describe('bootstrap MQTT application responses', () => {
       await new Promise<void>((resolve) => broker.close(() => resolve()));
     }
   });
+
+  it('keeps the final heartbeat observer alive while the feeder reconnects', async () => {
+    const topic = 'dl/PLAF203/SERIAL123/device/heart/post';
+    const heartbeat = buildPublish(
+      topic,
+      new TextEncoder().encode(JSON.stringify({ cmd: 'HEARTBEAT' })),
+    );
+    let connections = 0;
+    let heartbeatSessionPinged = false;
+    const broker = createServer((socket) => {
+      connections += 1;
+      const connection = connections;
+      let connected = false;
+      socket.on('data', (packet: Buffer) => {
+        const type = (packet[0] as number) >> 4;
+        if (!connected && type === 1) {
+          connected = true;
+          socket.write(Uint8Array.from([0x20, 0x02, 0x00, 0x00]));
+        } else if (type === 8) {
+          socket.write(Uint8Array.from([0x90, 0x03, 0x00, 0x01, 0x00]));
+        } else if (connection === 2 && type === 12) {
+          heartbeatSessionPinged = true;
+          socket.write(
+            Buffer.concat([Buffer.from([0xd0, 0x00]), Buffer.from(heartbeat)]),
+          );
+        }
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      broker.once('error', reject);
+      broker.listen(0, '127.0.0.1', resolve);
+    });
+    const address = broker.address();
+    if (address === null || typeof address === 'string') {
+      throw new Error('fixture broker did not bind');
+    }
+    try {
+      await waitForMqttHeartbeat({
+        host: '127.0.0.1',
+        port: address.port,
+        username: 'backend',
+        password: 'secret',
+        feederClientId: 'SERIAL123',
+        timeoutMs: 2_000,
+        keepAliveSeconds: 1,
+        onSubscribed: async () => undefined,
+      });
+      expect(connections).toBe(2);
+      expect(heartbeatSessionPinged).toBe(true);
+    } finally {
+      await new Promise<void>((resolve) => broker.close(() => resolve()));
+    }
+  });
 });
 
 async function connectFeeder(port: number): Promise<Socket> {

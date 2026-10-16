@@ -261,6 +261,8 @@ export async function waitForMqttHeartbeat(input: {
   readonly feederClientId: string;
   readonly timeoutMs: number;
   readonly onSubscribed: () => Promise<void>;
+  /** MQTT keepalive interval; defaults to ten seconds. */
+  readonly keepAliveSeconds?: number;
 }): Promise<void> {
   if (!input.feederClientId || /[/+#\0]/.test(input.feederClientId)) {
     throw new TypeError(
@@ -268,13 +270,33 @@ export async function waitForMqttHeartbeat(input: {
     );
   }
   const topic = `dl/PLAF203/${input.feederClientId}/device/heart/post`;
+  const keepAliveSeconds = input.keepAliveSeconds ?? 10;
+  if (
+    !Number.isSafeInteger(keepAliveSeconds) ||
+    keepAliveSeconds < 1 ||
+    keepAliveSeconds > 65_535
+  ) {
+    throw new TypeError('MQTT keepalive must be between 1 and 65535 seconds');
+  }
   const deadline = Date.now() + input.timeoutMs;
-  await runHeartbeatObserverPhase(input, topic, 'subscription', deadline);
+  await runHeartbeatObserverPhase(
+    input,
+    topic,
+    'subscription',
+    deadline,
+    keepAliveSeconds,
+  );
   await input.onSubscribed();
   // Establish a new clean MQTT session after the redirect callback completes.
   // This prevents heartbeat bytes queued with the first SUBACK (or while the
   // callback was running) from being treated as post-redirect evidence.
-  await runHeartbeatObserverPhase(input, topic, 'heartbeat', deadline);
+  await runHeartbeatObserverPhase(
+    input,
+    topic,
+    'heartbeat',
+    deadline,
+    keepAliveSeconds,
+  );
 }
 
 async function runHeartbeatObserverPhase(
@@ -287,6 +309,7 @@ async function runHeartbeatObserverPhase(
   topic: string,
   target: 'subscription' | 'heartbeat',
   deadline: number,
+  keepAliveSeconds: number,
 ): Promise<void> {
   const remaining = deadline - Date.now();
   if (remaining <= 0) {
@@ -299,12 +322,14 @@ async function runHeartbeatObserverPhase(
     clientId: `petlibro-management-${randomBytes(8).toString('hex')}`,
     username: input.username,
     password: input.password,
+    keepAliveSeconds,
   });
   await new Promise<void>((resolve, reject) => {
     const socket = createConnection({ host: input.host, port: input.port });
     let buffer = Buffer.alloc(0);
     let stage: 'connack' | 'suback' | 'heartbeat' = 'connack';
     let settled = false;
+    let keepAlive: ReturnType<typeof setInterval> | undefined;
     const timeout = setTimeout(
       () =>
         finish(
@@ -319,6 +344,7 @@ async function runHeartbeatObserverPhase(
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      if (keepAlive !== undefined) clearInterval(keepAlive);
       socket.destroy();
       error === undefined ? resolve() : reject(error);
     };
@@ -331,6 +357,16 @@ async function runHeartbeatObserverPhase(
         ),
       ),
     );
+    socket.once('close', () => {
+      if (!settled) {
+        finish(
+          new BootstrapNetworkError(
+            'heartbeat_broker_disconnected',
+            'The final broker disconnected the heartbeat observer before fresh evidence arrived.',
+          ),
+        );
+      }
+    });
     socket.on('data', (chunk: Buffer) => {
       buffer = Buffer.concat([buffer, chunk]);
       try {
@@ -355,8 +391,23 @@ async function runHeartbeatObserverPhase(
               );
               return;
             }
+            keepAlive = setInterval(
+              () => {
+                if (!settled && !socket.destroyed) {
+                  socket.write(Uint8Array.from([0xc0, 0x00]));
+                }
+              },
+              Math.max(1, Math.floor((keepAliveSeconds * 1_000) / 2)),
+            );
             socket.write(buildSubscribePacket(topic));
             stage = 'suback';
+          } else if (
+            packet.length === 2 &&
+            packet[0] === 0xd0 &&
+            packet[1] === 0
+          ) {
+            // PINGRESP only proves that this observer session remains live.
+            // It is not feeder readiness evidence.
           } else if (stage === 'suback') {
             if (!Buffer.from(packet).equals(Buffer.from([0x90, 3, 0, 1, 0]))) {
               finish(
@@ -1092,15 +1143,17 @@ function buildConnectPacket(input: {
   readonly username: string;
   readonly password: string | Uint8Array;
   readonly protocolLevel?: 3 | 4;
+  readonly keepAliveSeconds?: number;
 }): Uint8Array {
   const level = input.protocolLevel ?? 4;
   const protocol = level === 3 ? 'MQIsdp' : 'MQTT';
+  const keepAliveSeconds = input.keepAliveSeconds ?? 10;
   const variable = Uint8Array.from([
     ...encodeMqttString(protocol),
     level,
     0xc2,
-    0,
-    10,
+    (keepAliveSeconds >> 8) & 0xff,
+    keepAliveSeconds & 0xff,
   ]);
   const payload = Uint8Array.from([
     ...encodeMqttString(input.clientId),

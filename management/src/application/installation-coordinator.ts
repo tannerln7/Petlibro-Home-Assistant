@@ -69,6 +69,11 @@ const INSTALLATION_STAGES: readonly Omit<
   },
 ];
 
+// Firmware 3.1.48 heartbeats are normally about 72 seconds apart. Endpoint
+// redirection also requires a Wi-Fi/MQTT reconnect, so one 90-second window can
+// expire when verification starts just after a heartbeat.
+const FINAL_INTEGRATION_TIMEOUT_SECONDS = 180;
+
 export interface InstallationCapabilityProvider {
   submitInvocation(
     request: GenericCapabilityRequest,
@@ -1020,7 +1025,7 @@ export class InstallationCoordinator {
       brokerPort: input.brokerPort,
       backendUsername: input.backendUsername,
       backendPassword: input.backendPassword,
-      timeoutSeconds: 90,
+      timeoutSeconds: FINAL_INTEGRATION_TIMEOUT_SECONDS,
     };
   }
 

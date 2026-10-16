@@ -4,7 +4,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { BootstrapCapabilityId } from '#/domain/capabilities';
+import type {
+  BootstrapCapabilityId,
+  GenericCapabilityRequest,
+} from '#/domain/capabilities';
 import {
   INSTALLATION_ACTION_ID,
   type InstallationOperationSnapshot,
@@ -141,6 +144,9 @@ describe('durable installation coordination', () => {
     expect(integrationEvidence?.summary).toContain(
       'Controller readiness is checked separately',
     );
+    expect(
+      fixture.worker.lastInputFor('bootstrap.verify-integration.v1'),
+    ).toMatchObject({ timeoutSeconds: 180 });
     expect(JSON.stringify(operation)).not.toContain('broker-secret');
     expect(
       JSON.stringify(fixture.journal.queryEvents({ limit: 100 })),
@@ -702,7 +708,7 @@ function createFixture(
 
 class ImmediateWorker implements InstallationCapabilityProvider {
   private readonly snapshots = new Map<string, WorkerInvocationSnapshot>();
-  private readonly submitted: BootstrapCapabilityId[] = [];
+  private readonly submitted: GenericCapabilityRequest[] = [];
   private readonly failedCapabilities: Set<BootstrapCapabilityId>;
   private readonly interruptedCapabilities: Set<BootstrapCapabilityId>;
 
@@ -714,12 +720,10 @@ class ImmediateWorker implements InstallationCapabilityProvider {
     this.interruptedCapabilities = new Set(interruptions);
   }
 
-  public async submitInvocation(request: {
-    invocationId: string;
-    operationId: string;
-    capabilityId: BootstrapCapabilityId;
-  }): Promise<WorkerInvocationSnapshot> {
-    this.submitted.push(request.capabilityId);
+  public async submitInvocation(
+    request: GenericCapabilityRequest,
+  ): Promise<WorkerInvocationSnapshot> {
+    this.submitted.push(request);
     const now = new Date().toISOString();
     const interrupted = this.interruptedCapabilities.has(request.capabilityId);
     const failed = this.failedCapabilities.has(request.capabilityId);
@@ -793,7 +797,18 @@ class ImmediateWorker implements InstallationCapabilityProvider {
   }
 
   public submissionsFor(capabilityId: BootstrapCapabilityId): number {
-    return this.submitted.filter((item) => item === capabilityId).length;
+    return this.submitted.filter((item) => item.capabilityId === capabilityId)
+      .length;
+  }
+
+  public lastInputFor(
+    capabilityId: BootstrapCapabilityId,
+  ): Readonly<Record<string, unknown>> | undefined {
+    for (let index = this.submitted.length - 1; index >= 0; index -= 1) {
+      const request = this.submitted[index];
+      if (request?.capabilityId === capabilityId) return request.input;
+    }
+    return undefined;
   }
 
   public succeedCapability(capabilityId: BootstrapCapabilityId): void {
