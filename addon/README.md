@@ -69,7 +69,8 @@ Source areas:
 
 - [`appdaemon/src`](appdaemon/src): controller implementation;
 - [`appdaemon/tests`](appdaemon/tests): controller and protocol tests;
-- [`go2rtc`](go2rtc): maintained camera transport fork;
+- [`go2rtc-source.lock`](go2rtc-source.lock): immutable standalone camera fork
+  revision, source release, and checksum;
 - [`rootfs`](rootfs): s6 service definitions;
 - [`templates`](templates): generated runtime configuration;
 - [`render_config.py`](render_config.py): option-to-runtime renderer;
@@ -88,8 +89,9 @@ python3 -m pytest addon/tests addon/appdaemon/tests -q
 ```
 
 See the [development guide](../docs/development.md) for prerequisites and local
-container workflows. Camera-specific work is documented in the
-[camera development guide](../docs/camera-development.md).
+container workflows. Camera-specific work is maintained in the standalone
+[`tannerln7/go2rtc`](https://github.com/tannerln7/go2rtc) fork and summarized in
+the [camera development guide](../docs/camera-development.md).
 
 ## Constraints
 
@@ -106,4 +108,5 @@ container workflows. Camera-specific work is documented in the
 
 The add-on package metadata is under the repository's MIT license. The
 AppDaemon controller retains its [Unlicense](appdaemon/LICENSE), and the
-embedded go2rtc fork retains its [MIT license](go2rtc/LICENSE).
+standalone go2rtc fork retains its
+[MIT license](https://github.com/tannerln7/go2rtc/blob/v1.9.14-petlibro.1/LICENSE).

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.14-beta.1
+
+- Honor the feeder's negotiated MQTT keepalive in the temporary bootstrap
+  broker while retaining a separate bounded CONNECT handshake timeout.
+- Move the maintained Petlibro go2rtc fork to its own directly-upstreamed
+  repository, CI, and release lifecycle. Add-on builds now consume an immutable
+  source release pinned by full commit and SHA-256 checksum.
+
 ## 0.3.12-beta.8
 
 - Backport the physical-device-tested PLAF203 bootstrap flash-space fix.

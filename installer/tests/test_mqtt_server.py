@@ -7,6 +7,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from installer import mqtt_server
 from installer.mqtt_server import (
     BootstrapMqttServer,
     probe_mqtt_credentials,
@@ -33,12 +34,114 @@ class FakeSession:
         self.published.append((topic, payload, packet_id, qos))
 
 
+class FakeSocket:
+    def __init__(self, incoming: bytes = b"", *, timeout_when_empty: bool = False) -> None:
+        self.incoming = bytearray(incoming)
+        self.timeout_when_empty = timeout_when_empty
+        self.sent = bytearray()
+        self.timeouts: list[float | None] = []
+
+    def settimeout(self, timeout: float | None) -> None:
+        self.timeouts.append(timeout)
+
+    def recv(self, size: int) -> bytes:
+        if not self.incoming:
+            if self.timeout_when_empty:
+                raise socket.timeout("synthetic inactivity timeout")
+            return b""
+        result = bytes(self.incoming[:size])
+        del self.incoming[:size]
+        return result
+
+    def sendall(self, packet: bytes) -> None:
+        self.sent.extend(packet)
+
+
+def build_connect(*, keep_alive: int) -> bytes:
+    flags = 0xC2
+    variable = (
+        b"\x00\x04MQTT\x04"
+        + bytes((flags,))
+        + keep_alive.to_bytes(2, "big")
+    )
+    payload = encode_utf8("SERIAL") + encode_utf8("user") + encode_utf8(b"password")
+    return b"\x10" + encode_remaining_length(len(variable + payload)) + variable + payload
+
+
 class BootstrapMqttServerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.server = BootstrapMqttServer(("127.0.0.1", 0), expected_feeder_ip=None)
 
     def tearDown(self) -> None:
         self.server.server_close()
+
+    def handle_fake_connection(self, connection: FakeSocket) -> None:
+        mqtt_server._Handler(  # type: ignore[arg-type]
+            connection,
+            ("127.0.0.1", 1883),
+            self.server,
+        )
+
+    def test_connect_handshake_keeps_an_independent_timeout(self) -> None:
+        connection = FakeSocket(timeout_when_empty=True)
+
+        self.handle_fake_connection(connection)
+
+        self.assertEqual([mqtt_server.CONNECT_TIMEOUT_SECONDS], connection.timeouts)
+        self.assertEqual("synthetic inactivity timeout", self.server.last_session_error)
+        self.assertFalse(self.server.identity_ready.is_set())
+
+    def test_long_negotiated_keepalive_replaces_fixed_timeout(self) -> None:
+        connection = FakeSocket(build_connect(keep_alive=90) + b"\xe0\x00")
+
+        self.handle_fake_connection(connection)
+
+        self.assertEqual(
+            [mqtt_server.CONNECT_TIMEOUT_SECONDS, 136.0],
+            connection.timeouts,
+        )
+        self.assertEqual(b"\x20\x02\x00\x00", connection.sent)
+        self.assertIsNone(self.server.last_session_error)
+
+    def test_short_keepalive_gets_one_and_a_half_intervals_plus_tolerance(self) -> None:
+        connection = FakeSocket(build_connect(keep_alive=10), timeout_when_empty=True)
+
+        self.handle_fake_connection(connection)
+
+        self.assertEqual(
+            [mqtt_server.CONNECT_TIMEOUT_SECONDS, 16.0],
+            connection.timeouts,
+        )
+        session_timeout = connection.timeouts[1]
+        assert session_timeout is not None
+        self.assertGreater(session_timeout, 10 * 1.5)
+        self.assertEqual("synthetic inactivity timeout", self.server.last_session_error)
+
+    def test_zero_keepalive_disables_session_inactivity_timeout(self) -> None:
+        connection = FakeSocket(build_connect(keep_alive=0) + b"\xc0\x00\xe0\x00")
+
+        self.handle_fake_connection(connection)
+
+        self.assertEqual(
+            [mqtt_server.CONNECT_TIMEOUT_SECONDS, None],
+            connection.timeouts,
+        )
+        self.assertEqual(b"\x20\x02\x00\x00\xd0\x00", connection.sent)
+        self.assertIsNone(self.server.last_session_error)
+
+    def test_normal_disconnect_allows_same_feeder_to_reconnect(self) -> None:
+        first = FakeSocket(build_connect(keep_alive=60) + b"\xe0\x00")
+        second = FakeSocket(build_connect(keep_alive=60) + b"\xe0\x00")
+
+        self.handle_fake_connection(first)
+        self.handle_fake_connection(second)
+
+        self.assertEqual(2, self.server.connection_attempts)
+        self.assertEqual(2, self.server._connection_count)
+        self.assertIsNone(self.server.session)
+        self.assertIsNone(self.server.last_session_error)
+        self.assertEqual(b"\x20\x02\x00\x00", first.sent)
+        self.assertEqual(b"\x20\x02\x00\x00", second.sent)
 
     def test_accepts_stock_legacy_mqtt_31_connect(self) -> None:
         thread = threading.Thread(target=self.server.serve_forever, daemon=True)

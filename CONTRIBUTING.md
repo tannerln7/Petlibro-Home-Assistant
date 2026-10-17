@@ -18,7 +18,10 @@ local feeder configuration, compiled binaries, or secrets.
 
 - Home Assistant package/runtime integration: `addon/`
 - PLAF203 controller and MQTT behavior: `addon/appdaemon/`
-- Camera transport and go2rtc integration: `addon/go2rtc/`
+- Add-on consumption of the pinned go2rtc source: `addon/go2rtc-source.lock`,
+  `addon/Dockerfile`, and `scripts/fetch-go2rtc.sh`
+- Camera transport and go2rtc internals: the standalone
+  [`tannerln7/go2rtc`](https://github.com/tannerln7/go2rtc) fork
 - Feeder state decoder/API and signed updater: `state-agent/`
 - Stock-feeder installation/bootstrap: `installer/`
 - Local maintenance/build tools: `scripts/` or `docker/`

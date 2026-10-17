@@ -272,6 +272,13 @@ The example schema is
 - [`protocol.py`](protocol.py): OEM MQTT commands and correlation; and
 - [`payload.py`](payload.py): deterministic production transaction payload.
 
+The temporary broker gives a TCP client 30 seconds to complete its MQTT
+`CONNECT`. After accepting `CONNECT`, it replaces that handshake bound with the
+feeder's negotiated keepalive plus the MQTT 1.5-times grace period and a small
+scheduling tolerance. A keepalive of zero disables session inactivity
+handling; installer download, OTA, reboot, and verification deadlines remain
+separately bounded by the bootstrap orchestration.
+
 ## Development and tests
 
 ```bash

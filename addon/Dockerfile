@@ -3,10 +3,19 @@ FROM golang:${GO_VERSION}-alpine3.23 AS go2rtc-builder
 
 ARG GO_BUILD_PROCS=""
 
+COPY addon/go2rtc-source.lock /tmp/go2rtc-source.lock
+RUN set -eu; \
+    . /tmp/go2rtc-source.lock; \
+    wget -q -O /tmp/go2rtc-source.tar.gz "${GO2RTC_SOURCE_URL}"; \
+    printf '%s  %s\n' "${GO2RTC_SOURCE_SHA256}" /tmp/go2rtc-source.tar.gz \
+        | sha256sum -c -; \
+    mkdir -p /src/go2rtc; \
+    tar -xzf /tmp/go2rtc-source.tar.gz --strip-components=1 -C /src/go2rtc; \
+    test -f /src/go2rtc/go.mod; \
+    test -f /src/go2rtc/cmd/petlibro-resolve/main.go; \
+    rm -f /tmp/go2rtc-source.tar.gz
 WORKDIR /src/go2rtc
-COPY addon/go2rtc/go.mod addon/go2rtc/go.sum ./
 RUN go mod download
-COPY addon/go2rtc/ ./
 RUN set -eu; \
     set --; \
     if [ -n "${GO_BUILD_PROCS}" ]; then \
