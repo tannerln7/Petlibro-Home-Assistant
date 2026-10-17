@@ -8,6 +8,17 @@
   repository, CI, and release lifecycle. Add-on builds now consume an immutable
   source release pinned by full commit and SHA-256 checksum.
 
+## 0.3.13
+
+- Fix the PLAF203 OTA bootstrap rejecting valid installations because a raw,
+  uncompressed firmware size was compared against compressed JFFS2 free space.
+- Restore the OEM firmware directly into the temporary OTA payload slot after
+  handing off to a separate shell, avoiding an extra firmware-sized allocation.
+- Keep the untouched OEM donor selected throughout restoration and preserve
+  existing State Agent and SSH startup on failed bootstrap or recovery.
+- Add regression tests for both OTA slots, copy failures, and maintenance-safe
+  fallback behavior. Validated on a physical feeder through the management UI.
+
 ## 0.3.12-beta.8
 
 - Backport the physical-device-tested PLAF203 bootstrap flash-space fix.
