@@ -43,6 +43,10 @@ except ImportError:  # pragma: no cover - direct script execution support
 
 
 MAX_PACKET_BYTES = 256 * 1024
+CONNECT_TIMEOUT_SECONDS = 30.0
+KEEPALIVE_GRACE_MULTIPLIER = 1.5
+# Keep the protocol grace boundary from becoming a race with the socket timer.
+KEEPALIVE_SCHEDULING_TOLERANCE_SECONDS = 1.0
 EVENT_COMMANDS_WITH_SIMPLE_SUCCESS_RESPONSE = {
     "ATTR_PUSH_EVENT",
     "DEVICE_START_EVENT",
@@ -138,7 +142,9 @@ class _Handler(socketserver.BaseRequestHandler):
         if server.expected_feeder_ip and peer_ip != server.expected_feeder_ip:
             server.report(f"Rejected MQTT connection from unexpected host {peer_ip}")
             return
-        self.request.settimeout(30)
+        # Bound clients that connect but never complete an MQTT CONNECT. This
+        # is deliberately separate from the negotiated session keepalive.
+        self.request.settimeout(CONNECT_TIMEOUT_SECONDS)
         session = BootstrapSession(self.request, peer_ip, server)
         try:
             first = recv_packet(self.request)
@@ -154,6 +160,16 @@ class _Handler(socketserver.BaseRequestHandler):
                 connection.protocol_level,
             )
             session.connection_generation = server._set_identity(identity)
+            if connection.keep_alive == 0:
+                # MQTT disables protocol-level inactivity handling when the
+                # negotiated keepalive is zero. Installer operation deadlines
+                # remain independently bounded by bootstrap.py.
+                self.request.settimeout(None)
+            else:
+                self.request.settimeout(
+                    connection.keep_alive * KEEPALIVE_GRACE_MULTIPLIER
+                    + KEEPALIVE_SCHEDULING_TOLERANCE_SECONDS
+                )
             session.send(build_connack())
             protocol_name = "3.1" if connection.protocol_level == 3 else "3.1.1"
             server.report(

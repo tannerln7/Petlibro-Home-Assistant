@@ -1,8 +1,10 @@
 # Development guide
 
 This repository is the canonical source for the Home Assistant add-on,
-feeder-resident State Agent, and unified installer. Historical standalone
-repositories and reverse-engineering workspaces are not source dependencies.
+feeder-resident State Agent, and unified installer. Camera source is maintained
+in the standalone Petlibro go2rtc fork and consumed through one immutable,
+checksum-verified source lock. Reverse-engineering workspaces are not source
+dependencies.
 
 ## Repository map
 
@@ -10,7 +12,7 @@ repositories and reverse-engineering workspaces are not source dependencies.
 | --- | --- |
 | `addon/` | Home Assistant package, services, renderer, and packaging tests |
 | `addon/appdaemon/` | Python feeder controller and protocol tests |
-| `addon/go2rtc/` | Go camera transport fork and tests |
+| `addon/go2rtc-source.lock` | Pinned standalone go2rtc revision and source checksum |
 | `state-agent/` | C state decoder/API, update helper, runit files, tests |
 | `installer/` | Guided no-UART bootstrap, payload builder, transaction tests |
 | `docs/` | Maintained user, architecture, protocol, and development docs |
@@ -25,7 +27,8 @@ convenience.
 ## Prerequisites
 
 - Python 3.12 or newer;
-- Go 1.24 or the version required by `addon/go2rtc/go.mod`;
+- Go 1.24 or newer for standalone camera checks;
+- `curl` and `sha256sum` for pinned go2rtc source acquisition;
 - a C99 host compiler;
 - `arm-linux-gnueabihf-gcc`, `git`, GNU Make, `file`, and `readelf` for release
   and installer validation;
@@ -70,18 +73,20 @@ python3 -m pytest state-agent/tests -q
 python3 -m pytest installer/tests -q
 make -C state-agent clean all
 make -C state-agent clean arm-release
-(cd addon/go2rtc && go test ./pkg/petlibro ./cmd/petlibro-resolve)
-(cd addon/go2rtc && go test ./internal/streams -run '^Test(TimestampContinuity|StreamCorrelationIDs)')
-(cd addon/go2rtc && go test ./pkg/rtsp -run '^Test(PacketWriter|PacketWriters|WriteInterleavedData)')
-(cd addon/go2rtc && go vet ./internal/streams ./pkg/petlibro ./pkg/rtsp ./cmd/petlibro-resolve)
+go2rtc_source=$(scripts/fetch-go2rtc.sh)
+(cd "$go2rtc_source" && go test ./pkg/petlibro ./cmd/petlibro-resolve)
+(cd "$go2rtc_source" && go test ./internal/streams -run '^Test(TimestampContinuity|StreamCorrelationIDs)')
+(cd "$go2rtc_source" && go test ./pkg/rtsp -run '^Test(PacketWriter|PacketWriters|WriteInterleavedData)')
+(cd "$go2rtc_source" && go vet ./internal/streams ./pkg/petlibro ./pkg/rtsp ./cmd/petlibro-resolve)
 docker compose --env-file docker/.env.example -f docker/docker-compose.yml config --quiet
 ```
 
-The embedded go2rtc tree retains upstream packages needed to build the binary,
-but this fork's maintained Go checks target the Petlibro transport and resolver,
-the modified stream graph, and RTSP packet delivery. The complete imported
-upstream test graph has optional platform and FFmpeg assumptions that are
-outside this repository's supported validation matrix.
+`scripts/fetch-go2rtc.sh` downloads the versioned source release named in
+`addon/go2rtc-source.lock`, verifies its SHA-256 checksum, and reuses an ignored
+revision-keyed cache under `build/go2rtc-source`. The maintained Go checks
+target the Petlibro transport and resolver, the modified stream graph, and RTSP
+packet delivery. The standalone repository owns its source, tests, CI, and
+release lifecycle.
 
 Build the add-on image with:
 
@@ -126,10 +131,11 @@ AppDaemon debug output or add credential-bearing payloads to tests/logs.
 
 ## Camera development
 
-Petlibro camera code lives under `addon/go2rtc/pkg/petlibro` and is wired into
-the local go2rtc source. Preserve login, media header, sequence/window ACK, and
-fragment assembly invariants. Add focused Go tests before changing parser or
-transport behavior.
+Petlibro camera code lives in the standalone
+[`tannerln7/go2rtc`](https://github.com/tannerln7/go2rtc) repository. Make
+camera implementation and test changes there, publish a new immutable fork
+release, then update `addon/go2rtc-source.lock` in a separate reviewed add-on
+change. Publishing a fork release never publishes an add-on image by itself.
 
 Use the [camera development guide](camera-development.md) for build/test
 commands and the [camera debugging guide](camera-debugging.md) for bounded live

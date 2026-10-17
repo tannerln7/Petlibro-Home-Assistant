@@ -27,10 +27,12 @@ python3 addon/tests/live/run.py --suite smoke
 
 For `mise` environments, prefix commands with `mise exec --`. `npx playwright` working from another directory is not sufficient: `browser.cjs` needs this directory's `node_modules/playwright` package. **Never run `playwright install-deps` or change system permissions automatically**. If OS dependencies are missing, report the blocker and address it explicitly.
 
-To enable two-hop RTSP and WHEP scenarios, compile a standalone version of this repository's go2rtc from the exact checked-out revision, then set `TEST_GO2RTC_BINARY` in `.env`:
+To enable two-hop RTSP and WHEP scenarios, compile the exact locked standalone
+go2rtc revision, then set `TEST_GO2RTC_BINARY` in `.env`:
 
 ```sh
-(cd addon/go2rtc && go build -o /tmp/petlibro-qualification-go2rtc .)
+go2rtc_source=$(scripts/fetch-go2rtc.sh)
+(cd "$go2rtc_source" && go build -o /tmp/petlibro-qualification-go2rtc .)
 ```
 
 Example release run:
@@ -68,4 +70,6 @@ After media tests, the runner compares the active go2rtc graph with its initial 
 - Network interruptions and deliberate feeder interference are not run by default. Do not import device-side `block-camera-once.sh` into this suite.
 - There is no privileged operation, Docker restart, or automatic permission repair. Test executables only bind temporary local ports and terminate their own process groups.
 
-Use `docs/camera-development.md` and `docs/camera-debugging.md` for transport interpretation. Keep regression unit tests (including ACK/assembler/receiver races) as separate deterministic gates.
+Use `docs/camera-development.md` and `docs/camera-debugging.md` for source and
+transport references. Keep regression unit tests (including
+ACK/assembler/receiver races) as separate deterministic gates.

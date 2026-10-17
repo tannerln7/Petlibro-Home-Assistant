@@ -91,8 +91,9 @@ else
     skipped+=("ARM release validation")
 fi
 
+go2rtc_source="$("${repo_root}/scripts/fetch-go2rtc.sh")"
 (
-    cd addon/go2rtc
+    cd "${go2rtc_source}"
     go test ./pkg/petlibro ./cmd/petlibro-resolve -count=1
     go test ./internal/streams \
         -run '^Test(TimestampContinuity|StreamCorrelationIDs)' -count=1

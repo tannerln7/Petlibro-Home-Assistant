@@ -27,7 +27,7 @@ with Petlibro.
 
 | Component | Responsibility |
 | --- | --- |
-| [`addon/`](addon/) | Home Assistant add-on image, configuration renderer, AppDaemon MQTT controller, and patched go2rtc camera backend |
+| [`addon/`](addon/) | Home Assistant add-on image, configuration renderer, AppDaemon MQTT controller, and pinned Petlibro go2rtc build |
 | [`state-agent/`](state-agent/) | Authenticated feeder-resident service that decodes persistent state and stages signed State Agent updates |
 | [`installer/`](installer/) | Guided no-UART bootstrap that migrates an already claimed stock feeder to the local architecture |
 | [`docker/`](docker/) | Docker Compose deployment for Linux hosts outside Home Assistant OS |
@@ -188,5 +188,7 @@ a separate trust boundary and should run only on a trusted LAN.
 ## License
 
 Repository packaging and documentation use the [MIT License](LICENSE). Bundled
-go2rtc and the original AppDaemon controller retain the license files in their
-component directories.
+go2rtc source retains its
+[MIT License](https://github.com/tannerln7/go2rtc/blob/v1.9.14-petlibro.1/LICENSE),
+and the original AppDaemon controller retains its
+[Unlicense](addon/appdaemon/LICENSE).

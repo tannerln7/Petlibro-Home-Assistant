@@ -89,3 +89,18 @@ the `state-agent-releases` branch and signed-manifest process. They do not share
 the add-on version or branch lifecycle. Follow the
 [State Agent release instructions](../state-agent/README.md#signed-updates).
 An add-on-only change must not create a State Agent release.
+
+## Standalone go2rtc releases
+
+The Petlibro camera fork has an independent release lifecycle in
+[`tannerln7/go2rtc`](https://github.com/tannerln7/go2rtc). Fork tags use the
+`v<upstream>-petlibro.<revision>` form and publish source and Linux amd64 binary
+artifacts with SHA-256 checksums. A fork release does not publish an add-on
+image.
+
+The add-on consumes only the full commit, versioned source release URL, and
+checksum recorded in `addon/go2rtc-source.lock`. Updating that lock is an
+ordinary add-on change: verify a clean source download, run repository
+validation, build the image, and advance the add-on version only through the
+normal stable/development channel process. Never point the lock at a branch,
+`latest`, or an unverified archive.

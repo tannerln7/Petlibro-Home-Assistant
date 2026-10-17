@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.14
+
+- Honor the feeder's negotiated MQTT keepalive in the temporary bootstrap
+  broker while retaining a separate bounded CONNECT handshake timeout.
+- Move the maintained Petlibro go2rtc fork to its own directly-upstreamed
+  repository, CI, and release lifecycle. Add-on builds now consume an immutable
+  source release pinned by full commit and SHA-256 checksum.
+
 ## 0.3.13
 
 - Fix the PLAF203 OTA bootstrap rejecting valid installations because a raw,
@@ -11,42 +19,114 @@
 - Add regression tests for both OTA slots, copy failures, and maintenance-safe
   fallback behavior. Validated on a physical feeder through the management UI.
 
-## 0.3.12
+## 0.3.12-beta.8
 
-- Refactor the PLAF203 camera path into explicit Petlibro/TUTK transport,
-  physical-camera adapter, and go2rtc producer responsibilities, with normalized
-  startup, teardown, retries, shared-session handling, and decoder-safe initial
-  video delivery.
-- Harden AV transport recovery for retained SD sequence origins, extended AAC
-  packets, and the firmware's alternate retransmission channels. Valid recovery
-  packets now close ACK gaps and advance across already-received media without
-  accepting malformed packets or blindly advancing the receive watermark.
-- Add optional inbound feeder-microphone audio, disabled by default, with native
-  AAC delivery and demand-driven AAC-to-Opus transcoding for WebRTC while
-  preserving direct H.264 and clean shared-consumer teardown.
-- Preserve decoder and RTP timestamp continuity across media loss and physical
-  producer replacement, serialize receiver transfer, and correct RTSP write
-  failures, cleanup, short-write detection, and concurrent accounting.
-- Improve session-correlated camera diagnostics, runtime metadata generation,
-  protocol tracing, Home Assistant discovery after restarts, and MQTT birth
-  handling without exposing raw protocol payloads in normal logs.
-- Harden installer firmware checks, bootstrap recovery snapshots, initial State
-  Agent update checks, immutable release validation, and mandatory strict CI;
-  add automated live-media coverage for RTSP, WebRTC, audio, concurrent
-  consumers, and abrupt disconnects.
-- Promote the candidate after initial physical PLAF203 feeder testing, with
-  capture-backed parser and ACK fixtures plus deterministic and race regression
-  coverage. Speaker backchannel remains unimplemented, and Frigate/QSV has not
-  been validated end to end.
+- Backport the physical-device-tested PLAF203 bootstrap flash-space fix.
+  Compressed JFFS2 space is no longer rejected based on raw OEM binary size.
+- Restore the OEM firmware in place after a separate shell takes over from the
+  temporary OTA payload, avoiding an additional full-sized firmware allocation.
+- Retain the known-good OEM donor as fallback and preserve already-installed
+  State Agent and SSH service startup when bootstrap recovery is needed.
+- Add OTA1/OTA2 restoration and failure-path regression tests.
 
-## 0.3.11
+## 0.3.12-beta.7
+
+- Restore PLAF203 ACK recovery by recognizing the firmware's retransmission
+  channels for audio, keyframe, and inter-frame media while retaining full
+  packet validation before receive-ACK accounting.
+- Add capture-backed regression coverage for ACK gap closure, cumulative
+  advancement, duplicate and late retransmissions, extended media layouts, and
+  malformed-packet rejection. Physical-hardware validation remains pending.
+
+## 0.3.12-beta.6
+
+- Improve camera runtime-status reporting with session-generation tracking to prevent stale observations from being attributed to newer camera sessions.
+- Improve Home Assistant device discovery consistency, including handling of Home Assistant restarts and MQTT birth notifications.
+- Harden the installer with stricter firmware compatibility checks, preserved recovery snapshots, and safer bootstrap validation.
+- Strengthen release integrity with immutable image tags, fail-closed artifact verification, and mandatory strict CI validation.
+- Add automated live-media testing infrastructure covering WebRTC, RTSP, audio, concurrent consumers, and abrupt disconnects.
+- Expand regression tests, operational documentation, and camera troubleshooting guidance.
+
+## 0.3.12-beta.5
+
+- Add optional inbound PLAF203 microphone audio, disabled by default
+  for backward compatibility.
+- Enable native AAC through the physical Petlibro stream and on-demand
+  AAC-to-Opus transcoding through the bundled go2rtc/FFmpeg integration
+  for WebRTC-compatible playback.
+- Preserve direct H.264 delivery, shared physical camera sessions,
+  independent consumer handling, and clean transcoder teardown.
+- Validate microphone audio using physical hardware, native AAC and Opus
+  decoding, and Chromium WebRTC audio measurements. Full speaker
+  backchannel support is not yet implemented.
+
+## 0.3.12-beta.4
+
+- Correctly parse the capture-backed extended AAC packet forms emitted by the
+  PLAF203, restoring contiguous shared audio/video receive tracking and
+  preventing parser-induced ACK/NACK backlogs and video degradation when
+  inbound audio is enabled.
+- Serialize receiver child transfer with in-flight track forwarding during
+  physical producer replacement, eliminating a concurrent receiver-graph race.
+- Expand capture-backed parser tests, physical-hardware and RTSP/software AAC
+  validation, and repeated race regression coverage. Inbound AAC is validated;
+  speaker transmission and browser/WebRTC audio remain outside this release.
+
+## 0.3.12-beta.3
+
+- Fix PLAF203 SD-stream throttling when the camera retains a later AV sequence
+  origin, while preserving the firmware-derived ACK/NACK window behavior and
+  normal missing-packet recovery.
+- Preserve decoder continuity after a reference P-picture or transport output
+  drop, and maintain RTP timestamp continuity across physical producer
+  replacements.
+- Correct RTSP buffered-write failure handling, connection cleanup, short-write
+  detection, and concurrent byte accounting; improve transport media-output
+  metrics and IOCtrl response diagnostics.
+- Expand hardware-informed deterministic and race regression coverage. Direct
+  PLAF203 testing and software decoding informed these changes; Frigate/QSV
+  compatibility has not been validated end to end. Runtime H.264 configuration
+  changes and the firmware policy behind rapid-session HD/SD transitions remain
+  under investigation.
+
+## 0.3.12-beta.2
+
+- Refactor PLAF203 camera logging around operational lifecycle,
+  component diagnostics, and detailed implementation tracing.
+- Improve session and producer correlation for camera startup,
+  teardown, and rapid-reconnect investigations.
+- Reduce routine protocol logging noise while retaining targeted
+  diagnostics for hardware testing.
+
+## 0.3.12-beta.1
+
+- Refactor the PLAF203 live-camera path into explicit Petlibro/TUTK transport,
+  physical-camera adapter, and conventional go2rtc producer responsibilities,
+  while preserving the firmware-backed ACK/NACK and media-reassembly behavior.
+- Normalize physical session startup and shutdown in the camera adapter,
+  including typed startup retries, capture-backed HD/SD control, the standard
+  AVAPI pacing command, and one best-effort `IPCAM_STOP` after a transmitted
+  `IPCAM_START`.
+- Make initial delivery decoder-safe by combining bounded HD SPS stabilization
+  with live-GOP resynchronization, and correct video timestamp rollover and AAC
+  RTP sample-clock handling.
+- Remove historical camera protocol experiments from the supported
+  configuration surface, publish camera runtime metadata schema version 2, and
+  document retained transport recovery policy and unresolved codec-epoch
+  behavior. This development release has deterministic test coverage but still
+  requires physical-feeder validation.
+
+## 0.3.11-beta.2
+
+- Enable go2rtc API CORS responses so Home Assistant frontends on a different
+  HTTPS origin can consume the feeder stream through WebRTC.
+
+## 0.3.11-beta.1
 
 - Replace the experimental Petlibro ACK-mode matrix with firmware-backed
   AV ACK/NACK windows, independent reliable-control acknowledgement, timing
   probe feedback, and wrap-safe receive tracking. Stop interpreting FRAMEINFO
   `onlineNum` or media family markers as HD/SD selectors.
-- Enable go2rtc API CORS responses so Home Assistant frontends on a different
-  HTTPS origin can consume the feeder stream through WebRTC.
 
 ## 0.3.10
 

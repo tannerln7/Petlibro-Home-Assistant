@@ -42,8 +42,6 @@ docker/data/
 /state-agent/plaf203-state-agent
 /state-agent/plaf203-update-fs
 /state-agent/build/
-/addon/go2rtc/go2rtc
-/addon/go2rtc/petlibro-resolve
 
 # Local configuration and secrets
 **/go2rtc.yaml
