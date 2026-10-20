@@ -76,7 +76,7 @@ and `device_ip` options are migrated into this registry when all three exist.
 | `feeder_https_addr`                        | empty                    | Optional HTTPS endpoint included only in an explicit feeder update                       |
 | `petlibro_state_agent_url`                 | empty                    | Optional state API URL; empty derives `http://<feeder-ip>:8765`, and `{ip}` is supported |
 | `petlibro_state_agent_token`               | empty                    | Bearer token configured in the feeder-side State Agent                                   |
-| `petlibro_state_agent_timeout_seconds`     | `2`                      | Local API request timeout, from 1 to 10 seconds                                          |
+| `petlibro_state_agent_timeout_seconds`     | `2`                      | Ordinary local API request timeout, from 1 to 10 seconds; signed update uploads use a separate bounded timeout |
 | `state_agent_updates.enabled`              | `false`                  | Enable signed State Agent release checking after feeder-side bootstrap                   |
 | `state_agent_updates.manifest_url`         | signed project feed      | HTTPS `latest.json` URL used when updates are enabled                                     |
 | `state_agent_updates.check_on_connect`     | `true`                   | Allow a throttled release check after connection or Home Assistant birth                 |

@@ -16,6 +16,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from state_agent import (
     StateAgentBadResponse,
     StateAgentError,
+    StateAgentTimeout,
+    StateAgentUnavailable,
     StateAgentUpdateStatus,
 )
 
@@ -47,6 +49,10 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 class UpdateValidationError(RuntimeError):
     """Raised when OTA release metadata or content fails validation."""
+
+
+class _UpdateSubmissionOutcomeUnknown(RuntimeError):
+    """The update request may have reached the State Agent."""
 
 
 class _RejectRedirectHandler(request.HTTPRedirectHandler):
@@ -357,7 +363,7 @@ class StateAgentUpdateCoordinator:
             return self._check_for_updates(fetch_artifact=False)
 
         self._busy = True
-        self.ad.submit_to_executor(
+        self._submit_to_executor(
             worker,
             callback=lambda result, **_kwargs: self._on_check_finished(result=result),
         )
@@ -380,7 +386,7 @@ class StateAgentUpdateCoordinator:
         def worker() -> UpdateStateSnapshot:
             return self._install_latest()
 
-        self.ad.submit_to_executor(
+        self._submit_to_executor(
             worker,
             callback=lambda result, **_kwargs: self._on_install_finished(result=result),
         )
@@ -409,6 +415,13 @@ class StateAgentUpdateCoordinator:
 
     def _on_install_finished(self, *, result: object) -> None:
         self._busy = False
+        if isinstance(result, _UpdateSubmissionOutcomeUnknown):
+            self.logger.warning(
+                "state-agent update submission outcome is unknown; polling status"
+            )
+            self._status_poll_attempts = 0
+            self._schedule_status_poll()
+            return
         snapshot = self._extract_result(result)
         if snapshot is None:
             self._set_in_progress(False)
@@ -459,10 +472,21 @@ class StateAgentUpdateCoordinator:
         def worker() -> UpdateStateSnapshot:
             return self._poll_feeder_update_status()
 
-        self.ad.submit_to_executor(
+        self._submit_to_executor(
             worker,
             callback=lambda result, **_kwargs: self._on_status_poll_finished(result=result),
         )
+
+    def _submit_to_executor(self, operation, *, callback) -> None:
+        # AppDaemon logs executor exceptions without dispatching the callback.
+        # Returning the exception keeps coordinator busy/progress state recoverable.
+        def captured_operation():
+            try:
+                return operation()
+            except Exception as exc:
+                return exc
+
+        self.ad.submit_to_executor(captured_operation, callback=callback)
 
     def _on_status_poll_finished(self, *, result: object) -> None:
         self._busy = False
@@ -586,7 +610,10 @@ class StateAgentUpdateCoordinator:
             bundle.signature_bytes,
             artifact_bytes,
         )
-        submit_result = self.state_agent.submit_update(frame)
+        try:
+            submit_result = self.state_agent.submit_update(frame)
+        except (StateAgentTimeout, StateAgentUnavailable) as exc:
+            raise _UpdateSubmissionOutcomeUnknown from exc
         if not submit_result.accepted:
             raise StateAgentBadResponse("state agent rejected update upload")
         return UpdateStateSnapshot(

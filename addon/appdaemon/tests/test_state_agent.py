@@ -180,6 +180,17 @@ def test_client_rejects_credentials_in_url_and_never_exposes_token():
     assert token not in str(error.value)
 
 
+def test_client_rejects_non_positive_request_timeouts():
+    with pytest.raises(ValueError, match="timeout must be positive"):
+        StateAgentClient("http://192.0.2.1:8765", "token", timeout_seconds=0)
+    with pytest.raises(ValueError, match="update timeout must be positive"):
+        StateAgentClient(
+            "http://192.0.2.1:8765",
+            "token",
+            update_timeout_seconds=0,
+        )
+
+
 def test_client_sends_bearer_auth_and_parses_all_read_only_endpoints():
     responses = [
         FakeResponse({"ok": True, "agent": {"name": "state-agent"}}),
@@ -208,7 +219,10 @@ def test_client_sends_bearer_auth_and_parses_all_read_only_endpoints():
         ),
     ]
     client = StateAgentClient(
-        "http://192.0.2.1:8765", "synthetic-test-token", timeout_seconds=1
+        "http://192.0.2.1:8765",
+        "synthetic-test-token",
+        timeout_seconds=1,
+        update_timeout_seconds=30,
     )
 
     with patch("state_agent.request.urlopen", side_effect=responses) as urlopen:
@@ -285,6 +299,7 @@ def test_client_parses_version_update_status_and_update_submit_result():
     assert post_request.get_method() == "POST"
     header_pairs = {key.lower(): value for key, value in post_request.header_items()}
     assert header_pairs.get("content-type") == "application/octet-stream"
+    assert [call.kwargs["timeout"] for call in urlopen.call_args_list] == [1, 1, 30]
 
 
 def test_client_parses_and_invokes_fixed_compatibility_operations():

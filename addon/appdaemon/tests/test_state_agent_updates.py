@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
     Ed25519PublicKey,
 )
+from state_agent import StateAgentUnavailable
 from state_agent_updates import (
     SignedReleaseManifest,
     StateAgentUpdateCoordinator,
@@ -188,11 +189,17 @@ def test_update_frame_has_exact_header_and_lengths():
 class _FakeAD:
     def __init__(self):
         self.executor_calls = 0
+        self.executor_errors = []
         self.timers = []
 
     def submit_to_executor(self, func, *args, callback=None):
         self.executor_calls += 1
-        value = func(*args)
+        try:
+            value = func(*args)
+        except Exception as error:
+            # AppDaemon logs the worker error and does not dispatch its callback.
+            self.executor_errors.append(error)
+            return object()
         if callback is not None:
             params = inspect.signature(callback).parameters.values()
             has_expanded_kwargs = any(
@@ -421,6 +428,86 @@ def test_status_poll_error_preserves_progress_and_retries(tmp_path: Path):
     assert coordinator._latest_state.in_progress is True
     assert coordinator._status_poll_attempts == 1
     assert len(coordinator.ad.timers) == 1
+
+
+def test_executor_error_during_install_reaches_callback_and_clears_busy(
+    tmp_path: Path,
+):
+    coordinator = _coordinator(tmp_path)
+    coordinator._install_latest = lambda: (_ for _ in ()).throw(
+        StateAgentUnavailable("agent unavailable")
+    )
+
+    coordinator.request_install()
+
+    assert coordinator.ad.executor_errors == []
+    assert coordinator._busy is False
+    assert coordinator._latest_state.in_progress is False
+    assert coordinator._latest_state.last_error == "update action failed"
+
+
+def test_unknown_upload_outcome_starts_bounded_status_poll(tmp_path: Path):
+    coordinator = _coordinator(tmp_path)
+    coordinator._install_latest = lambda: (_ for _ in ()).throw(
+        update_module._UpdateSubmissionOutcomeUnknown()
+    )
+
+    coordinator.request_install()
+
+    assert coordinator.ad.executor_errors == []
+    assert coordinator._busy is False
+    assert coordinator._latest_state.in_progress is True
+    assert coordinator._status_poll_attempts == 0
+    assert len(coordinator.ad.timers) == 1
+
+
+def test_executor_error_while_agent_restarts_keeps_status_polling(tmp_path: Path):
+    agent = _FakeAgent()
+    agent.update_status = lambda: (_ for _ in ()).throw(
+        StateAgentUnavailable("agent restarting")
+    )
+    coordinator = _coordinator(tmp_path, agent=agent)
+    coordinator._latest_state = UpdateStateSnapshot(
+        installed_version="1.0.0",
+        latest_version="1.2.3",
+        release_url="https://example.invalid/releases/1.2.3",
+        in_progress=True,
+    )
+
+    coordinator._poll_update_status({})
+
+    assert coordinator.ad.executor_errors == []
+    assert coordinator._busy is False
+    assert coordinator._latest_state.in_progress is True
+    assert coordinator._status_poll_attempts == 1
+    assert len(coordinator.ad.timers) == 1
+
+
+def test_status_poll_recovers_after_expected_agent_restart(tmp_path: Path):
+    agent = _FakeAgent()
+    agent.update_status = lambda: (_ for _ in ()).throw(
+        StateAgentUnavailable("agent restarting")
+    )
+    coordinator = _coordinator(tmp_path, agent=agent)
+    coordinator._latest_state = UpdateStateSnapshot(
+        installed_version="1.0.0",
+        latest_version="1.2.3",
+        release_url="https://example.invalid/releases/1.2.3",
+        in_progress=True,
+    )
+
+    coordinator._poll_update_status({})
+    _handle, retry, _delay, retry_kwargs = coordinator.ad.timers.pop(0)
+    agent.installed_version = "1.2.3"
+    agent.update_status = lambda: agent._Status(in_progress=False)
+    retry(retry_kwargs)
+
+    assert coordinator.ad.executor_errors == []
+    assert coordinator._busy is False
+    assert coordinator._latest_state.installed_version == "1.2.3"
+    assert coordinator._latest_state.in_progress is False
+    assert coordinator._status_poll_attempts == 0
+    assert coordinator.ad.timers == []
 
 
 def test_busy_status_poll_is_rescheduled_instead_of_dropped(tmp_path: Path):

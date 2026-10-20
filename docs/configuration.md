@@ -101,7 +101,9 @@ query parameters, or a fragment.
 Set `petlibro_state_agent_token` to the bearer token configured in the feeder
 agent. The renderer places it in the mode-0600 AppDaemon secrets file and
 references it with `!secret`; application logs never include it. The default
-request timeout is two seconds.
+ordinary API request timeout is two seconds. Signed update uploads use a
+separate 30-second timeout because feeder flash writes can legitimately take
+longer; update-status polling remains bounded independently.
 
 The backend requires the current tracked State Agent schema. That agent rejects
 any `state.bin` whose length is not exactly 236 bytes and labels decoded fields

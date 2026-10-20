@@ -11,6 +11,7 @@ from urllib import error, parse, request
 
 MAX_RESPONSE_BYTES = 1024 * 1024
 MAX_UPDATE_UPLOAD_BYTES = 32 * 1024 * 1024 + 16 * 1024 + 64 + 20
+DEFAULT_UPDATE_UPLOAD_TIMEOUT_SECONDS = 30.0
 
 
 class StateAgentError(RuntimeError):
@@ -552,7 +553,14 @@ class CompatibilityStatus:
 class StateAgentClient:
     """Small blocking HTTP client intended to run in an AppDaemon executor."""
 
-    def __init__(self, base_url: str, token: str, timeout_seconds: float = 2.0):
+    def __init__(
+        self,
+        base_url: str,
+        token: str,
+        timeout_seconds: float = 2.0,
+        *,
+        update_timeout_seconds: float = DEFAULT_UPDATE_UPLOAD_TIMEOUT_SECONDS,
+    ):
         parsed = parse.urlsplit(base_url.rstrip("/"))
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ValueError("state-agent URL must be an HTTP(S) URL with a host")
@@ -562,11 +570,14 @@ class StateAgentClient:
             )
         if timeout_seconds <= 0:
             raise ValueError("state-agent timeout must be positive")
+        if update_timeout_seconds <= 0:
+            raise ValueError("state-agent update timeout must be positive")
         self._base_url = parse.urlunsplit(
             (parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", "")
         )
         self._token = token
         self._timeout_seconds = float(timeout_seconds)
+        self._update_timeout_seconds = float(update_timeout_seconds)
 
     def health(self) -> Mapping[str, object]:
         return _successful_object(self._get("/health"))
@@ -623,6 +634,7 @@ class StateAgentClient:
             body=bytes(payload),
             content_type="application/octet-stream",
             accept="application/json",
+            timeout_seconds=self._update_timeout_seconds,
         )
         try:
             decoded = json.loads(body.decode("utf-8"))
@@ -660,6 +672,7 @@ class StateAgentClient:
         accept: str,
         body: bytes | None = None,
         content_type: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> bytes:
         headers = {
             "Accept": accept,
@@ -673,8 +686,11 @@ class StateAgentClient:
             data=body,
             method=method,
         )
+        effective_timeout = (
+            self._timeout_seconds if timeout_seconds is None else timeout_seconds
+        )
         try:
-            with request.urlopen(req, timeout=self._timeout_seconds) as response:
+            with request.urlopen(req, timeout=effective_timeout) as response:
                 payload = response.read(MAX_RESPONSE_BYTES + 1)
         except error.HTTPError as exc:
             if exc.code in {401, 403}:

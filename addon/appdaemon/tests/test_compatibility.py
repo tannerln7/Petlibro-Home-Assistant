@@ -11,6 +11,7 @@ from state_agent import CompatibilityStatus
 class FakeAd:
     def __init__(self):
         self.logs = []
+        self.executor_errors = []
 
     def log(self, message, **_kwargs):
         self.logs.append(message)
@@ -19,7 +20,9 @@ class FakeAd:
         try:
             result = worker()
         except Exception as error:
-            result = error
+            # AppDaemon logs the worker error and does not dispatch its callback.
+            self.executor_errors.append(error)
+            return
         callback(result)
 
 
@@ -112,6 +115,8 @@ def test_compatibility_coordinator_sanitizes_operation_failure_projection():
     latest = {topic: value for topic, value, _retain in state.messages}
     assert latest["compatibility/deployment"] == "unknown"
     assert latest["compatibility/last_reason"] == "refresh_failed"
+    assert coordinator._busy is False
+    assert ad.executor_errors == []
     assert "sensitive implementation detail" not in "\n".join(ad.logs)
 
 

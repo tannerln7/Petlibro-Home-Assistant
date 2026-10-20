@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.15-beta.3
+
+- Give signed State Agent uploads a separate bounded timeout so slower feeder
+  flash writes do not inherit the short ordinary state-API timeout.
+- Preserve update and compatibility callbacks when executor operations fail,
+  allowing update-status polling to span the expected State Agent restart and
+  preventing Home Assistant update state from remaining stuck on installing.
+
 ## 0.3.15-beta.2
 
 - Include the compatibility coordinator in the generated AppDaemon runtime

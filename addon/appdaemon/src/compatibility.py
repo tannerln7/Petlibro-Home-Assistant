@@ -55,8 +55,17 @@ class CompatibilityCoordinator:
             )
             return
         self._busy = True
+
+        # AppDaemon does not invoke the callback when an executor worker raises.
+        # Convert failures to results so this coordinator cannot remain busy.
+        def captured_operation() -> CompatibilityStatus | Exception:
+            try:
+                return operation()
+            except Exception as error:
+                return error
+
         self.ad.submit_to_executor(
-            operation,
+            captured_operation,
             callback=lambda result, **_kwargs: self._finished(
                 action=action, result=result
             ),
