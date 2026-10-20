@@ -155,15 +155,16 @@ stable URL unless reconfigured.
 
 Development builds are produced without signing credentials by
 [`build-state-agent-release.yml`](../.github/workflows/build-state-agent-release.yml).
-After committing and pushing the candidate source, dispatch the workflow for
-that exact full revision:
+Every relevant `develop` push builds its exact revision automatically. Record
+the successful run for that source commit:
 
 ```bash
 SOURCE_SHA="$(git rev-parse HEAD)"
-gh workflow run build-state-agent-release.yml \
-  --ref develop -f revision="$SOURCE_SHA"
 gh run list --workflow build-state-agent-release.yml --limit 5
 ```
+
+Once this workflow exists on the default branch, `workflow_dispatch` can also
+rebuild an explicitly supplied full commit SHA without changing source.
 
 The workflow runs strict validation, builds the static ARMv7 hard-float ELF,
 and uploads the binary plus metadata binding its SHA-256, size, version, trust

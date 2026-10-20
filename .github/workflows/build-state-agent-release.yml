@@ -1,6 +1,15 @@
 name: Build State Agent release artifact
 
 on:
+  push:
+    branches:
+      - develop
+    paths:
+      - .github/workflows/build-state-agent-release.yml
+      - addon/appdaemon/requirements-dev.txt
+      - installer/requirements.txt
+      - scripts/validate.sh
+      - state-agent/**
   workflow_dispatch:
     inputs:
       revision:
@@ -19,7 +28,7 @@ jobs:
     steps:
       - name: Validate requested revision
         env:
-          REVISION: ${{ inputs.revision }}
+          REVISION: ${{ github.event_name == 'push' && github.sha || inputs.revision }}
         run: |
           if [[ ! "$REVISION" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::revision must be a full lower-case commit SHA"
@@ -29,13 +38,13 @@ jobs:
       - name: Check out exact revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.revision }}
+          ref: ${{ github.event_name == 'push' && github.sha || inputs.revision }}
           persist-credentials: false
 
       - name: Confirm exact source and prerelease version
         id: release
         env:
-          REVISION: ${{ inputs.revision }}
+          REVISION: ${{ github.event_name == 'push' && github.sha || inputs.revision }}
         run: |
           set -euo pipefail
           actual=$(git rev-parse HEAD)
