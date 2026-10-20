@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.3.15-beta.2
+
+- Include the compatibility coordinator in the generated AppDaemon runtime
+  module set, preventing startup failure before older State Agent installations
+  can be discovered and updated.
+- Verify that every maintained AppDaemon source module is present in the
+  generated runtime module set to prevent future packaging omissions.
+
+## 0.3.15-beta.1
 
 - Parse and classify OEM `ERROR_EVENT` messages, preserve grain error codes,
   accept OEM-specific manual-feed response codes, acknowledge grain records
@@ -12,6 +20,9 @@
   explicit deployment/enable/active/reboot-required status.
 - Add an opt-in PATH-scoped ping shim for the confirmed blocking OEM probes;
   installation and State Agent update do not enable it or reboot the feeder.
+- Add an independent, opt-in signed State Agent development feed with
+  exact-revision CI builds, immutable prerelease artifacts, guarded local
+  signing and publication, and public post-publication verification.
 
 ## 0.3.14
 

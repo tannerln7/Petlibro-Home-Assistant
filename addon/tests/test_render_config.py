@@ -95,6 +95,7 @@ class RenderConfigTests(unittest.TestCase):
             "backend.py": "PETLIBRO_BACKEND_SOURCE",
             "camera_metadata.py": "PETLIBRO_CAMERA_METADATA_SOURCE",
             "commands.py": "PETLIBRO_COMMANDS_SOURCE",
+            "compatibility.py": "PETLIBRO_COMPATIBILITY_SOURCE",
             "device_discovery.py": "PETLIBRO_DEVICE_DISCOVERY_SOURCE",
             "dispensing_status.py": "PETLIBRO_DISPENSING_STATUS_SOURCE",
             "feed_plans.py": "PETLIBRO_FEED_PLANS_SOURCE",
@@ -139,6 +140,7 @@ class RenderConfigTests(unittest.TestCase):
                 "backend.py",
                 "camera_metadata.py",
                 "commands.py",
+                "compatibility.py",
                 "device_discovery.py",
                 "dispensing_status.py",
                 "feed_plans.py",
@@ -154,6 +156,13 @@ class RenderConfigTests(unittest.TestCase):
                 "storage.py",
                 "telemetry.py",
             }
+            source_modules = {
+                path.name
+                for path in (
+                    Path(__file__).resolve().parents[1] / "appdaemon" / "src"
+                ).glob("*.py")
+            }
+            self.assertEqual(expected_modules, source_modules)
             self.assertEqual(
                 expected_modules,
                 {path.name for path in app_dir.glob("*.py")},

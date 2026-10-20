@@ -806,6 +806,12 @@ def render_appdaemon(
                 "/opt/petlibro-local/appdaemon/commands.py",
             )
         ),
+        app_dir / "compatibility.py": Path(
+            os.environ.get(
+                "PETLIBRO_COMPATIBILITY_SOURCE",
+                "/opt/petlibro-local/appdaemon/compatibility.py",
+            )
+        ),
         app_dir / "feed_plans.py": Path(
             os.environ.get(
                 "PETLIBRO_FEED_PLANS_SOURCE",
