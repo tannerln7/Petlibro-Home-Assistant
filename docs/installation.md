@@ -12,10 +12,10 @@ installer binds its protected token to one feeder/Home Assistant address pair.
 Multi-feeder State Agent provisioning therefore remains an advanced manual
 deployment rather than part of this guide.
 
-The installer includes an inactive guarded hook for release-managed feeder
-compatibility files. It does not enable the connectivity-probe mitigation.
-Deployment, activation, and any required reboot remain separate Home Assistant
-actions after installation.
+The installer deploys and enables the State Agent release's fixed compatibility
+assets. Its already-required final reboot activates the guarded connectivity-
+probe mitigation. Missing or invalid compatibility dependencies fall back to
+the normal OEM launch path instead of preventing firmware startup.
 
 > [!CAUTION]
 > The OTA path has been demonstrated on firmware 3.1.48 and the payload has

@@ -7,6 +7,7 @@ import json
 import re
 import struct
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 from urllib import error, parse, request
@@ -288,6 +289,7 @@ class StateAgentUpdateCoordinator:
         options: StateAgentUpdateOptions,
         *,
         public_key_path: str = "/opt/petlibro-local/release-public-key.hex",
+        update_complete_callback: Callable[[str], None] | None = None,
     ):
         self.ad = ad
         self.state = state_publisher
@@ -295,6 +297,7 @@ class StateAgentUpdateCoordinator:
         self.logger = logger
         self.options = options
         self._public_key = _load_public_key(public_key_path)
+        self._update_complete_callback = update_complete_callback
         self._check_timer = None
         self._status_poll_timer = None
         self._status_poll_attempts = 0
@@ -430,6 +433,11 @@ class StateAgentUpdateCoordinator:
         self._last_check_monotonic = time.monotonic()
         self._publish_state()
         if snapshot.in_progress:
+            self.logger.info(
+                "state-agent update started",
+                previous_version=snapshot.installed_version,
+                target_version=snapshot.latest_version,
+            )
             self._status_poll_attempts = 0
             self._schedule_status_poll()
 
@@ -491,9 +499,11 @@ class StateAgentUpdateCoordinator:
     def _on_status_poll_finished(self, *, result: object) -> None:
         self._busy = False
         if isinstance(result, Exception):
-            self.logger.warning(
+            self.logger.debug(
                 "state-agent update status temporarily unavailable",
                 error_type=type(result).__name__,
+                attempt=self._status_poll_attempts + 1,
+                attempt_limit=STATUS_POLL_MAX_ATTEMPTS,
             )
             self._continue_status_poll_or_timeout()
             return
@@ -503,6 +513,7 @@ class StateAgentUpdateCoordinator:
             )
             self._continue_status_poll_or_timeout()
             return
+        previous_snapshot = self._latest_state
         snapshot = result
         self._latest_state = snapshot
         self._publish_state()
@@ -510,6 +521,43 @@ class StateAgentUpdateCoordinator:
             self._continue_status_poll_or_timeout()
         else:
             self._status_poll_attempts = 0
+            self._log_terminal_update_status(previous_snapshot, snapshot)
+
+    def _log_terminal_update_status(
+        self,
+        previous: UpdateStateSnapshot,
+        current: UpdateStateSnapshot,
+    ) -> None:
+        if current.last_error:
+            self.logger.warning(
+                "state-agent update failed",
+                previous_version=previous.installed_version,
+                target_version=previous.latest_version,
+                installed_version=current.installed_version,
+                reason=current.last_error,
+            )
+            return
+        if current.installed_version != previous.latest_version:
+            self.logger.warning(
+                "state-agent update finished without reaching target version",
+                previous_version=previous.installed_version,
+                target_version=previous.latest_version,
+                installed_version=current.installed_version,
+            )
+            return
+        self.logger.info(
+            "state-agent update complete",
+            previous_version=previous.installed_version,
+            installed_version=current.installed_version,
+        )
+        if self._update_complete_callback is not None:
+            try:
+                self._update_complete_callback(current.installed_version)
+            except Exception as error:
+                self.logger.warning(
+                    "post-update compatibility reconciliation could not be scheduled",
+                    error_type=type(error).__name__,
+                )
 
     def _continue_status_poll_or_timeout(self) -> None:
         self._status_poll_attempts += 1
@@ -526,6 +574,8 @@ class StateAgentUpdateCoordinator:
         self.logger.warning(
             "state-agent update status polling timed out",
             attempts=self._status_poll_attempts,
+            attempt_limit=STATUS_POLL_MAX_ATTEMPTS,
+            poll_interval_seconds=STATUS_POLL_INTERVAL_SECONDS,
         )
         self._publish_state()
 

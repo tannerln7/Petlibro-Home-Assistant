@@ -1,5 +1,5 @@
 # Immutable source release consumed by addon/Dockerfile and scripts/validate.sh.
-GO2RTC_VERSION=v1.9.14-petlibro.1
-GO2RTC_REVISION=850b3f6b71a08eb6f41f08dd261144df8010d4ee
-GO2RTC_SOURCE_SHA256=a3ee426178fe94426927d356f02009d6299e41a511bf967d29a77396b2de7c78
-GO2RTC_SOURCE_URL=https://github.com/tannerln7/go2rtc/releases/download/v1.9.14-petlibro.1/go2rtc_v1.9.14-petlibro.1_source.tar.gz
+GO2RTC_VERSION=v1.9.14-petlibro.3
+GO2RTC_REVISION=6ca2e665b1bf483462562165e1cf011526a259f8
+GO2RTC_SOURCE_SHA256=fb8951f25c6726e8c84516e1614e97de8446ae3f6f903829488f0670851a5c6c
+GO2RTC_SOURCE_URL=https://github.com/tannerln7/go2rtc/releases/download/v1.9.14-petlibro.3/go2rtc_v1.9.14-petlibro.3_source.tar.gz

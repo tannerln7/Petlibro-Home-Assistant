@@ -159,6 +159,14 @@ binary frame and never accesses the release URL. While a submitted update is in
 progress, the controller queries only `/v1/update-status` and `/v1/version` on
 the local feeder.
 
+After the new version is confirmed, the controller asks that State Agent to
+reconcile its release-managed compatibility assets and required features. This
+fixed-path operation is hash-verified and idempotent. It never restarts OEM
+firmware or reboots the feeder: startup changes remain pending until a natural
+or explicit reboot. Home Assistant exposes only the diagnostic **Ping
+mitigation active** binary sensor; deployment details and pending-reboot reasons
+remain available from `GET /v1/compatibility` and logs.
+
 On a feeder startup event or first heartbeat, the controller reads `/v1/core`
 before accepting a persistent write. It then mirrors feeder settings and
 semantic plan records into Home Assistant. Subsequent heartbeats use `/v1/rev`

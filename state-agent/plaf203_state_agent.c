@@ -83,11 +83,8 @@ static const uint8_t RELEASE_PUBLIC_KEY[32] = {0};
 #define COMPAT_DIR_REL "local-compat"
 #define COMPAT_BIN_DIR_REL "local-compat/bin"
 #define COMPAT_BACKUP_DIR_REL "local-compat/backup"
-#define COMPAT_PING_REL "local-compat/bin/ping"
-#define COMPAT_ENABLE_REL "local-compat/ping-shim.enabled"
 #define COMPAT_STATUS_REL "local-compat/deployment-status.json"
 #define COMPAT_STATUS_TMP_REL "local-compat/deployment-status.tmp"
-#define COMPAT_BACKUP_APP_START_REL "local-compat/backup/app_start.sh"
 
 static volatile sig_atomic_t g_stop = 0;
 static uint64_t g_start_ms = 0;
@@ -2442,7 +2439,8 @@ static bool compatibility_deploy(char *err, size_t err_len, bool *changed) {
   }
   bool ping_changed = false;
   if (!install_managed_bytes(ping_path, MANAGED_PING, MANAGED_PING_LEN,
-                             MANAGED_PING_SHA256, 0755, &ping_changed, err,
+                             MANAGED_PING_SHA256, MANAGED_PING_MODE,
+                             &ping_changed, err,
                              err_len))
     return false;
 
@@ -2450,14 +2448,15 @@ static bool compatibility_deploy(char *err, size_t err_len, bool *changed) {
     bool startup_mode_changed = false;
     if (!install_managed_bytes(g_cfg.startup_script, MANAGED_APP_START,
                                MANAGED_APP_START_LEN,
-                               MANAGED_APP_START_SHA256, 0755,
+                               MANAGED_APP_START_SHA256, MANAGED_APP_START_MODE,
                                &startup_mode_changed, err, err_len))
       return false;
     *changed = ping_changed || startup_mode_changed;
     write_compat_status("deployed", "already_current");
     return true;
   }
-  if (!file_matches_asset(backup_path, LEGACY_APP_START_SHA256, 0700)) {
+  if (!file_matches_asset(backup_path, LEGACY_APP_START_SHA256,
+                          LEGACY_APP_START_MODE)) {
     struct stat backup_stat;
     if (lstat(backup_path, &backup_stat) == 0 &&
         !file_has_hash(backup_path, LEGACY_APP_START_SHA256)) {
@@ -2467,14 +2466,16 @@ static bool compatibility_deploy(char *err, size_t err_len, bool *changed) {
     bool backup_changed = false;
     if (!install_managed_bytes(
             backup_path, LEGACY_APP_START, LEGACY_APP_START_LEN,
-            LEGACY_APP_START_SHA256, 0700, &backup_changed, err, err_len))
+            LEGACY_APP_START_SHA256, LEGACY_APP_START_MODE, &backup_changed,
+            err, err_len))
       return false;
   }
 
   bool startup_changed = false;
   if (!install_managed_bytes(g_cfg.startup_script, MANAGED_APP_START,
                              MANAGED_APP_START_LEN, MANAGED_APP_START_SHA256,
-                             0755, &startup_changed, err, err_len))
+                             MANAGED_APP_START_MODE, &startup_changed, err,
+                             err_len))
     return false;
   *changed = ping_changed || startup_changed;
   write_compat_status("deployed", *changed ? "files_replaced" : "already_current");
@@ -2496,7 +2497,7 @@ static bool compatibility_restore_startup(char *err, size_t err_len) {
   bool changed = false;
   if (!install_managed_bytes(g_cfg.startup_script, LEGACY_APP_START,
                              LEGACY_APP_START_LEN, LEGACY_APP_START_SHA256,
-                             0755, &changed, err, err_len))
+                             MANAGED_APP_START_MODE, &changed, err, err_len))
     return false;
   write_compat_status("restored", "startup_backup_restored");
   return true;
@@ -2518,20 +2519,30 @@ static bool compatibility_set_enabled(bool enabled, char *err, size_t err_len) {
     write_compat_status("deployed", "mitigation_disabled");
     return true;
   }
-  if (!file_matches_asset(g_cfg.startup_script, MANAGED_APP_START_SHA256, 0755) ||
-      !file_matches_asset(ping_path, MANAGED_PING_SHA256, 0755) ||
+  if (!file_matches_asset(g_cfg.startup_script, MANAGED_APP_START_SHA256,
+                          MANAGED_APP_START_MODE) ||
+      !file_matches_asset(ping_path, MANAGED_PING_SHA256, MANAGED_PING_MODE) ||
       !original_ping_available()) {
     snprintf(err, err_len, "compatibility_files_not_ready");
     return false;
   }
-  static const uint8_t enabled_marker[] = "enabled\n";
   bool changed = false;
-  if (!install_managed_bytes(marker, enabled_marker,
-                             sizeof(enabled_marker) - 1, NULL, 0600, &changed,
-                             err, err_len))
+  if (!install_managed_bytes(marker, COMPAT_ENABLE_MARKER,
+                             COMPAT_ENABLE_MARKER_LEN, NULL, COMPAT_ENABLE_MODE,
+                             &changed, err, err_len))
     return false;
   write_compat_status("deployed", "mitigation_enabled");
   return true;
+}
+
+/* Reconcile every compatibility asset and required feature owned by this
+ * signed release.  Keeping this policy in the State Agent means callers do
+ * not need release-specific knowledge as the managed asset set grows. */
+static bool compatibility_reconcile(char *err, size_t err_len) {
+  bool changed = false;
+  if (!compatibility_deploy(err, err_len, &changed))
+    return false;
+  return compatibility_set_enabled(true, err, err_len);
 }
 
 static void build_compatibility_response(Str *s) {
@@ -2541,20 +2552,23 @@ static void build_compatibility_response(Str *s) {
                   compat_path(backup, sizeof(backup),
                               COMPAT_BACKUP_APP_START_REL);
   bool shim_current = paths_ok &&
-                      file_matches_asset(ping_path, MANAGED_PING_SHA256, 0755);
+                      file_matches_asset(ping_path, MANAGED_PING_SHA256,
+                                         MANAGED_PING_MODE);
   bool startup_current =
-      file_matches_asset(g_cfg.startup_script, MANAGED_APP_START_SHA256, 0755);
+      file_matches_asset(g_cfg.startup_script, MANAGED_APP_START_SHA256,
+                         MANAGED_APP_START_MODE);
   bool startup_supported =
       file_has_hash(g_cfg.startup_script, MANAGED_APP_START_SHA256) ||
       file_has_hash(g_cfg.startup_script, LEGACY_APP_START_SHA256);
-  bool enabled = paths_ok && regular_file_with_mode(marker, 0600);
+  bool enabled = paths_ok && regular_file_with_mode(marker, COMPAT_ENABLE_MODE);
   /* The marker records how the currently running OEM process was launched.
    * Replacing/restoring the on-disk startup script does not change that
    * process, so startup_current must not erase the active/reboot-required
    * state until the next boot. */
   bool active = access(g_cfg.compat_active_marker, F_OK) == 0 && shim_current;
   bool backup_available =
-      paths_ok && file_matches_asset(backup, LEGACY_APP_START_SHA256, 0700);
+      paths_ok && file_matches_asset(backup, LEGACY_APP_START_SHA256,
+                                    LEGACY_APP_START_MODE);
   char reason[96] = "none";
   (void)compat_status_reason(reason);
   const char *ping_original = original_ping_path();
@@ -3163,6 +3177,7 @@ static void handle_client(int cfd, struct sockaddr_in *peer) {
                        &body);
   } else if (strcmp(req.method, "POST") == 0 && !query &&
              (strcmp(req_path, "/v1/compatibility/deploy") == 0 ||
+              strcmp(req_path, "/v1/compatibility/reconcile") == 0 ||
               strcmp(req_path, "/v1/compatibility/enable") == 0 ||
               strcmp(req_path, "/v1/compatibility/disable") == 0 ||
               strcmp(req_path, "/v1/compatibility/restore-startup") == 0)) {
@@ -3178,7 +3193,10 @@ static void handle_client(int cfd, struct sockaddr_in *peer) {
       char operation_error[96] = {0};
       bool changed = false;
       bool ok = false;
-      if (strcmp(req_path, "/v1/compatibility/deploy") == 0)
+      if (strcmp(req_path, "/v1/compatibility/reconcile") == 0)
+        ok = compatibility_reconcile(operation_error,
+                                     sizeof(operation_error));
+      else if (strcmp(req_path, "/v1/compatibility/deploy") == 0)
         ok = compatibility_deploy(operation_error, sizeof(operation_error),
                                   &changed);
       else if (strcmp(req_path, "/v1/compatibility/enable") == 0)

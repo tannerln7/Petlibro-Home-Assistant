@@ -1,10 +1,18 @@
-"""Opt-in feeder compatibility asset deployment and status projection."""
+"""Automatic reconciliation of release-managed feeder compatibility assets."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 
-from state_agent import CompatibilityStatus
+from state_agent import (
+    CompatibilityStatus,
+    StateAgentConflict,
+    StateAgentTimeout,
+    StateAgentUnavailable,
+    StateAgentUnsupported,
+)
+
+RETRY_DELAYS_SECONDS = (30, 60, 120)
 
 
 class CompatibilityCoordinator:
@@ -16,42 +24,59 @@ class CompatibilityCoordinator:
         self.state_agent = state_agent
         self.logger = logger
         self._busy = False
+        self._pending = False
+        self._retry_timer = None
+        self._retry_attempt = 0
         self._latest: CompatibilityStatus | None = None
 
     def start(self) -> None:
         self._publish_unavailable("not_checked")
 
     def stop(self) -> None:
-        return None
+        if self._retry_timer is not None:
+            self.ad.cancel_timer(self._retry_timer, True)
+            self._retry_timer = None
 
     def on_usable_connection(self) -> None:
-        self.request_refresh()
+        self._reset_retry()
+        self.request_reconcile(reason="connection")
+
+    def on_state_agent_update_complete(self, version: str) -> None:
+        self._reset_retry()
+        self.request_reconcile(reason="state_agent_update", version=version)
 
     def on_home_assistant_birth(self) -> None:
         if self._latest is None:
             self._publish_unavailable("not_checked")
         else:
             self._publish(self._latest)
-        self.request_refresh()
+        self.request_reconcile(reason="ha_birth")
 
-    def request_refresh(self) -> None:
-        self._submit("refresh", self.state_agent.compatibility_status)
-
-    def request_deploy(self) -> None:
-        self._submit("deploy", self.state_agent.compatibility_deploy)
-
-    def request_enabled(self, enabled: bool) -> None:
-        operation = (
-            self.state_agent.compatibility_enable
-            if enabled
-            else self.state_agent.compatibility_disable
+    def request_reconcile(self, *, reason: str, version: str | None = None) -> None:
+        self.logger.debug(
+            "feeder compatibility reconciliation requested",
+            reason=reason,
+            version=version or "current",
         )
-        self._submit("enable" if enabled else "disable", operation)
+        self._submit("reconcile", self._reconcile_release)
+
+    def _reconcile_release(self) -> CompatibilityStatus:
+        try:
+            return self.state_agent.compatibility_reconcile()
+        except StateAgentUnsupported:
+            # State Agent 0.4.0-rc.1/rc.2 exposed the fixed operations before
+            # the release-owned reconciliation endpoint was introduced.
+            self.state_agent.compatibility_status()
+            status = self.state_agent.compatibility_deploy()
+            if not status.enabled:
+                status = self.state_agent.compatibility_enable()
+            return status
 
     def _submit(self, action: str, operation: Callable[[], CompatibilityStatus]) -> None:
         if self._busy:
-            self.logger.warning(
-                "feeder compatibility operation ignored while busy", action=action
+            self._pending = self._pending or action == "reconcile"
+            self.logger.debug(
+                "feeder compatibility operation deferred while busy", action=action
             )
             return
         self._busy = True
@@ -74,14 +99,22 @@ class CompatibilityCoordinator:
     def _finished(self, *, action: str, result: object) -> None:
         self._busy = False
         if isinstance(result, Exception):
-            self.logger.warning(
-                "feeder compatibility operation failed",
-                action=action,
-                error_type=type(result).__name__,
-            )
-            self._publish_unavailable(f"{action}_failed")
-            if action != "refresh":
-                self.request_refresh()
+            if isinstance(result, StateAgentUnsupported):
+                self.logger.debug(
+                    "automatic compatibility reconciliation requires a newer State Agent"
+                )
+                self._publish_unavailable("unsupported_agent")
+            else:
+                fields = {"action": action, "error_type": type(result).__name__}
+                if isinstance(result, StateAgentConflict):
+                    fields["reason"] = result.reason
+                self.logger.warning(
+                    "feeder compatibility reconciliation failed", **fields
+                )
+                self._publish_unavailable(f"{action}_failed")
+                if self._retryable(result):
+                    self._schedule_retry()
+            self._run_pending()
             return
         if not isinstance(result, CompatibilityStatus):
             self.logger.warning(
@@ -89,10 +122,14 @@ class CompatibilityCoordinator:
                 action=action,
             )
             self._publish_unavailable(f"{action}_invalid_result")
+            self._run_pending()
             return
+        previous = self._latest
         self._latest = result
+        self._reset_retry()
         self._publish(result)
-        self.logger.info(
+        log = self.logger.info if previous != result else self.logger.debug
+        log(
             "feeder compatibility status updated",
             action=action,
             deployed=result.deployed,
@@ -101,40 +138,46 @@ class CompatibilityCoordinator:
             reboot_required=result.reboot_required,
             reason=result.last_reason,
         )
+        self._run_pending()
+
+    def _retryable(self, error: Exception) -> bool:
+        if isinstance(error, StateAgentConflict):
+            return error.reason == "state_agent_update_in_progress"
+        return isinstance(error, (StateAgentTimeout, StateAgentUnavailable))
+
+    def _schedule_retry(self) -> None:
+        if (
+            self._retry_timer is not None
+            or self._retry_attempt >= len(RETRY_DELAYS_SECONDS)
+        ):
+            return
+        delay = RETRY_DELAYS_SECONDS[self._retry_attempt]
+        self._retry_attempt += 1
+        self.logger.debug(
+            "feeder compatibility reconciliation retry scheduled",
+            delay_seconds=delay,
+            attempt=self._retry_attempt,
+        )
+        self._retry_timer = self.ad.run_in(self._retry, delay)
+
+    def _reset_retry(self) -> None:
+        self._retry_attempt = 0
+        if self._retry_timer is not None:
+            self.ad.cancel_timer(self._retry_timer, True)
+            self._retry_timer = None
+
+    def _retry(self, _kwargs: dict[str, object]) -> None:
+        self._retry_timer = None
+        self.request_reconcile(reason="retry")
+
+    def _run_pending(self) -> None:
+        if not self._pending or self._busy:
+            return
+        self._pending = False
+        self.request_reconcile(reason="deferred")
 
     def _publish(self, status: CompatibilityStatus) -> None:
-        deployment = (
-            "unsupported"
-            if not status.supported
-            else "deployed"
-            if status.deployed
-            else "not_deployed"
-        )
-        payload = {
-            "asset_version": status.asset_version,
-            "original_ping_path": status.original_ping_path,
-            "supported": status.supported,
-            "deployed": status.deployed,
-            "enabled": status.enabled,
-            "active": status.active,
-            "reboot_required": status.reboot_required,
-            "last_reason": status.last_reason,
-        }
-        self.state.publish("compatibility/status", payload, retain=True)
-        self.state.publish("compatibility/deployment", deployment, retain=True)
-        self.state.publish("compatibility/deployed", status.deployed, retain=True)
-        self.state.publish("compatibility/ping_mitigation", status.enabled, retain=True)
         self.state.publish("compatibility/active", status.active, retain=True)
-        self.state.publish(
-            "compatibility/reboot_required", status.reboot_required, retain=True
-        )
-        self.state.publish("compatibility/last_reason", status.last_reason, retain=True)
 
     def _publish_unavailable(self, reason: str) -> None:
-        self.state.publish(
-            "compatibility/status",
-            {"available": False, "last_reason": reason},
-            retain=True,
-        )
-        self.state.publish("compatibility/deployment", "unknown", retain=True)
-        self.state.publish("compatibility/last_reason", reason, retain=True)
+        self.logger.debug("feeder compatibility status unavailable", reason=reason)

@@ -51,10 +51,12 @@ The terminal interface guides the normal sequence in one session:
     account, redirect OEM MQTT to the final broker, and write the add-on options
     patch.
 
-The installed `app_start.sh` contains an inactive guarded compatibility hook.
-It launches OEM firmware exactly as before unless the State Agent-managed ping
-shim and explicit enable marker both exist. New installations and installations
-migrated later by State Agent therefore converge on the same startup layout.
+The payload installs the assets defined by the release-managed compatibility
+manifest, including the guarded `app_start.sh`, ping shim, validated recovery
+template, and required enable marker. The final installer reboot activates the
+mitigation. Missing or incomplete assets still launch OEM firmware through the
+original path. New installations and installations migrated later by State
+Agent therefore converge on the same managed layout.
 
 No DNS rewrite or OEM account metadata is required by the direct-provisioning
 implementation. The installer supplies all protocol-internal compatibility

@@ -19,7 +19,7 @@ UPDATE_HELPER_SOURCE := plaf203_update_fs.c
 
 GENERATED_HEADER := $(BUILD_DIR)/generated_release_metadata.h
 MANAGED_ASSETS_HEADER := $(BUILD_DIR)/generated_managed_assets.h
-MANAGED_ASSETS := managed/ping managed/app_start.sh managed/app_start.legacy.sh
+MANAGED_ASSETS := managed/manifest.json managed/ping managed/app_start.sh managed/app_start.legacy.sh
 
 SEMVER_RE := ^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*))?(\\+([0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*))?$$
 

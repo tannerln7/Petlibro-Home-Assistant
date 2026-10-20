@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-from installer.payload import APP_START_TEMPLATE, build_payload, validate_public_key
+from installer.payload import (
+    APP_START_TEMPLATE,
+    _stage_managed_assets,
+    build_payload,
+    validate_public_key,
+)
 
 
 VALID_PUBLIC_KEY = (
@@ -25,6 +31,23 @@ class PayloadTests(unittest.TestCase):
             / "app_start.sh"
         ).read_text(encoding="ascii")
         self.assertEqual(managed, APP_START_TEMPLATE)
+
+    def test_managed_asset_manifest_rejects_unsafe_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = root / "managed"
+            source.mkdir()
+            (source / "ping").write_text("asset", encoding="ascii")
+            (source / "manifest.json").write_text(
+                '{"schema_version":1,"assets":[{"name":"ping",'
+                '"source":"ping","destination":"../outside","mode":"0755"}]}',
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "unsafe managed asset"):
+                _stage_managed_assets(source, root / "stage")
+
+            self.assertFalse((root / "outside").exists())
 
     @staticmethod
     def _snapshots(data: Path) -> list[Path]:
@@ -46,6 +69,10 @@ class PayloadTests(unittest.TestCase):
         )
         (agent / "runit" / "plaf203-update-supervisor" / "supervisor.sh").write_text(
             "#!/bin/sh\nexit 0\n", encoding="ascii"
+        )
+        shutil.copytree(
+            Path(__file__).resolve().parents[2] / "state-agent" / "managed",
+            agent / "managed",
         )
         return agent
 
@@ -326,6 +353,21 @@ class PayloadTests(unittest.TestCase):
         self.assertNotIn("telnet", app_start)
         self.assertNotIn("bootclock", app_start)
         self.assertNotIn("af203-live-log", app_start)
+        managed = feeder / "data" / "local-compat"
+        self.assertEqual(
+            (
+                Path(__file__).resolve().parents[2]
+                / "state-agent"
+                / "managed"
+                / "ping"
+            ).read_bytes(),
+            (managed / "bin" / "ping").read_bytes(),
+        )
+        self.assertEqual("enabled\n", (managed / "ping-shim.enabled").read_text())
+        self.assertEqual(0o755, (managed / "bin" / "ping").stat().st_mode & 0o777)
+        self.assertEqual(
+            0o700, (managed / "backup" / "app_start.sh").stat().st_mode & 0o777
+        )
         self.assertEqual(
             "installed_rebooting_to_ota1\n",
             (feeder / "data" / "plaf203-bootstrap" / "status").read_text(),

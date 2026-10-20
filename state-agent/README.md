@@ -44,6 +44,8 @@ allowed peers. Principal routes are:
 - `GET /v1/feed-events`: pending outbound firmware event slots (`?raw=1` adds
   bounded raw slot bytes);
 - `GET /v1/compatibility`: managed-file deployment and ping-mitigation status;
+- `POST /v1/compatibility/reconcile`: idempotently deploy all assets and enable
+  required compatibility features owned by this signed release;
 - `POST /v1/compatibility/deploy`: install the release-embedded ping shim and
   recognized guarded startup script;
 - `POST /v1/compatibility/enable` and `disable`: change only the opt-in marker;
@@ -222,9 +224,11 @@ in that separately reviewed operation.
 ## Release-managed compatibility files
 
 State Agent 0.4.0 embeds a small, build-generated asset table in the normally
-signed ELF. The authenticated API never accepts a path, file body, script, or
-command. Adding a future managed file requires adding it to the signed release
-source and a fixed installation rule.
+signed ELF. [`managed/manifest.json`](managed/manifest.json) is also consumed
+by the bootstrap payload, so fresh and upgraded installations use the same
+release-owned bytes, destinations, and modes. The authenticated API never
+accepts a path, file body, script, or command. Adding a future managed file
+requires adding it to the signed release source and a fixed installation rule.
 
 Deployment compares SHA-256 before writing, stages in the destination
 directory, applies the fixed mode, fsyncs the file, atomically renames it, and
@@ -238,13 +242,18 @@ only the exact confirmed `ping HOST -c 10` shape for the four known OEM probes,
 without output, and delegates every other invocation unchanged to the verified
 `/bin/ping` or `/usr/bin/ping`. The guarded startup script prepends the shim
 directory to the inherited PATH only for `AF203_FW` and its children, and only
-when `ping-shim.enabled` exists. Deployment does not create that marker,
-restart firmware, or reboot the feeder. Compatibility mutations return a
-conflict while a State Agent update transaction is outstanding.
+when `ping-shim.enabled` exists. The low-level `deploy` operation does not
+create that marker; `reconcile` deploys all release assets and enables required
+features. Neither operation restarts firmware or reboots the feeder.
+Compatibility mutations return a conflict while a State Agent update
+transaction is outstanding.
 
-Enable/disable changes desired state only. `active` is set by the boot launcher;
-`reboot_required` is true whenever desired and active state differ. A physical
-feeder reboot remains an explicit operator action.
+AppDaemon reconciles after a usable connection and after a confirmed State
+Agent update. Enable/disable changes desired state only. `active` is set by the
+boot launcher; `reboot_required` is true whenever desired and active state
+differ. Existing installations therefore wait for a natural or explicit
+operator reboot rather than interrupting OEM operation. The bootstrap payload
+installs the same assets before its already-required final reboot.
 
 Create a normal release manifest with:
 

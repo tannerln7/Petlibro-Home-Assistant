@@ -80,14 +80,6 @@ class Plaf203(adbase.ADBase):
         update_options = StateAgentUpdateOptions.from_mapping(
             self.args.get("state_agent_updates")
         )
-        self.updater = StateAgentUpdateCoordinator(
-            self.ad,
-            self.state,
-            state_agent,
-            PetlibroLogger(self.ad, "petlibro.updates", log_level),
-            update_options,
-        )
-        self.updater.start()
         self.compatibility = CompatibilityCoordinator(
             self.ad,
             self.state,
@@ -95,6 +87,15 @@ class Plaf203(adbase.ADBase):
             PetlibroLogger(self.ad, "petlibro.compatibility", log_level),
         )
         self.compatibility.start()
+        self.updater = StateAgentUpdateCoordinator(
+            self.ad,
+            self.state,
+            state_agent,
+            PetlibroLogger(self.ad, "petlibro.updates", log_level),
+            update_options,
+            update_complete_callback=self.compatibility.on_state_agent_update_complete,
+        )
+        self.updater.start()
         self.backend = Backend()
         self.backend.initialize(
             self.ad, self.mqtt, self.serial_number, log_level=log_level
@@ -126,7 +127,6 @@ class Plaf203(adbase.ADBase):
             self.state,
             self.logger,
             updater=self.updater,
-            compatibility=self.compatibility,
             raw_settings_diagnostics=self.logger.enabled("debug"),
         )
         self.commands.restore_local_preferences()

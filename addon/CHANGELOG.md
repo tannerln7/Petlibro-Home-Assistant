@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.15-beta.4
+
+- Log expected temporary State Agent unavailability during update activation at
+  debug level, while retaining a warning when bounded status polling expires.
+- Add structured info logs when a State Agent update starts and when its target
+  version is confirmed active; terminal failures retain warning severity.
+- Reconcile signed State Agent compatibility assets automatically after
+  connection and successful updates, including bounded recovery from transient
+  interruptions and compatibility with the earlier fixed-operation API.
+- Replace manual compatibility controls with one **Ping mitigation active**
+  diagnostic and remove obsolete retained Home Assistant discovery entries.
+- Make bootstrap consume the State Agent release's managed-asset manifest so
+  fresh installs deploy and enable the same guarded startup and ping mitigation
+  before the installer's existing final reboot.
+- Limit routine camera info logging to concise stream-started and stream-ended
+  lifecycle events while retaining transport and codec details at debug level.
+
 ## 0.3.15-beta.3
 
 - Give signed State Agent uploads a separate bounded timeout so slower feeder

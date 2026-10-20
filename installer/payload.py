@@ -5,7 +5,9 @@ from __future__ import annotations
 import base64
 import binascii
 import io
+import json
 import os
+import re
 import shutil
 import stat
 import struct
@@ -166,7 +168,7 @@ for required in \
     dropbear/LICENSE.dropbear \
     dropbear/BUILD_INFO.dropbear.json \
     authorized_keys \
-    app_start.sh; do
+    managed-assets/install.tsv; do
     if [ ! -s "$STAGE/$required" ]; then
         printf '%s\n' "archive_missing_$required" > "$JOURNAL"
         sync
@@ -312,11 +314,27 @@ fi
 chmod 755 "$TARGET"
 sync
 
-# Switch to OTA1 only after the restored executable has been verified.
+# Install the fixed assets defined by the State Agent release source. Every
+# destination was constrained to a relative path by the payload builder; each
+# replacement is staged beside its target before rename.
+PHASE=installing_managed_assets
+tab="$(printf "\\t")"
+while IFS="$tab" read -r asset destination mode; do
+    [ -n "$asset" ] || continue
+    source="$STAGE/managed-assets/$asset"
+    target="$ROOT/$destination"
+    [ -s "$source" ] || { FAIL_REASON="managed_asset_missing_$asset"; exit 74; }
+    mkdir -p "$(dirname "$target")"
+    rm -f "$target.new"
+    cp "$source" "$target.new"
+    chmod "$mode" "$target.new"
+    cmp "$source" "$target.new"
+    mv "$target.new" "$target"
+done < "$STAGE/managed-assets/install.tsv"
+
+# Switch to OTA1 only after the restored executable and managed startup have
+# been installed and verified.
 PHASE=selecting_production_ota1
-cp "$STAGE/app_start.sh" "$ROOT/app_start.sh.new"
-chmod 755 "$ROOT/app_start.sh.new"
-mv "$ROOT/app_start.sh.new" "$ROOT/app_start.sh"
 mkdir -p "$DATA/ota"
 printf "\000\000\000\000" > "$INDEX.new"
 mv "$INDEX.new" "$INDEX"
@@ -337,66 +355,69 @@ __PLAF203_BOOTSTRAP_ARCHIVE_BELOW__
 '''.encode("ascii")
 
 
-APP_START_TEMPLATE = r'''#!/bin/sh
+_REPOSITORY_MANAGED_DIR = Path(__file__).resolve().parents[1] / "state-agent" / "managed"
+APP_START_TEMPLATE = (_REPOSITORY_MANAGED_DIR / "app_start.sh").read_text(
+    encoding="ascii"
+)
 
-# Installed by the PLAF203 local bootstrap. Keep production startup minimal.
-/bin/sh /user/data/local-state-agent/app_start_snippet.sh
 
-if [ -f /user/data/enable_ssh ] && \
-   [ -x /user/data/dropbear/dropbear ] && \
-   [ -x /user/data/dropbear/dropbearkey ] && \
-   [ -s /user/data/dropbear/authorized_keys ]; then
-    mkdir -p /dev/pts /root/.ssh /user/data/dropbear
-    grep -q ' /dev/pts ' /proc/mounts 2>/dev/null || \
-        mount -t devpts devpts /dev/pts 2>/dev/null || true
-    chmod 700 /root /root/.ssh
-    cp /user/data/dropbear/authorized_keys /root/.ssh/authorized_keys
-    chmod 600 /root/.ssh/authorized_keys
-    if [ ! -s /user/data/dropbear/dropbear_ed25519_host_key ]; then
-        /user/data/dropbear/dropbearkey -t ed25519 \
-            -f /user/data/dropbear/dropbear_ed25519_host_key
-        chmod 600 /user/data/dropbear/dropbear_ed25519_host_key
-    fi
-    dropbear_running=false
-    if [ -r /tmp/dropbear.pid ]; then
-        dropbear_pid="$(cat /tmp/dropbear.pid 2>/dev/null || true)"
-        case "$dropbear_pid" in
-            ''|*[!0-9]*) ;;
-            *)
-                if [ -r "/proc/$dropbear_pid/cmdline" ]; then
-                    dropbear_cmdline="$(tr '\000' ' ' < "/proc/$dropbear_pid/cmdline")"
-                    case "$dropbear_cmdline" in
-                        /user/data/dropbear/dropbear\ *' -p 2222 '*)
-                            dropbear_running=true
-                            ;;
-                    esac
-                fi
-                ;;
-        esac
-    fi
-    if [ "$dropbear_running" != true ]; then
-        rm -f /tmp/dropbear.pid
-        /user/data/dropbear/dropbear \
-            -r /user/data/dropbear/dropbear_ed25519_host_key \
-            -p 2222 -s -P /tmp/dropbear.pid
-    fi
-fi
+def _stage_managed_assets(source: Path, destination: Path) -> None:
+    """Validate and stage the release-owned fixed asset manifest."""
 
-# The mitigation is opt-in. Missing or disabled compatibility files always
-# fall back to the original OEM launch path.
-rm -f /tmp/plaf203-ping-shim-active
-if [ -f /user/data/local-compat/ping-shim.enabled ] && \
-   [ -x /user/data/local-compat/bin/ping ]; then
-    if touch /tmp/plaf203-ping-shim-active; then
-        PATH="/user/data/local-compat/bin:${PATH:-/usr/bin:/bin}" \
-            /user/ota1/AF203_FW &
-    else
-        /user/ota1/AF203_FW &
-    fi
-else
-    /user/ota1/AF203_FW &
-fi
-'''
+    document = json.loads((source / "manifest.json").read_text(encoding="utf-8"))
+    assets = document.get("assets") if isinstance(document, dict) else None
+    if not isinstance(document, dict) or document.get(
+        "schema_version"
+    ) != 1 or not isinstance(assets, list):
+        raise ValueError("invalid managed asset manifest")
+    destination.mkdir()
+    install_rows: list[tuple[bool, str]] = []
+    names: set[str] = set()
+    paths: set[str] = set()
+    for asset in assets:
+        if not isinstance(asset, dict):
+            raise ValueError("invalid managed asset entry")
+        name = asset.get("name")
+        target = asset.get("destination")
+        mode = asset.get("mode")
+        activation = asset.get("activation", False)
+        if (
+            not isinstance(name, str)
+            or re.fullmatch(r"[a-z0-9_]+", name) is None
+            or name in names
+            or not isinstance(target, str)
+            or target.startswith("/")
+            or ".." in Path(target).parts
+            or re.fullmatch(r"[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*", target)
+            is None
+            or target in paths
+            or mode not in {"0600", "0700", "0755"}
+            or not isinstance(activation, bool)
+        ):
+            raise ValueError("unsafe managed asset entry")
+        names.add(name)
+        paths.add(target)
+        source_name = asset.get("source")
+        content = asset.get("content")
+        has_source = isinstance(source_name, str)
+        has_content = isinstance(content, str)
+        if has_source == has_content:
+            raise ValueError("managed asset must define one safe source or content")
+        if has_source and Path(source_name).name == source_name:
+            data = (source / source_name).read_bytes()
+        elif has_content:
+            data = content.encode("ascii")
+        else:
+            raise ValueError("managed asset must define one safe source or content")
+        if not data:
+            raise ValueError("managed asset must not be empty")
+        (destination / name).write_bytes(data)
+        install_rows.append((activation, f"{name}\t{target}\t{mode}\n"))
+    (destination / "install.tsv").write_text(
+        "".join(row for activation, row in install_rows if not activation)
+        + "".join(row for activation, row in install_rows if activation),
+        encoding="ascii",
+    )
 
 
 def _copy_required(source: Path, destination: Path) -> None:
@@ -522,7 +543,7 @@ def build_payload(
             raise ValueError("failed to specialize State Agent allowlist")
         run_path.write_text(run_text, encoding="utf-8")
         (agent / "token").write_text(state_agent_token + "\n", encoding="ascii")
-        (root / "app_start.sh").write_text(APP_START_TEMPLATE, encoding="ascii")
+        _stage_managed_assets(state_agent_dir / "managed", root / "managed-assets")
         (root / "authorized_keys").write_text(key + "\n", encoding="ascii")
 
         target = root / "dropbear"

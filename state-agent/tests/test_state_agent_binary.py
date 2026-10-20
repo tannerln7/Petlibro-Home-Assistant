@@ -777,6 +777,42 @@ def test_compatibility_deploy_is_idempotent_opt_in_and_recoverable(
         assert after_reboot["reboot_required"] is False
 
 
+def test_compatibility_reconcile_deploys_and_enables_without_claiming_active(
+    state_agent_binary, tmp_path
+):
+    data, startup, active = _compatibility_fixture(tmp_path)
+    with RunningAgent(
+        state_agent_binary,
+        data,
+        startup_script=startup,
+        compat_active_marker=active,
+    ) as agent:
+        status, reconciled = _post_raw(
+            agent.port,
+            "/v1/compatibility/reconcile",
+            {"Authorization": f"Bearer {TOKEN}", "Content-Length": "0"},
+            b"",
+        )
+        assert status == 200
+        assert reconciled["deployed"] is True
+        assert reconciled["enabled"] is True
+        assert reconciled["active"] is False
+        assert reconciled["reboot_required"] is True
+
+        shim = data / "local-compat" / "bin" / "ping"
+        first_mtimes = (shim.stat().st_mtime_ns, startup.stat().st_mtime_ns)
+        status, reconciled_again = _post_raw(
+            agent.port,
+            "/v1/compatibility/reconcile",
+            {"Authorization": f"Bearer {TOKEN}", "Content-Length": "0"},
+            b"",
+        )
+
+    assert status == 200
+    assert reconciled_again["enabled"] is True
+    assert first_mtimes == (shim.stat().st_mtime_ns, startup.stat().st_mtime_ns)
+
+
 def test_compatibility_deploy_rejects_unrecognized_startup_without_replacing_it(
     state_agent_binary, tmp_path
 ):
@@ -861,7 +897,7 @@ def test_original_ping_resolution_rejects_delegation_back_to_managed_shim(
 
 
 @pytest.mark.parametrize(
-    "operation", ("deploy", "enable", "disable", "restore-startup")
+    "operation", ("reconcile", "deploy", "enable", "disable", "restore-startup")
 )
 def test_compatibility_mutations_are_blocked_during_state_agent_update(
     state_agent_binary, tmp_path, operation

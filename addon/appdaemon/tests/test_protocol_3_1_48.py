@@ -89,7 +89,7 @@ class FakeMqtt:
         self.published = []
 
     def mqtt_publish(self, topic, payload, **kwargs):
-        self.published.append((topic, json.loads(payload)))
+        self.published.append((topic, json.loads(payload) if payload else None))
 
 
 class ProtocolCompatibilityTests(unittest.TestCase):

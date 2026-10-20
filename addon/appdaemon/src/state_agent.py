@@ -22,6 +22,18 @@ class StateAgentUnavailable(StateAgentError):
     pass
 
 
+class StateAgentUnsupported(StateAgentError):
+    """The connected agent does not implement the requested API capability."""
+
+
+class StateAgentConflict(StateAgentError):
+    """A fixed State Agent operation was rejected in its current state."""
+
+    def __init__(self, reason: str = "operation_conflict"):
+        super().__init__(reason)
+        self.reason = reason
+
+
 class StateAgentUnauthorized(StateAgentError):
     pass
 
@@ -601,6 +613,11 @@ class StateAgentClient:
     def compatibility_status(self) -> CompatibilityStatus:
         return CompatibilityStatus.from_dict(self._get("/v1/compatibility"))
 
+    def compatibility_reconcile(self) -> CompatibilityStatus:
+        return CompatibilityStatus.from_dict(
+            self._post_empty_json("/v1/compatibility/reconcile")
+        )
+
     def compatibility_deploy(self) -> CompatibilityStatus:
         return CompatibilityStatus.from_dict(
             self._post_empty_json("/v1/compatibility/deploy")
@@ -697,6 +714,29 @@ class StateAgentClient:
                 raise StateAgentUnauthorized(
                     "state agent rejected authentication"
                 ) from None
+            if exc.code in {404, 405}:
+                raise StateAgentUnsupported(
+                    "state agent capability is unavailable"
+                ) from None
+            if exc.code == 409:
+                reason = "operation_conflict"
+                try:
+                    document = json.loads(exc.read(1025).decode("utf-8"))
+                    candidate = document.get("error") if isinstance(document, dict) else None
+                    if (
+                        isinstance(candidate, str)
+                        and 0 < len(candidate) <= 96
+                        and all(
+                            character.islower()
+                            or character.isdigit()
+                            or character == "_"
+                            for character in candidate
+                        )
+                    ):
+                        reason = candidate
+                except (UnicodeDecodeError, json.JSONDecodeError, OSError):
+                    pass
+                raise StateAgentConflict(reason) from None
             raise StateAgentUnavailable(
                 f"state agent returned HTTP status {exc.code}"
             ) from None
@@ -723,6 +763,7 @@ class UnavailableStateAgentClient:
     update_status = _unavailable
     submit_update = _unavailable
     compatibility_status = _unavailable
+    compatibility_reconcile = _unavailable
     compatibility_deploy = _unavailable
     compatibility_enable = _unavailable
     compatibility_disable = _unavailable

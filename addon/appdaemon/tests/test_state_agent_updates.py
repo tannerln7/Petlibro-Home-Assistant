@@ -230,14 +230,17 @@ class _FakeStatePublisher:
 
 
 class _FakeLogger:
-    def debug(self, *_args, **_kwargs):
-        return None
+    def __init__(self):
+        self.events = []
 
-    def info(self, *_args, **_kwargs):
-        return None
+    def debug(self, message, **kwargs):
+        self.events.append(("debug", message, kwargs))
 
-    def warning(self, *_args, **_kwargs):
-        return None
+    def info(self, message, **kwargs):
+        self.events.append(("info", message, kwargs))
+
+    def warning(self, message, **kwargs):
+        self.events.append(("warning", message, kwargs))
 
 
 class _FakeAgent:
@@ -280,7 +283,7 @@ class _FakeAgent:
         return self._Submit()
 
 
-def _coordinator(tmp_path: Path, *, agent=None):
+def _coordinator(tmp_path: Path, *, agent=None, update_complete_callback=None):
     key = Ed25519PrivateKey.generate()
     key_path = tmp_path / "release-key.hex"
     key_path.write_text(key.public_key().public_bytes_raw().hex(), encoding="utf-8")
@@ -294,6 +297,7 @@ def _coordinator(tmp_path: Path, *, agent=None):
             manifest_url="https://updates.example.invalid/latest.json",
         ),
         public_key_path=str(key_path),
+        update_complete_callback=update_complete_callback,
     )
 
 
@@ -375,6 +379,11 @@ def test_coordinator_throttle_and_force(monkeypatch, tmp_path: Path):
     assert coordinator.state_agent.update_payloads[0][:8] == b"PLAFOTA1"
     assert coordinator._latest_state.in_progress is True
     assert agent.status_calls == 2  # update checks only; accepted upload starts polling later
+    assert (
+        "info",
+        "state-agent update started",
+        {"previous_version": "1.0.0", "target_version": "1.2.3"},
+    ) in coordinator.logger.events
 
 
 def test_status_poll_queries_only_the_feeder(monkeypatch, tmp_path: Path):
@@ -428,6 +437,15 @@ def test_status_poll_error_preserves_progress_and_retries(tmp_path: Path):
     assert coordinator._latest_state.in_progress is True
     assert coordinator._status_poll_attempts == 1
     assert len(coordinator.ad.timers) == 1
+    assert coordinator.logger.events[-1] == (
+        "debug",
+        "state-agent update status temporarily unavailable",
+        {
+            "error_type": "RuntimeError",
+            "attempt": 1,
+            "attempt_limit": update_module.STATUS_POLL_MAX_ATTEMPTS,
+        },
+    )
 
 
 def test_executor_error_during_install_reaches_callback_and_clears_busy(
@@ -508,6 +526,68 @@ def test_status_poll_recovers_after_expected_agent_restart(tmp_path: Path):
     assert coordinator._latest_state.in_progress is False
     assert coordinator._status_poll_attempts == 0
     assert coordinator.ad.timers == []
+    assert coordinator.logger.events[-1] == (
+        "info",
+        "state-agent update complete",
+        {"previous_version": "1.0.0", "installed_version": "1.2.3"},
+    )
+
+
+def test_confirmed_update_schedules_release_compatibility_reconciliation(
+    tmp_path: Path,
+):
+    completed = []
+    coordinator = _coordinator(
+        tmp_path, update_complete_callback=completed.append
+    )
+    coordinator._latest_state = UpdateStateSnapshot(
+        installed_version="1.0.0",
+        latest_version="1.2.3",
+        release_url="https://example.invalid/releases/1.2.3",
+        in_progress=True,
+    )
+
+    coordinator._on_status_poll_finished(
+        result=UpdateStateSnapshot(
+            installed_version="1.2.3",
+            latest_version="1.2.3",
+            release_url="https://example.invalid/releases/1.2.3",
+            in_progress=False,
+        )
+    )
+
+    assert completed == ["1.2.3"]
+
+
+def test_terminal_update_failure_retains_warning_severity(tmp_path: Path):
+    coordinator = _coordinator(tmp_path)
+    coordinator._latest_state = UpdateStateSnapshot(
+        installed_version="1.0.0",
+        latest_version="1.2.3",
+        release_url="https://example.invalid/releases/1.2.3",
+        in_progress=True,
+    )
+
+    coordinator._on_status_poll_finished(
+        result=UpdateStateSnapshot(
+            installed_version="1.0.0",
+            latest_version="1.2.3",
+            release_url="https://example.invalid/releases/1.2.3",
+            in_progress=False,
+            last_error="rolled_back",
+        )
+    )
+
+    assert coordinator.logger.events[-1] == (
+        "warning",
+        "state-agent update failed",
+        {
+            "previous_version": "1.0.0",
+            "target_version": "1.2.3",
+            "installed_version": "1.0.0",
+            "reason": "rolled_back",
+        },
+    )
 
 
 def test_busy_status_poll_is_rescheduled_instead_of_dropped(tmp_path: Path):
@@ -535,6 +615,12 @@ def test_status_poll_exhaustion_publishes_terminal_timeout(tmp_path: Path):
     assert coordinator._latest_state.in_progress is False
     assert coordinator._latest_state.last_error == "update status timed out"
     assert coordinator.state.messages[-1][1]["last_error"] == "update status timed out"
+    warning_messages = [
+        message
+        for level, message, _fields in coordinator.logger.events
+        if level == "warning"
+    ]
+    assert warning_messages == ["state-agent update status polling timed out"]
 
 
 def test_manifest_option_rejects_query_parameters():

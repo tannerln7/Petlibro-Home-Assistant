@@ -1,12 +1,16 @@
+import io
 import json
 from dataclasses import replace
 from unittest.mock import patch
+from urllib import error as url_error
 
 import pytest
 from state_agent import (
     FeederTruth,
     StateAgentBadResponse,
     StateAgentClient,
+    StateAgentConflict,
+    StateAgentUnsupported,
     StateAgentUpdateStatus,
     diff_settings_raw,
 )
@@ -320,10 +324,11 @@ def test_client_parses_and_invokes_fixed_compatibility_operations():
     client = StateAgentClient(
         "http://192.0.2.1:8765", "synthetic-test-token", timeout_seconds=1
     )
-    responses = [FakeResponse(payload) for _ in range(5)]
+    responses = [FakeResponse(payload) for _ in range(6)]
 
     with patch("state_agent.request.urlopen", side_effect=responses) as urlopen:
         assert client.compatibility_status().deployed is True
+        assert client.compatibility_reconcile().enabled is False
         assert client.compatibility_deploy().last_reason == "already_current"
         assert client.compatibility_enable().supported is True
         assert client.compatibility_disable().enabled is False
@@ -331,6 +336,7 @@ def test_client_parses_and_invokes_fixed_compatibility_operations():
 
     assert [call.args[0].full_url for call in urlopen.call_args_list] == [
         "http://192.0.2.1:8765/v1/compatibility",
+        "http://192.0.2.1:8765/v1/compatibility/reconcile",
         "http://192.0.2.1:8765/v1/compatibility/deploy",
         "http://192.0.2.1:8765/v1/compatibility/enable",
         "http://192.0.2.1:8765/v1/compatibility/disable",
@@ -342,4 +348,33 @@ def test_client_parses_and_invokes_fixed_compatibility_operations():
         "POST",
         "POST",
         "POST",
+        "POST",
     ]
+
+
+def test_client_distinguishes_missing_capability_and_sanitized_conflict():
+    client = StateAgentClient(
+        "http://192.0.2.1:8765", "synthetic-test-token", timeout_seconds=1
+    )
+    unsupported = url_error.HTTPError(
+        "http://192.0.2.1:8765/v1/compatibility/reconcile",
+        405,
+        "Method Not Allowed",
+        {},
+        io.BytesIO(b'{"error":"method not allowed"}'),
+    )
+    with patch("state_agent.request.urlopen", side_effect=unsupported):
+        with pytest.raises(StateAgentUnsupported):
+            client.compatibility_reconcile()
+
+    conflict = url_error.HTTPError(
+        "http://192.0.2.1:8765/v1/compatibility/reconcile",
+        409,
+        "Conflict",
+        {},
+        io.BytesIO(b'{"error":"state_agent_update_in_progress"}'),
+    )
+    with patch("state_agent.request.urlopen", side_effect=conflict):
+        with pytest.raises(StateAgentConflict) as raised:
+            client.compatibility_reconcile()
+    assert raised.value.reason == "state_agent_update_in_progress"
