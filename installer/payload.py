@@ -382,7 +382,20 @@ if [ -f /user/data/enable_ssh ] && \
     fi
 fi
 
-/user/ota1/AF203_FW &
+# The mitigation is opt-in. Missing or disabled compatibility files always
+# fall back to the original OEM launch path.
+rm -f /tmp/plaf203-ping-shim-active
+if [ -f /user/data/local-compat/ping-shim.enabled ] && \
+   [ -x /user/data/local-compat/bin/ping ]; then
+    if touch /tmp/plaf203-ping-shim-active; then
+        PATH="/user/data/local-compat/bin:${PATH:-/usr/bin:/bin}" \
+            /user/ota1/AF203_FW &
+    else
+        /user/ota1/AF203_FW &
+    fi
+else
+    /user/ota1/AF203_FW &
+fi
 '''
 
 

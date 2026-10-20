@@ -1,0 +1,95 @@
+name: Build State Agent release artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Full committed source revision to build
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Validate and build ARM release
+    if: github.repository == 'tannerln7/Petlibro-Home-Assistant'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate requested revision
+        env:
+          REVISION: ${{ inputs.revision }}
+        run: |
+          if [[ ! "$REVISION" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::revision must be a full lower-case commit SHA"
+            exit 1
+          fi
+
+      - name: Check out exact revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.revision }}
+          persist-credentials: false
+
+      - name: Confirm exact source and prerelease version
+        id: release
+        env:
+          REVISION: ${{ inputs.revision }}
+        run: |
+          set -euo pipefail
+          actual=$(git rev-parse HEAD)
+          if [[ "$actual" != "$REVISION" ]]; then
+            echo "::error::checkout resolved to $actual instead of $REVISION"
+            exit 1
+          fi
+          version=$(tr -d '\r\n' < state-agent/VERSION)
+          python3 state-agent/scripts/validate_development_release.py version "$version"
+          {
+            echo "revision=$actual"
+            echo "short_revision=${actual:0:12}"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install strict validation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends gcc-arm-linux-gnueabihf libc6-dev-armhf-cross shellcheck
+          python3 -m venv .venv
+          .venv/bin/python -m pip install -r addon/appdaemon/requirements-dev.txt
+          .venv/bin/python -m pip install -r installer/requirements.txt
+
+      - name: Run strict repository validation
+        run: PYTHON_BIN=.venv/bin/python ./scripts/validate.sh --strict
+
+      - name: Record exact build metadata
+        env:
+          REVISION: ${{ steps.release.outputs.revision }}
+        run: |
+          set -euo pipefail
+          mkdir -p state-agent/release-output
+          cp state-agent/plaf203-state-agent state-agent/release-output/plaf203-state-agent
+          chmod 0755 state-agent/release-output/plaf203-state-agent
+          python3 state-agent/scripts/validate_development_release.py metadata \
+            --artifact state-agent/release-output/plaf203-state-agent \
+            --source-revision "$REVISION" \
+            --output state-agent/release-output/build-metadata.json
+
+      - name: Upload immutable workflow artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: state-agent-${{ steps.release.outputs.version }}-${{ steps.release.outputs.short_revision }}
+          path: state-agent/release-output/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Summarize artifact
+        run: |
+          {
+            echo '### State Agent release candidate'
+            echo '- Source: `${{ steps.release.outputs.revision }}`'
+            echo '- Version: `${{ steps.release.outputs.version }}`'
+            echo '- Artifact: `state-agent-${{ steps.release.outputs.version }}-${{ steps.release.outputs.short_revision }}`'
+            echo '- Signing: not performed in GitHub Actions'
+          } >> "$GITHUB_STEP_SUMMARY"

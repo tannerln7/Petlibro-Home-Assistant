@@ -126,6 +126,21 @@ state_agent_updates:
   check_interval_hours: 24
 ```
 
+The stable URL above remains the default. For an explicit hardware-qualification
+installation only, opt into State Agent prereleases by replacing it with:
+
+```yaml
+state_agent_updates:
+  enabled: true
+  manifest_url: https://raw.githubusercontent.com/tannerln7/Petlibro-Home-Assistant/state-agent-releases/state-agent/dev/latest.json
+  check_on_connect: true
+  check_interval_hours: 24
+```
+
+Selecting the add-on's `develop` branch does not implicitly select this State
+Agent feed; the URL must be changed deliberately. Return to the stable URL
+after qualification if prerelease updates are no longer desired.
+
 `manifest_url` is required when enabled and must be HTTPS without credentials,
 query parameters, or a fragment. `check_interval_hours` is an integer from 1
 through 168. `check_on_connect` permits a throttled check after a usable feeder

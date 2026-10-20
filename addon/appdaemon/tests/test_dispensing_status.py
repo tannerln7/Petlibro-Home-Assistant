@@ -362,6 +362,8 @@ def test_backend_preserves_grain_event_mappings(step, expected):
         actual_grain_num=1,
         message_id=MessageId("grain"),
         timestamp=Timestamp.now(),
+        exec_time=Timestamp.now(),
+        error_code=None,
     )
 
     backend._grain_output_event_cb(event)

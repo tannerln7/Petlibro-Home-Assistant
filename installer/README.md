@@ -51,6 +51,11 @@ The terminal interface guides the normal sequence in one session:
     account, redirect OEM MQTT to the final broker, and write the add-on options
     patch.
 
+The installed `app_start.sh` contains an inactive guarded compatibility hook.
+It launches OEM firmware exactly as before unless the State Agent-managed ping
+shim and explicit enable marker both exist. New installations and installations
+migrated later by State Agent therefore converge on the same startup layout.
+
 No DNS rewrite or OEM account metadata is required by the direct-provisioning
 implementation. The installer supplies all protocol-internal compatibility
 values without prompting the user.

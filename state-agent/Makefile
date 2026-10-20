@@ -18,6 +18,8 @@ SOURCES := \
 UPDATE_HELPER_SOURCE := plaf203_update_fs.c
 
 GENERATED_HEADER := $(BUILD_DIR)/generated_release_metadata.h
+MANAGED_ASSETS_HEADER := $(BUILD_DIR)/generated_managed_assets.h
+MANAGED_ASSETS := managed/ping managed/app_start.sh managed/app_start.legacy.sh
 
 SEMVER_RE := ^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*))?(\\+([0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*))?$$
 
@@ -75,14 +77,17 @@ $(GENERATED_HEADER): $(VERSION_FILE) $(PUBLIC_KEY_HEX_FILE) | $(BUILD_DIR)
 		echo '#endif'; \
 	} > "$(GENERATED_HEADER)"
 
-$(BINARY): $(SOURCES) $(GENERATED_HEADER)
-	$(CC) $(CPPFLAGS) -include "$(GENERATED_HEADER)" $(CFLAGS) -o "$@" $(SOURCES) $(LDFLAGS)
+$(MANAGED_ASSETS_HEADER): $(MANAGED_ASSETS) scripts/generate_managed_assets.py | $(BUILD_DIR)
+	python3 scripts/generate_managed_assets.py managed "$@"
+
+$(BINARY): $(SOURCES) $(GENERATED_HEADER) $(MANAGED_ASSETS_HEADER)
+	$(CC) $(CPPFLAGS) -include "$(GENERATED_HEADER)" -include "$(MANAGED_ASSETS_HEADER)" $(CFLAGS) -o "$@" $(SOURCES) $(LDFLAGS)
 
 $(UPDATE_HELPER): $(UPDATE_HELPER_SOURCE)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o "$@" $(UPDATE_HELPER_SOURCE) $(LDFLAGS)
 
-arm-release: $(GENERATED_HEADER)
-	arm-linux-gnueabihf-gcc $(CPPFLAGS) -include "$(GENERATED_HEADER)" \
+arm-release: $(GENERATED_HEADER) $(MANAGED_ASSETS_HEADER)
+	arm-linux-gnueabihf-gcc $(CPPFLAGS) -include "$(GENERATED_HEADER)" -include "$(MANAGED_ASSETS_HEADER)" \
 	  -Os -Wall -Wextra -Werror -std=c99 \
 	  -march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard -fno-ident \
 	  -frandom-seed=plaf203-state-agent \

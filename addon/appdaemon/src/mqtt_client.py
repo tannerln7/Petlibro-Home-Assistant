@@ -17,6 +17,7 @@ from protocol import (
     DeviceConfigSyncIn,
     DeviceRebootIn,
     DeviceStartEventIn,
+    ErrorEventIn,
     FeedingPlanServiceIn,
     GetConfigIn,
     GetFeedingPlanEventIn,
@@ -76,6 +77,7 @@ INBOUND_MESSAGES = {
     Commands.GRAIN_OUTPUT_EVENT: InboundMessage(
         "event", GrainOutputEventIn.from_mqtt_payload
     ),
+    Commands.ERROR_EVENT: InboundMessage("event", ErrorEventIn.from_mqtt_payload),
     Commands.GET_CONFIG: InboundMessage("config", GetConfigIn.from_mqtt_payload),
     Commands.RESTORE: InboundMessage("system", RestoreIn.from_mqtt_payload),
 }
@@ -154,6 +156,9 @@ class Client:
 
     def grain_output_event_listen(self, callback):
         self._listen(Commands.GRAIN_OUTPUT_EVENT, callback)
+
+    def error_event_listen(self, callback):
+        self._listen(Commands.ERROR_EVENT, callback)
 
     def initialize_sd_card_service_listen(self, callback):
         self._listen(Commands.INITIALIZE_SD_CARD_SERVICE, callback)

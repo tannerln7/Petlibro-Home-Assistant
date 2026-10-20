@@ -18,7 +18,9 @@ The agent:
 - validates exact file sizes before decoding;
 - returns semantic values, optional raw bytes, and stable revisions;
 - classifies decoded fields as `persistent`, `effective_cached`, or `runtime`;
-- exposes pending firmware feed events as a queue, not durable history; and
+- exposes both pending normal and error firmware feed-event rings, not durable
+  history;
+- deploys a fixed allowlist of release-embedded compatibility assets; and
 - stages signed agent updates for activation by its runit supervisor.
 
 Only `persistent` fields may verify a user command. Firmware-calculated cache
@@ -41,19 +43,30 @@ allowed peers. Principal routes are:
   (`?raw=1` adds diagnostic bytes);
 - `GET /v1/feed-events`: pending outbound firmware event slots (`?raw=1` adds
   bounded raw slot bytes);
+- `GET /v1/compatibility`: managed-file deployment and ping-mitigation status;
+- `POST /v1/compatibility/deploy`: install the release-embedded ping shim and
+  recognized guarded startup script;
+- `POST /v1/compatibility/enable` and `disable`: change only the opt-in marker;
+- `POST /v1/compatibility/restore-startup`: restore the validated legacy
+  startup backup;
 - `GET /v1/version`: installed agent/API/platform metadata;
 - `GET /v1/update-status`: durable update transaction state;
 - `POST /v1/update`: fixed-format signed update upload.
 
 `state.bin` must be exactly 236 bytes. Feeding plans are decoded as exact
 47-byte records; schedule equality excludes runtime execution and regenerated
-sync metadata. `feed_rec.bin` is a ring of pending 93-byte event slots and must
-not be presented as permanent feed history.
+sync metadata. `feed_rec.bin` and `err_feed_rec.bin` are rings of pending
+93-byte event slots and must not be presented as permanent feed history. Their
+firmware range is `(head, tail]`: `head` is the last consumed slot and `tail`
+is the last enqueued slot. `/v1/feed-events` retains `events` for the normal
+ring and adds `error_events`; every item includes `source_ring`.
 
 The OEM firmware owns these files and may update them independently. Shape,
-bounds, and semantic validation reject malformed inputs, but the read-only
-agent cannot make a multi-file read atomic or prove that every file belongs to
-one firmware generation. Persistent writes therefore rely on AppDaemon's fresh
+bounds, and semantic validation reject malformed inputs. Feed-event reads
+sample all four queue indices before and after the two record files and retry
+up to three times; `snapshot_consistent` reports whether the index generations
+matched. This cannot make a multi-file read atomic or prove that record bytes
+did not change while indices remained fixed. Persistent writes therefore rely on AppDaemon's fresh
 preflight and post-acknowledgement verification rather than a State Agent
 stabilization heuristic.
 
@@ -126,6 +139,111 @@ The runit supervisor—not the HTTP process—owns activation:
 Transaction phases are persisted so reboot recovery can finish a proven
 candidate or resume rollback. The fixed-path `plaf203-update-fs` helper performs
 file/directory fsync around transaction-significant replacement and cleanup.
+
+### Stable and development feeds
+
+The two feeds use the same manifest schema, Ed25519 trust anchor, update frame,
+and feeder-side verification:
+
+- stable: `state-agent/latest.json` on `state-agent-releases`;
+- development: `state-agent/dev/latest.json` on `state-agent-releases`.
+
+The manifest `channel` remains `stable` in both feeds for protocol
+compatibility. Development selection is explicitly controlled by its URL and a
+SemVer prerelease such as `0.4.0-rc.1`; existing installations remain on the
+stable URL unless reconfigured.
+
+Development builds are produced without signing credentials by
+[`build-state-agent-release.yml`](../.github/workflows/build-state-agent-release.yml).
+After committing and pushing the candidate source, dispatch the workflow for
+that exact full revision:
+
+```bash
+SOURCE_SHA="$(git rev-parse HEAD)"
+gh workflow run build-state-agent-release.yml \
+  --ref develop -f revision="$SOURCE_SHA"
+gh run list --workflow build-state-agent-release.yml --limit 5
+```
+
+The workflow runs strict validation, builds the static ARMv7 hard-float ELF,
+and uploads the binary plus metadata binding its SHA-256, size, version, trust
+anchor, and source revision. It never has access to the private signing key.
+
+The local publisher requires authenticated `gh` and Git push access, Python
+with `cryptography`, and the `file` and `readelf` commands. Keep the private key
+in a mode-restricted location outside the repository and pass only its path or
+seed through `PETLIBRO_STATE_AGENT_SIGNING_KEY`; do not put it in workflow
+secrets, command arguments, logs, release worktrees, or shell history.
+
+After the workflow succeeds, prepare a clean release-branch worktree and run
+the local publisher with the established key outside this repository:
+
+```bash
+git fetch origin state-agent-releases
+git worktree add /srv/dev/worktrees/petlibro-state-agent-releases \
+  state-agent-releases
+
+export PETLIBRO_STATE_AGENT_SIGNING_KEY=/secure/path/state-agent-ed25519.pem
+python3 state-agent/scripts/validate_development_release.py publish \
+  --workflow-run-id RUN_ID \
+  --source-revision "$SOURCE_SHA" \
+  --release-worktree /srv/dev/worktrees/petlibro-state-agent-releases
+```
+
+The publisher verifies the successful workflow run and exact source revision,
+rejects stable versions and non-ARM artifacts, and requires the signing key to
+match the committed trust anchor through `build_release_manifest.py`. It then:
+
+1. rejects an existing immutable `state-agent/dev/VERSION` path or a version
+   not newer than the current development pointer;
+2. commits and pushes the immutable binary first;
+3. downloads the commit-pinned raw URL without redirects and verifies it;
+4. signs the canonical manifest locally;
+5. commits and pushes only `state-agent/dev/latest.json` and its detached
+   `latest.json.sig`;
+6. downloads the public feed and artifact and verifies them with the add-on's
+   release validation code.
+
+It snapshots the stable manifest and signature and aborts if either changes.
+Normal Git pushes are used, so concurrent or non-fast-forward publication also
+fails closed. If publication stops after the immutable artifact commit but
+before the manifest commit, inspect the release worktree and rerun with
+`--resume`; the existing artifact must match exactly. Never replace a published
+version directory. If an incorrect manifest was already published, restore
+service by publishing a higher prerelease after correcting the source; do not
+rewrite the artifact or force-push the release branch.
+
+Promotion is a new stable build, not a rename: after hardware qualification,
+set `VERSION` to `0.4.0`, rebuild from the promoted stable source, and follow
+the existing stable publication process below. Stable `latest.json` moves only
+in that separately reviewed operation.
+
+## Release-managed compatibility files
+
+State Agent 0.4.0 embeds a small, build-generated asset table in the normally
+signed ELF. The authenticated API never accepts a path, file body, script, or
+command. Adding a future managed file requires adding it to the signed release
+source and a fixed installation rule.
+
+Deployment compares SHA-256 before writing, stages in the destination
+directory, applies the fixed mode, fsyncs the file, atomically renames it, and
+fsyncs the directory. The boot-critical `/user/app_start.sh` is replaced only
+when it exactly matches the recognized legacy installer template. A validated
+mode-0700 backup is created first; unknown or user-modified startup content is
+rejected. Repeating deployment does not rewrite matching files.
+
+The initial asset is `/user/data/local-compat/bin/ping`. It immediately fails
+only the exact confirmed `ping HOST -c 10` shape for the four known OEM probes,
+without output, and delegates every other invocation unchanged to the verified
+`/bin/ping` or `/usr/bin/ping`. The guarded startup script prepends the shim
+directory to the inherited PATH only for `AF203_FW` and its children, and only
+when `ping-shim.enabled` exists. Deployment does not create that marker,
+restart firmware, or reboot the feeder. Compatibility mutations return a
+conflict while a State Agent update transaction is outstanding.
+
+Enable/disable changes desired state only. `active` is set by the boot launcher;
+`reboot_required` is true whenever desired and active state differ. A physical
+feeder reboot remains an explicit operator action.
 
 Create a normal release manifest with:
 

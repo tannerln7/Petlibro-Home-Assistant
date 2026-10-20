@@ -200,6 +200,10 @@ def test_client_sends_bearer_auth_and_parses_all_read_only_endpoints():
                 "err_queue": {"head": 255, "tail": 255, "pending": False},
                 "semantics": "pending_outbound_events_not_history",
                 "events": [],
+                "error_events": [],
+                "snapshot_consistent": True,
+                "normal_ring_valid": True,
+                "error_ring_valid": False,
             }
         ),
     ]
@@ -281,3 +285,46 @@ def test_client_parses_version_update_status_and_update_submit_result():
     assert post_request.get_method() == "POST"
     header_pairs = {key.lower(): value for key, value in post_request.header_items()}
     assert header_pairs.get("content-type") == "application/octet-stream"
+
+
+def test_client_parses_and_invokes_fixed_compatibility_operations():
+    payload = {
+        "ok": True,
+        "asset_version": "0.4.0",
+        "original_ping_path": "/bin/ping",
+        "supported": True,
+        "deployed": True,
+        "shim_current": True,
+        "startup_current": True,
+        "backup_available": True,
+        "enabled": False,
+        "active": False,
+        "reboot_required": False,
+        "last_reason": "already_current",
+    }
+    client = StateAgentClient(
+        "http://192.0.2.1:8765", "synthetic-test-token", timeout_seconds=1
+    )
+    responses = [FakeResponse(payload) for _ in range(5)]
+
+    with patch("state_agent.request.urlopen", side_effect=responses) as urlopen:
+        assert client.compatibility_status().deployed is True
+        assert client.compatibility_deploy().last_reason == "already_current"
+        assert client.compatibility_enable().supported is True
+        assert client.compatibility_disable().enabled is False
+        assert client.compatibility_restore_startup().startup_current is True
+
+    assert [call.args[0].full_url for call in urlopen.call_args_list] == [
+        "http://192.0.2.1:8765/v1/compatibility",
+        "http://192.0.2.1:8765/v1/compatibility/deploy",
+        "http://192.0.2.1:8765/v1/compatibility/enable",
+        "http://192.0.2.1:8765/v1/compatibility/disable",
+        "http://192.0.2.1:8765/v1/compatibility/restore-startup",
+    ]
+    assert [call.args[0].method for call in urlopen.call_args_list] == [
+        "GET",
+        "POST",
+        "POST",
+        "POST",
+        "POST",
+    ]

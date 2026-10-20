@@ -286,7 +286,18 @@ def _feed_phase(
     return record
 
 
-def _write_snapshot(root, *, state=None, plans=(), feed=None, head=0, tail=0):
+def _write_snapshot(
+    root,
+    *,
+    state=None,
+    plans=(),
+    feed=None,
+    head=0,
+    tail=0,
+    error_feed=None,
+    err_head=255,
+    err_tail=255,
+):
     (root / "attr").mkdir(parents=True)
     (root / "feed_plan").mkdir(parents=True)
     (root / "rtc").mkdir(parents=True)
@@ -297,17 +308,27 @@ def _write_snapshot(root, *, state=None, plans=(), feed=None, head=0, tail=0):
     (root / "feed_plan" / "plan.bin").write_bytes(b"".join(plans))
     (root / "feed_plan" / "rec_index_head.bin").write_bytes(bytes([head]))
     (root / "feed_plan" / "rec_index_tail.bin").write_bytes(bytes([tail]))
-    (root / "feed_plan" / "err_rec_index_head.bin").write_bytes(b"\xff")
-    (root / "feed_plan" / "err_rec_index_tail.bin").write_bytes(b"\xff")
+    (root / "feed_plan" / "err_rec_index_head.bin").write_bytes(bytes([err_head]))
+    (root / "feed_plan" / "err_rec_index_tail.bin").write_bytes(bytes([err_tail]))
     (root / "feed_plan" / "feed_rec.bin").write_bytes(
         bytes(4743) if feed is None else bytes(feed)
+    )
+    (root / "feed_plan" / "err_feed_rec.bin").write_bytes(
+        bytes(4743) if error_feed is None else bytes(error_feed)
     )
     (root / "rtc" / "rtc_time.bin").write_bytes(b"\x00" * 8)
 
 
 class RunningAgent:
     def __init__(
-        self, binary, root, *, allow_ip=None, socket_timeout_seconds=None
+        self,
+        binary,
+        root,
+        *,
+        allow_ip=None,
+        socket_timeout_seconds=None,
+        startup_script=None,
+        compat_active_marker=None,
     ):
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
@@ -326,6 +347,10 @@ class RunningAgent:
             args.extend(["--allow-ip", allow_ip])
         if socket_timeout_seconds is not None:
             args.extend(["--socket-timeout-seconds", str(socket_timeout_seconds)])
+        if startup_script is not None:
+            args.extend(["--startup-script", str(startup_script)])
+        if compat_active_marker is not None:
+            args.extend(["--compat-active-marker", str(compat_active_marker)])
         self.process = subprocess.Popen(
             args,
             stdout=subprocess.PIPE,
@@ -552,13 +577,19 @@ def test_feed_event_queue_uses_51_slots_three_phases_u64_and_wraparound(
             )
             start = slot_index * 93 + phase * 31
             feed[start : start + 31] = record
-    _write_snapshot(tmp_path, feed=feed, head=50, tail=1)
+    _write_snapshot(tmp_path, feed=feed, head=49, tail=0)
 
     with RunningAgent(state_agent_binary, tmp_path) as agent:
         result = agent.get("/v1/feed-events?raw=1")
 
     assert result["semantics"] == "pending_outbound_events_not_history"
     assert [event["slot_index"] for event in result["events"]] == [50, 0]
+    assert [event["source_ring"] for event in result["events"]] == [
+        "normal",
+        "normal",
+    ]
+    assert result["snapshot_consistent"] is True
+    assert result["normal_ring_valid"] is True
     phases = result["events"][0]["phases"]
     assert [phase["phase"] for phase in phases] == [
         "GRAIN_START",
@@ -572,6 +603,356 @@ def test_feed_event_queue_uses_51_slots_three_phases_u64_and_wraparound(
         "local_button_manual",
     ]
     assert phases[2]["error_code"] == 0xAABBCCDD
+
+
+def test_feed_event_error_ring_is_separate_and_uses_head_exclusive_tail_inclusive(
+    state_agent_binary, tmp_path
+):
+    normal = bytearray(4743)
+    error = bytearray(4743)
+    normal[1 * 93 : 1 * 93 + 31] = _feed_phase(
+        plan_id=1,
+        finished=False,
+        retried=False,
+        phase_status=1,
+        type_raw=1,
+        actual=0,
+        expected=1,
+        exec_time=1000,
+    )
+    error[6 * 93 : 6 * 93 + 31] = _feed_phase(
+        plan_id=2,
+        finished=True,
+        retried=False,
+        phase_status=1,
+        type_raw=2,
+        actual=0,
+        expected=1,
+        exec_time=2000,
+        error_code=2003,
+    )
+    _write_snapshot(
+        tmp_path,
+        feed=normal,
+        head=0,
+        tail=1,
+        error_feed=error,
+        err_head=5,
+        err_tail=6,
+    )
+
+    with RunningAgent(state_agent_binary, tmp_path) as agent:
+        result = agent.get("/v1/feed-events")
+
+    assert [event["slot_index"] for event in result["events"]] == [1]
+    assert result["events"][0]["source_ring"] == "normal"
+    assert [event["slot_index"] for event in result["error_events"]] == [6]
+    assert result["error_events"][0]["source_ring"] == "error"
+    assert result["error_events"][0]["phases"][0]["error_code"] == 2003
+    assert result["error_ring_valid"] is True
+
+
+def test_feed_event_invalid_indices_are_reported_without_iteration(
+    state_agent_binary, tmp_path
+):
+    _write_snapshot(tmp_path, head=255, tail=1, err_head=0, err_tail=255)
+
+    with RunningAgent(state_agent_binary, tmp_path) as agent:
+        result = agent.get("/v1/feed-events")
+
+    assert result["normal_ring_valid"] is False
+    assert result["error_ring_valid"] is False
+    assert result["queue"]["valid"] is False
+    assert result["err_queue"]["valid"] is False
+    assert result["events"] == []
+    assert result["error_events"] == []
+
+
+def _compatibility_fixture(tmp_path):
+    data = tmp_path / "user" / "data"
+    data.mkdir(parents=True)
+    _write_snapshot(data)
+    test_ping = data / "test-system" / "bin" / "ping"
+    test_ping.parent.mkdir(parents=True)
+    test_ping.write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
+    test_ping.chmod(0o755)
+    startup = tmp_path / "user" / "app_start.sh"
+    startup.write_bytes((AGENT_DIR / "managed" / "app_start.legacy.sh").read_bytes())
+    startup.chmod(0o755)
+    active = tmp_path / "ping-shim-active"
+    return data, startup, active
+
+
+def test_compatibility_deploy_is_idempotent_opt_in_and_recoverable(
+    state_agent_binary, tmp_path
+):
+    data, startup, active = _compatibility_fixture(tmp_path)
+    headers = {"Authorization": f"Bearer {TOKEN}", "Content-Length": "0"}
+    with RunningAgent(
+        state_agent_binary,
+        data,
+        startup_script=startup,
+        compat_active_marker=active,
+    ) as agent:
+        initial = agent.get("/v1/compatibility")
+        assert initial["supported"] is True
+        assert initial["original_ping_path"] == "test-system/bin/ping"
+        assert initial["deployed"] is False
+        assert initial["enabled"] is False
+
+        status, deployed = _post_raw(
+            agent.port, "/v1/compatibility/deploy", headers, b""
+        )
+        assert status == 200
+        assert deployed["deployed"] is True
+        assert deployed["enabled"] is False
+        assert deployed["active"] is False
+        assert deployed["reboot_required"] is False
+
+        shim = data / "local-compat" / "bin" / "ping"
+        backup = data / "local-compat" / "backup" / "app_start.sh"
+        assert shim.read_bytes() == (AGENT_DIR / "managed" / "ping").read_bytes()
+        assert startup.read_bytes() == (
+            AGENT_DIR / "managed" / "app_start.sh"
+        ).read_bytes()
+        assert backup.read_bytes() == (
+            AGENT_DIR / "managed" / "app_start.legacy.sh"
+        ).read_bytes()
+        assert shim.stat().st_mode & 0o777 == 0o755
+        assert startup.stat().st_mode & 0o777 == 0o755
+        assert backup.stat().st_mode & 0o777 == 0o700
+
+        first_mtimes = (shim.stat().st_mtime_ns, startup.stat().st_mtime_ns)
+        status, deployed_again = _post_raw(
+            agent.port, "/v1/compatibility/deploy", headers, b""
+        )
+        assert status == 200
+        assert deployed_again["last_reason"] == "already_current"
+        assert first_mtimes == (shim.stat().st_mtime_ns, startup.stat().st_mtime_ns)
+
+        shim.chmod(0o700)
+        stale_stage = shim.with_name("ping.managed.tmp")
+        stale_stage.write_text("interrupted", encoding="ascii")
+        status, repaired = _post_raw(
+            agent.port, "/v1/compatibility/deploy", headers, b""
+        )
+        assert status == 200
+        assert repaired["deployed"] is True
+        assert shim.stat().st_mode & 0o777 == 0o755
+        assert not stale_stage.exists()
+
+        status, enabled = _post_raw(
+            agent.port, "/v1/compatibility/enable", headers, b""
+        )
+        assert status == 200
+        assert enabled["enabled"] is True
+        assert enabled["active"] is False
+        assert enabled["reboot_required"] is True
+
+        active.touch()
+        active_status = agent.get("/v1/compatibility")
+        assert active_status["active"] is True
+        assert active_status["reboot_required"] is False
+
+        status, disabled = _post_raw(
+            agent.port, "/v1/compatibility/disable", headers, b""
+        )
+        assert status == 200
+        assert disabled["enabled"] is False
+        assert disabled["active"] is True
+        assert disabled["reboot_required"] is True
+
+        status, restored = _post_raw(
+            agent.port, "/v1/compatibility/restore-startup", headers, b""
+        )
+        assert status == 200
+        assert restored["deployed"] is False
+        assert restored["active"] is True
+        assert restored["reboot_required"] is True
+        assert startup.read_bytes() == backup.read_bytes()
+
+        active.unlink()
+        after_reboot = agent.get("/v1/compatibility")
+        assert after_reboot["active"] is False
+        assert after_reboot["reboot_required"] is False
+
+
+def test_compatibility_deploy_rejects_unrecognized_startup_without_replacing_it(
+    state_agent_binary, tmp_path
+):
+    data, startup, active = _compatibility_fixture(tmp_path)
+    startup.write_text("#!/bin/sh\n# user modified\n", encoding="ascii")
+    startup.chmod(0o755)
+    original = startup.read_bytes()
+    with RunningAgent(
+        state_agent_binary,
+        data,
+        startup_script=startup,
+        compat_active_marker=active,
+    ) as agent:
+        status, response = _post_raw(
+            agent.port,
+            "/v1/compatibility/deploy",
+            {"Authorization": f"Bearer {TOKEN}", "Content-Length": "0"},
+            b"",
+        )
+
+    assert status == 409
+    assert response["error"] == "startup_predecessor_unrecognized"
+    assert startup.read_bytes() == original
+    assert not (data / "local-compat" / "bin" / "ping").exists()
+
+
+def test_compatibility_deploy_requires_a_verified_original_ping(
+    state_agent_binary, tmp_path
+):
+    data, startup, active = _compatibility_fixture(tmp_path)
+    (data / "test-system" / "bin" / "ping").unlink()
+    with RunningAgent(
+        state_agent_binary,
+        data,
+        startup_script=startup,
+        compat_active_marker=active,
+    ) as agent:
+        initial = agent.get("/v1/compatibility")
+        status, response = _post_raw(
+            agent.port,
+            "/v1/compatibility/deploy",
+            {"Authorization": f"Bearer {TOKEN}", "Content-Length": "0"},
+            b"",
+        )
+
+    assert initial["supported"] is False
+    assert initial["original_ping_path"] is None
+    assert status == 409
+    assert response["error"] == "original_ping_not_verified"
+    assert not (data / "local-compat").exists()
+
+
+def test_original_ping_resolution_rejects_delegation_back_to_managed_shim(
+    state_agent_binary, tmp_path
+):
+    data, startup, active = _compatibility_fixture(tmp_path)
+    headers = {"Authorization": f"Bearer {TOKEN}", "Content-Length": "0"}
+    with RunningAgent(
+        state_agent_binary,
+        data,
+        startup_script=startup,
+        compat_active_marker=active,
+    ) as agent:
+        status, _ = _post_raw(
+            agent.port, "/v1/compatibility/deploy", headers, b""
+        )
+        assert status == 200
+        shim = data / "local-compat" / "bin" / "ping"
+        test_ping = data / "test-system" / "bin" / "ping"
+        test_ping.unlink()
+        test_ping.symlink_to(shim)
+
+        detected = agent.get("/v1/compatibility")
+        enable_status, enable_response = _post_raw(
+            agent.port, "/v1/compatibility/enable", headers, b""
+        )
+
+    assert detected["supported"] is False
+    assert detected["original_ping_path"] is None
+    assert enable_status == 409
+    assert enable_response["error"] == "compatibility_files_not_ready"
+
+
+@pytest.mark.parametrize(
+    "operation", ("deploy", "enable", "disable", "restore-startup")
+)
+def test_compatibility_mutations_are_blocked_during_state_agent_update(
+    state_agent_binary, tmp_path, operation
+):
+    data, startup, active = _compatibility_fixture(tmp_path)
+    update_dir = data / "local-state-agent" / "update"
+    update_dir.mkdir(parents=True)
+    (update_dir / "status.json").write_text(
+        json.dumps(
+            {
+                "status": "activating",
+                "reason": "pre_swap",
+                "candidate_version": "0.4.0",
+                "previous_version": "0.3.2",
+            }
+        ),
+        encoding="utf-8",
+    )
+    original_startup = startup.read_bytes()
+
+    with RunningAgent(
+        state_agent_binary,
+        data,
+        startup_script=startup,
+        compat_active_marker=active,
+    ) as agent:
+        status, response = _post_raw(
+            agent.port,
+            f"/v1/compatibility/{operation}",
+            {"Authorization": f"Bearer {TOKEN}", "Content-Length": "0"},
+            b"",
+        )
+
+    assert status == 409
+    assert response["error"] == "state_agent_update_in_progress"
+    assert startup.read_bytes() == original_startup
+    assert not (data / "local-compat").exists()
+
+
+def test_managed_ping_shim_fails_oem_hosts_quickly_and_delegates_other_hosts():
+    shim = AGENT_DIR / "managed" / "ping"
+    for host in (
+        "aws.amazon.com",
+        "www.cloudflare.com",
+        "baidu.com",
+        "114.114.114.114",
+    ):
+        started = time.monotonic()
+        result = subprocess.run(
+            ["/bin/sh", str(shim), host, "-c", "10"],
+            capture_output=True,
+            timeout=1,
+        )
+        assert result.returncode != 0
+        assert result.stdout == b""
+        assert time.monotonic() - started < 0.25
+
+    delegated = subprocess.run(
+        ["/bin/sh", str(shim), "127.0.0.1", "-c", "1"],
+        capture_output=True,
+        timeout=2,
+    )
+    assert delegated.returncode == 0
+    assert b"127.0.0.1" in delegated.stdout
+
+    recursion_guard = subprocess.run(
+        ["/bin/sh", str(shim), "127.0.0.1", "-c", "1"],
+        capture_output=True,
+        timeout=1,
+        env={**os.environ, "PLAF203_PING_SHIM_DELEGATING": "1"},
+    )
+    assert recursion_guard.returncode == 127
+    assert recursion_guard.stdout == b""
+
+    # The same destinations with any non-OEM shape must reach the original
+    # executable unchanged. Invalid count/deadline values make this local,
+    # deterministic, and independent of DNS or network access.
+    for arguments in (
+        ["114.114.114.114", "-c", "0"],
+        ["-c", "0", "114.114.114.114"],
+        ["114.114.114.114", "-c", "10", "--plaf203-test-invalid"],
+    ):
+        original = subprocess.run(
+            ["/bin/ping", *arguments], capture_output=True, timeout=1
+        )
+        through_shim = subprocess.run(
+            ["/bin/sh", str(shim), *arguments], capture_output=True, timeout=1
+        )
+        assert through_shim.returncode == original.returncode
+        assert through_shim.stdout == original.stdout
+        assert through_shim.stderr == original.stderr
 
 
 def test_version_and_update_status_endpoints(

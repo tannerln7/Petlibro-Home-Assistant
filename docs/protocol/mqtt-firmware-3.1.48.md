@@ -356,7 +356,8 @@ than send an empty error form.
 **Observed and required event fields:** `cmd`, `msgId`, `finished`, `type`,
 `actualGrainNum`, `expectGrainNum`, `execTime`, `execStep`, `ts`<br>
 **Optional/conditional fields:** `planId` and `retried` exist in older code but
-were not captured; they are plausible for scheduled or retry cases<br>
+were not captured; firmware RE shows `retried` is numeric. `errorCode` is
+conditionally emitted by failed end records.<br>
 **Example event:**
 
 ```json
@@ -382,6 +383,25 @@ were not captured; they are plausible for scheduled or retry cases<br>
 
 **Notes:** the end event used `finished:true`, `actualGrainNum:1`, and
 `execStep:"GRAIN_END"`; its response echoed `GRAIN_END`.
+
+### ERROR_EVENT (firmware-RE-backed)
+
+**Command:** `ERROR_EVENT`<br>
+**Topic:** `event/post`<br>
+**Direction:** feeder → server<br>
+**Fields:** `cmd`, `msgId`, `errorCode`, `triggerTime`, `ts`, and optional
+producer-specific string `extend`.<br>
+
+Firmware 3.1.48 directly publishes known error producers through MQTT QoS 1.
+The inbound OEM response handler does not correlate `msgId`; it blindly
+advances a separate in-memory FIFO. Petlibro Local therefore parses and
+classifies `ERROR_EVENT` but intentionally sends no JSON application response.
+The broker's MQTT QoS 1 PUBACK remains unchanged.
+
+Codes 2046 (VSaaS/cloud notification failure) and 2048 (ISP exposure/day-night
+diagnostic) are routine diagnostics on a WAN-isolated feeder. Confirmed
+feeding codes are handled separately, and error-ring operations may emit the
+same code through both `ERROR_EVENT` and `GRAIN_OUTPUT_EVENT.errorCode`.
 
 ### ATTR_PUSH_EVENT
 
@@ -613,6 +633,7 @@ full payloads, and should not infer that every field in an app request changed.
 | Feeder `GET_FEEDING_PLAN_EVENT` | Server PUBACK | Code plus full plans on `event/sub`, same `msgId` |
 | Server `MANUAL_FEEDING_SERVICE` | No MQTT ACK | Code response on `service/post`, same `msgId`; then PUBACK |
 | Feeder `GRAIN_OUTPUT_EVENT` | Server PUBACK | Code response on `event/sub`, same `msgId`, echoing `execStep` |
+| Feeder `ERROR_EVENT` | Server PUBACK | No JSON response; the firmware handler is correlation-blind and known producers use direct QoS 1 publication |
 | Feeder `ATTR_PUSH_EVENT` | Server PUBACK | Code response on `event/sub`, same `msgId` |
 | Server `ATTR_SET_SERVICE` | No MQTT ACK | Code response on `service/post`, same `msgId`; later attribute push is a separate acknowledged event |
 | Feeder `HEARTBEAT` | Server PUBACK | No JSON response |

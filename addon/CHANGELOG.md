@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Parse and classify OEM `ERROR_EVENT` messages, preserve grain error codes,
+  accept OEM-specific manual-feed response codes, acknowledge grain records
+  before best-effort projection, and suppress duplicate failure reports.
+- Correct State Agent feed-ring traversal, expose pending `err_feed_rec.bin`
+  records, and report queue/snapshot validity without writing OEM files.
+- Add signed-ELF-embedded, fixed-path compatibility asset deployment with
+  hash verification, atomic replacement, guarded startup backup/recovery, and
+  explicit deployment/enable/active/reboot-required status.
+- Add an opt-in PATH-scoped ping shim for the confirmed blocking OEM probes;
+  installation and State Agent update do not enable it or reboot the feeder.
+
 ## 0.3.14
 
 - Honor the feeder's negotiated MQTT keepalive in the temporary bootstrap

@@ -6,6 +6,7 @@ import json
 
 from appdaemon.plugins.mqtt import mqttapi
 from backend import Backend
+from compatibility import CompatibilityCoordinator
 from feed_plans import PlanSlotMismatch, parse_plan_patch
 from ha_entities import HomeAssistantStatePublisher
 from settings_map import SETTING_COMMANDS, SettingCommandSpec
@@ -31,6 +32,7 @@ class CommandRouter:
         state: HomeAssistantStatePublisher,
         logger,
         updater: StateAgentUpdateCoordinator | None = None,
+        compatibility: CompatibilityCoordinator | None = None,
         raw_settings_diagnostics: bool = False,
     ):
         self.mqtt = mqtt
@@ -41,6 +43,7 @@ class CommandRouter:
         self.state = state
         self.logger = logger
         self.updater = updater
+        self.compatibility = compatibility
         self.raw_settings_diagnostics = raw_settings_diagnostics
 
     def start(self) -> None:
@@ -63,6 +66,10 @@ class CommandRouter:
         )
         self._subscribe("state_agent/cmd/install", self._state_agent_install)
         self._subscribe("state_agent/cmd/check_updates", self._state_agent_check)
+        self._subscribe("compatibility/cmd/deploy", self._compatibility_deploy)
+        self._subscribe(
+            "compatibility/cmd/ping_mitigation", self._compatibility_enabled
+        )
 
     def restore_local_preferences(self) -> None:
         self.state.publish(
@@ -206,6 +213,22 @@ class CommandRouter:
             )
             return
         self.updater.request_check(force=True, reason="manual")
+
+    def _compatibility_deploy(self, *_args):
+        if self.compatibility is None:
+            self.logger.warning("compatibility deployment ignored because it is unavailable")
+            return
+        self.compatibility.request_deploy()
+
+    def _compatibility_enabled(self, _eventname: str, data: dict, _kwargs):
+        if self.compatibility is None:
+            self.logger.warning("ping mitigation command ignored because it is unavailable")
+            return
+        value = str(data.get("payload", "")).strip().lower()
+        if value not in {"true", "false", "on", "off", "1", "0"}:
+            self.logger.warning("invalid ping mitigation command ignored")
+            return
+        self.compatibility.request_enabled(value in {"true", "on", "1"})
 
     def _subscribe(self, relative_topic: str, callback) -> None:
         topic = self.state.topic(relative_topic)

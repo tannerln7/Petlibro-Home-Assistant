@@ -171,11 +171,35 @@ and uploads the artifact to the authenticated feeder API. It never asks the
 feeder to download a URL. See the [configuration reference](../docs/configuration.md#state-agent-updates)
 and [State Agent guide](../state-agent/README.md#signed-updates).
 
+State Agent 0.4.0 also supports release-managed compatibility files. Existing
+installations first use the normal signed **State Agent firmware** update; no
+repeat bootstrap is required. The **Deploy feeder compatibility files** button
+then installs the embedded assets but does not enable them. After deployment,
+the **Block OEM connectivity probes** switch changes desired state. Reboot the
+feeder only when the diagnostic **Feeder compatibility reboot required** sensor
+is on. Disabling is equally reversible and also requires a reboot if the shim
+is currently active.
+
+Deployment is intentionally conservative: only installer-generated recognized
+startup content is migrated. A modified or unknown `/user/app_start.sh` is
+left untouched and the compatibility status reports failure. The original OEM
+firmware and ping executable are never replaced.
+
 The default manifest is the project's signed stable feed:
 
 ```text
 https://raw.githubusercontent.com/tannerln7/Petlibro-Home-Assistant/state-agent-releases/state-agent/latest.json
 ```
+
+State Agent release candidates are separately opt-in. A canary installation
+can set `state_agent_updates.manifest_url` to:
+
+```text
+https://raw.githubusercontent.com/tannerln7/Petlibro-Home-Assistant/state-agent-releases/state-agent/dev/latest.json
+```
+
+Using the development add-on repository does not change this URL
+automatically.
 
 The nine **Feeding schedule** text entities accept flat JSON. Each document's
 `id` must match its displayed slot number. Editing an existing ID updates it;

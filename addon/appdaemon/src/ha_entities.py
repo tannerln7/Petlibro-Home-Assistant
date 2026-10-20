@@ -476,6 +476,55 @@ class HomeAssistantDiscoveryMqtt:
             "diagnostic",
             payload_press="check",
         )
+        self._ha_button_config_publish(
+            "Deploy feeder compatibility files",
+            "mdi:package-variant-closed-check",
+            "compatibility",
+            "deploy",
+            "diagnostic",
+        )
+        self._ha_switch_config_publish(
+            "Block OEM connectivity probes",
+            "mdi:cloud-off-outline",
+            "compatibility",
+            "ping_mitigation",
+            "config",
+        )
+        self._ha_binary_sensor_config_publish(
+            "Feeder compatibility files deployed",
+            "mdi:package-check",
+            "compatibility",
+            "deployed",
+            "diagnostic",
+        )
+        self._ha_binary_sensor_config_publish(
+            "OEM connectivity probe mitigation active",
+            "mdi:shield-check-outline",
+            "compatibility",
+            "active",
+            "diagnostic",
+        )
+        self._ha_binary_sensor_config_publish(
+            "Feeder compatibility reboot required",
+            "mdi:restart-alert",
+            "compatibility",
+            "reboot_required",
+            "diagnostic",
+        )
+        self._ha_sensor_config_publish(
+            "Feeder compatibility deployment",
+            "mdi:package-variant",
+            "compatibility",
+            "deployment",
+            entity_category="diagnostic",
+        )
+        self._ha_sensor_config_publish(
+            "Feeder compatibility status",
+            "mdi:text-box-check-outline",
+            "compatibility",
+            "last_reason",
+            entity_category="diagnostic",
+        )
 
         self._ha_sensor_config_publish(
             "Feeder motor state",

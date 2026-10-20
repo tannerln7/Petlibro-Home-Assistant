@@ -3,8 +3,9 @@
  * Read-only local state API for Petlibro PLAF203-style feeder firmware.
  *
  * Build target: static Linux ARM/musl preferred.
- * This program intentionally reads only allowlisted files under /user/data.
- * It never writes feeder state files and never executes shell commands.
+ * This program reads only allowlisted OEM files under /user/data. Writes are
+ * limited to its signed self-update and fixed release-managed compatibility
+ * assets; it never writes OEM state files or accepts caller-selected paths.
  */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -79,6 +80,14 @@ static const uint8_t RELEASE_PUBLIC_KEY[32] = {0};
 #define UPDATE_PENDING_REL "local-state-agent/update/pending.json"
 #define UPDATE_STATUS_REL "local-state-agent/update/status.json"
 #define UPDATE_LOCK_REL "local-state-agent/update/transaction.lock"
+#define COMPAT_DIR_REL "local-compat"
+#define COMPAT_BIN_DIR_REL "local-compat/bin"
+#define COMPAT_BACKUP_DIR_REL "local-compat/backup"
+#define COMPAT_PING_REL "local-compat/bin/ping"
+#define COMPAT_ENABLE_REL "local-compat/ping-shim.enabled"
+#define COMPAT_STATUS_REL "local-compat/deployment-status.json"
+#define COMPAT_STATUS_TMP_REL "local-compat/deployment-status.tmp"
+#define COMPAT_BACKUP_APP_START_REL "local-compat/backup/app_start.sh"
 
 static volatile sig_atomic_t g_stop = 0;
 static uint64_t g_start_ms = 0;
@@ -104,6 +113,8 @@ typedef struct {
   int socket_timeout_seconds;
   char pid_file[PATH_MAX];
   char log_file[PATH_MAX];
+  char startup_script[PATH_MAX];
+  char compat_active_marker[PATH_MAX];
 } Config;
 
 typedef struct {
@@ -1000,11 +1011,28 @@ static bool record_nonzero(const uint8_t *rec) {
   return false;
 }
 
+static bool valid_queue_indices(const Bytes *head, const Bytes *tail) {
+  return head && tail && head->ok && tail->ok && head->len >= 1 &&
+         tail->len >= 1 && head->data[0] < FEED_SLOT_COUNT &&
+         tail->data[0] < FEED_SLOT_COUNT;
+}
+
+static bool bytes_equal(const Bytes *left, const Bytes *right) {
+  if (!left || !right || left->ok != right->ok || left->len != right->len)
+    return false;
+  if (!left->ok)
+    return strcmp(left->error, right->error) == 0;
+  return left->len == 0 || memcmp(left->data, right->data, left->len) == 0;
+}
+
 static void append_queue(Str *s, const Bytes *head, const Bytes *tail) {
   uint8_t h = byte_at(head, 0);
   uint8_t t = byte_at(tail, 0);
-  str_appendf(s, "{\"head\":%u,\"tail\":%u,\"pending\":%s}", h, t,
-              h != t ? "true" : "false");
+  bool valid = valid_queue_indices(head, tail);
+  str_appendf(s,
+              "{\"head\":%u,\"tail\":%u,\"pending\":%s,\"valid\":%s}",
+              h, t, valid && h != t ? "true" : "false",
+              valid ? "true" : "false");
 }
 
 static const char *feed_type_name(uint8_t type) {
@@ -1069,30 +1097,38 @@ static void append_feed_phase(Str *s, const uint8_t *rec, int phase, bool raw) {
 
 static void append_pending_feed_events(Str *s, const Bytes *feed,
                                        const Bytes *head, const Bytes *tail,
-                                       bool raw) {
+                                       const char *source_ring, bool raw) {
   str_append(s, "[");
-  if (!feed->ok || feed->len != FEED_FILE_SIZE) {
+  if (!feed->ok || feed->len != FEED_FILE_SIZE ||
+      !valid_queue_indices(head, tail)) {
     str_append(s, "]");
     return;
   }
-  uint8_t index = byte_at(head, 0);
+  uint8_t index = (uint8_t)((byte_at(head, 0) + 1) % FEED_SLOT_COUNT);
   uint8_t stop = byte_at(tail, 0);
+  if (byte_at(head, 0) == stop) {
+    str_append(s, "]");
+    return;
+  }
   bool first_slot = true;
-  for (int visited = 0; visited < FEED_SLOT_COUNT && index != stop; visited++) {
-    if (index >= FEED_SLOT_COUNT)
-      break;
+  for (int visited = 0; visited < FEED_SLOT_COUNT - 1; visited++) {
     const uint8_t *slot = feed->data + (size_t)index * FEED_SLOT_SIZE;
     if (!first_slot)
       str_append(s, ",");
     first_slot = false;
-    str_appendf(s, "{\"slot_index\":%u,\"queue_order\":%d,\"phases\":[", index,
+    str_appendf(s,
+                "{\"slot_index\":%u,\"queue_order\":%d,\"source_ring\":", index,
                 visited);
+    json_string(s, source_ring);
+    str_append(s, ",\"phases\":[");
     for (int phase = 0; phase < FEED_PHASE_COUNT; phase++) {
       if (phase)
         str_append(s, ",");
       append_feed_phase(s, slot + (size_t)phase * FEED_RECORD_SIZE, phase, raw);
     }
     str_append(s, "]}");
+    if (index == stop)
+      break;
     index = (uint8_t)((index + 1) % FEED_SLOT_COUNT);
   }
   str_append(s, "]");
@@ -1235,19 +1271,57 @@ static void build_core_response(Str *s, bool raw) {
 }
 
 static void build_feed_events_response(Str *s, bool raw) {
-  Bytes feed = read_file_rel("feed_plan/feed_rec.bin", MAX_FILE_BYTES);
-  Bytes head = read_file_rel("feed_plan/rec_index_head.bin", 64);
-  Bytes tail = read_file_rel("feed_plan/rec_index_tail.bin", 64);
-  Bytes err_head = read_file_rel("feed_plan/err_rec_index_head.bin", 64);
-  Bytes err_tail = read_file_rel("feed_plan/err_rec_index_tail.bin", 64);
-  bool valid = feed.ok && feed.len == FEED_FILE_SIZE;
-  str_appendf(s, "{\"ok\":%s,", valid ? "true" : "false");
-  if (!valid)
+  Bytes feed = {0}, error_feed = {0};
+  Bytes head = {0}, tail = {0}, err_head = {0}, err_tail = {0};
+  bool consistent = false;
+  int attempts = 0;
+  for (attempts = 1; attempts <= 3; attempts++) {
+    Bytes head_after = {0}, tail_after = {0};
+    Bytes err_head_after = {0}, err_tail_after = {0};
+    head = read_file_rel("feed_plan/rec_index_head.bin", 64);
+    tail = read_file_rel("feed_plan/rec_index_tail.bin", 64);
+    err_head = read_file_rel("feed_plan/err_rec_index_head.bin", 64);
+    err_tail = read_file_rel("feed_plan/err_rec_index_tail.bin", 64);
+    feed = read_file_rel("feed_plan/feed_rec.bin", MAX_FILE_BYTES);
+    error_feed = read_file_rel("feed_plan/err_feed_rec.bin", MAX_FILE_BYTES);
+    head_after = read_file_rel("feed_plan/rec_index_head.bin", 64);
+    tail_after = read_file_rel("feed_plan/rec_index_tail.bin", 64);
+    err_head_after = read_file_rel("feed_plan/err_rec_index_head.bin", 64);
+    err_tail_after = read_file_rel("feed_plan/err_rec_index_tail.bin", 64);
+    consistent = bytes_equal(&head, &head_after) &&
+                 bytes_equal(&tail, &tail_after) &&
+                 bytes_equal(&err_head, &err_head_after) &&
+                 bytes_equal(&err_tail, &err_tail_after);
+    bytes_free(&head_after);
+    bytes_free(&tail_after);
+    bytes_free(&err_head_after);
+    bytes_free(&err_tail_after);
+    if (consistent || attempts == 3)
+      break;
+    bytes_free(&feed);
+    bytes_free(&error_feed);
+    bytes_free(&head);
+    bytes_free(&tail);
+    bytes_free(&err_head);
+    bytes_free(&err_tail);
+  }
+  bool normal_valid = feed.ok && feed.len == FEED_FILE_SIZE &&
+                      valid_queue_indices(&head, &tail);
+  bool error_valid = error_feed.ok && error_feed.len == FEED_FILE_SIZE &&
+                     valid_queue_indices(&err_head, &err_tail);
+  str_appendf(s, "{\"ok\":%s,", normal_valid ? "true" : "false");
+  if (!normal_valid)
     str_appendf(s,
                 "\"error\":\"invalid feed_rec.bin "
                 "length\",\"expected_size\":%d,\"actual_size\":%zu,",
                 FEED_FILE_SIZE, feed.ok ? feed.len : 0);
   str_append(s, "\"semantics\":\"pending_outbound_events_not_history\",");
+  str_appendf(s,
+              "\"snapshot_consistent\":%s,\"snapshot_attempts\":%d,"
+              "\"normal_ring_valid\":%s,\"error_ring_valid\":%s,",
+              consistent ? "true" : "false", attempts,
+              normal_valid ? "true" : "false",
+              error_valid ? "true" : "false");
   str_append(s, "\"queue\":");
   append_queue(s, &head, &tail);
   str_append(s, ",");
@@ -1255,9 +1329,13 @@ static void build_feed_events_response(Str *s, bool raw) {
   append_queue(s, &err_head, &err_tail);
   str_append(s, ",");
   str_append(s, "\"events\":");
-  append_pending_feed_events(s, &feed, &head, &tail, raw);
+  append_pending_feed_events(s, &feed, &head, &tail, "normal", raw);
+  str_append(s, ",\"error_events\":");
+  append_pending_feed_events(s, &error_feed, &err_head, &err_tail, "error",
+                             raw);
   str_append(s, "}");
   bytes_free(&feed);
+  bytes_free(&error_feed);
   bytes_free(&head);
   bytes_free(&tail);
   bytes_free(&err_head);
@@ -2178,6 +2256,335 @@ static bool write_atomic_json(const char *tmp_path, const char *final_path,
   return true;
 }
 
+static bool regular_file_with_mode(const char *path, mode_t mode) {
+  struct stat st;
+  return lstat(path, &st) == 0 && S_ISREG(st.st_mode) &&
+         (st.st_mode & 0777) == mode;
+}
+
+static bool file_has_hash(const char *path, const char *expected_hash) {
+  struct stat st;
+  if (lstat(path, &st) != 0 || !S_ISREG(st.st_mode))
+    return false;
+  char actual[65];
+  return verify_file_sha256(path, actual) && strcmp(actual, expected_hash) == 0;
+}
+
+static bool file_matches_asset(const char *path, const char *expected_hash,
+                               mode_t mode) {
+  return regular_file_with_mode(path, mode) &&
+         file_has_hash(path, expected_hash);
+}
+
+static bool ensure_compat_dirs(char *err, size_t err_len) {
+  char compat[PATH_MAX], bin[PATH_MAX], backup[PATH_MAX];
+  if (!safe_join_path(compat, sizeof(compat), g_cfg.root, COMPAT_DIR_REL) ||
+      !safe_join_path(bin, sizeof(bin), g_cfg.root, COMPAT_BIN_DIR_REL) ||
+      !safe_join_path(backup, sizeof(backup), g_cfg.root,
+                      COMPAT_BACKUP_DIR_REL)) {
+    snprintf(err, err_len, "invalid_compatibility_path");
+    return false;
+  }
+  if (!mkdir_if_missing(compat) || !mkdir_if_missing(bin) ||
+      !mkdir_if_missing(backup)) {
+    snprintf(err, err_len, "compatibility_directory_create_failed");
+    return false;
+  }
+  return true;
+}
+
+static bool install_managed_bytes(const char *destination, const uint8_t *data,
+                                  size_t length, const char *expected_hash,
+                                  mode_t mode, bool *changed, char *err,
+                                  size_t err_len) {
+  *changed = false;
+  if (expected_hash && file_matches_asset(destination, expected_hash, mode))
+    return true;
+
+  char temporary[PATH_MAX];
+  int written = snprintf(temporary, sizeof(temporary), "%s.managed.tmp",
+                         destination);
+  if (written <= 0 || (size_t)written >= sizeof(temporary)) {
+    snprintf(err, err_len, "managed_temporary_path_invalid");
+    return false;
+  }
+  durable_unlink(temporary);
+  int fd = open(temporary,
+                O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, mode);
+  if (fd < 0) {
+    snprintf(err, err_len, "managed_temporary_open_failed");
+    return false;
+  }
+  bool ok = write_all(fd, (const char *)data, length) &&
+            fchmod(fd, mode) == 0 && fsync(fd) == 0;
+  if (close(fd) != 0)
+    ok = false;
+  if (!ok) {
+    durable_unlink(temporary);
+    snprintf(err, err_len, "managed_temporary_write_failed");
+    return false;
+  }
+  if (expected_hash) {
+    char actual[65];
+    if (!verify_file_sha256(temporary, actual) ||
+        strcmp(actual, expected_hash) != 0) {
+      durable_unlink(temporary);
+      snprintf(err, err_len, "managed_hash_verification_failed");
+      return false;
+    }
+  }
+  if (rename(temporary, destination) != 0 ||
+      !fsync_parent_directory(destination)) {
+    durable_unlink(temporary);
+    snprintf(err, err_len, "managed_atomic_replace_failed");
+    return false;
+  }
+  *changed = true;
+  return true;
+}
+
+static bool compat_path(char *out, size_t out_len, const char *relative) {
+  return safe_join_path(out, out_len, g_cfg.root, relative);
+}
+
+static bool original_ping_candidate_is_safe(const char *candidate) {
+  if (access(candidate, X_OK) != 0)
+    return false;
+  char resolved_candidate[PATH_MAX];
+  if (!realpath(candidate, resolved_candidate))
+    return false;
+  struct stat st;
+  if (stat(resolved_candidate, &st) != 0 || !S_ISREG(st.st_mode))
+    return false;
+
+  char shim[PATH_MAX], resolved_shim[PATH_MAX];
+  if (!compat_path(shim, sizeof(shim), COMPAT_PING_REL))
+    return false;
+  struct stat shim_st;
+  if (stat(shim, &shim_st) == 0 && st.st_dev == shim_st.st_dev &&
+      st.st_ino == shim_st.st_ino)
+    return false;
+  return !realpath(shim, resolved_shim) ||
+         strcmp(resolved_candidate, resolved_shim) != 0;
+}
+
+static const char *original_ping_path(void) {
+  if (strcmp(g_cfg.root, "/user/data") == 0) {
+    /* The shim delegates /bin first, then /usr/bin. If the first executable
+     * candidate is unsafe, do not report the second as usable because runtime
+     * delegation would never reach it. */
+    if (access("/bin/ping", X_OK) == 0)
+      return original_ping_candidate_is_safe("/bin/ping") ? "/bin/ping" : NULL;
+    if (access("/usr/bin/ping", X_OK) == 0)
+      return original_ping_candidate_is_safe("/usr/bin/ping") ? "/usr/bin/ping"
+                                                               : NULL;
+    return NULL;
+  }
+  char test_ping[PATH_MAX];
+  if (compat_path(test_ping, sizeof(test_ping), "test-system/bin/ping") &&
+      original_ping_candidate_is_safe(test_ping))
+    return "test-system/bin/ping";
+  return NULL;
+}
+
+static bool original_ping_available(void) {
+  return original_ping_path() != NULL;
+}
+
+static bool compat_status_reason(char reason[96]) {
+  char status_path[PATH_MAX];
+  if (!compat_path(status_path, sizeof(status_path), COMPAT_STATUS_REL))
+    return false;
+  Bytes status = read_file_rel(COMPAT_STATUS_REL, 1024);
+  bool ok = status.ok && extract_status_string_field(
+                               status.data, status.len, "reason", reason, 96);
+  bytes_free(&status);
+  return ok;
+}
+
+static void write_compat_status(const char *status, const char *reason) {
+  char path[PATH_MAX], temporary[PATH_MAX], err[96];
+  if (!compat_path(path, sizeof(path), COMPAT_STATUS_REL) ||
+      !compat_path(temporary, sizeof(temporary), COMPAT_STATUS_TMP_REL))
+    return;
+  char json[320];
+  int length = snprintf(json, sizeof(json),
+                        "{\"status\":\"%s\",\"reason\":\"%s\","
+                        "\"agent_version\":\"%s\"}\n",
+                        status, reason, AGENT_VERSION);
+  if (length > 0 && (size_t)length < sizeof(json))
+    (void)write_atomic_json(temporary, path, json, err, sizeof(err));
+}
+
+static bool compatibility_deploy(char *err, size_t err_len, bool *changed) {
+  *changed = false;
+  if (!original_ping_available()) {
+    snprintf(err, err_len, "original_ping_not_verified");
+    return false;
+  }
+  if (!ensure_compat_dirs(err, err_len))
+    return false;
+
+  char ping_path[PATH_MAX], backup_path[PATH_MAX];
+  if (!compat_path(ping_path, sizeof(ping_path), COMPAT_PING_REL) ||
+      !compat_path(backup_path, sizeof(backup_path),
+                   COMPAT_BACKUP_APP_START_REL)) {
+    snprintf(err, err_len, "invalid_compatibility_path");
+    return false;
+  }
+  bool startup_is_current =
+      file_has_hash(g_cfg.startup_script, MANAGED_APP_START_SHA256);
+  bool startup_is_legacy =
+      file_has_hash(g_cfg.startup_script, LEGACY_APP_START_SHA256);
+  if (!startup_is_current && !startup_is_legacy) {
+    snprintf(err, err_len, "startup_predecessor_unrecognized");
+    return false;
+  }
+  bool ping_changed = false;
+  if (!install_managed_bytes(ping_path, MANAGED_PING, MANAGED_PING_LEN,
+                             MANAGED_PING_SHA256, 0755, &ping_changed, err,
+                             err_len))
+    return false;
+
+  if (startup_is_current) {
+    bool startup_mode_changed = false;
+    if (!install_managed_bytes(g_cfg.startup_script, MANAGED_APP_START,
+                               MANAGED_APP_START_LEN,
+                               MANAGED_APP_START_SHA256, 0755,
+                               &startup_mode_changed, err, err_len))
+      return false;
+    *changed = ping_changed || startup_mode_changed;
+    write_compat_status("deployed", "already_current");
+    return true;
+  }
+  if (!file_matches_asset(backup_path, LEGACY_APP_START_SHA256, 0700)) {
+    struct stat backup_stat;
+    if (lstat(backup_path, &backup_stat) == 0 &&
+        !file_has_hash(backup_path, LEGACY_APP_START_SHA256)) {
+      snprintf(err, err_len, "startup_backup_unrecognized");
+      return false;
+    }
+    bool backup_changed = false;
+    if (!install_managed_bytes(
+            backup_path, LEGACY_APP_START, LEGACY_APP_START_LEN,
+            LEGACY_APP_START_SHA256, 0700, &backup_changed, err, err_len))
+      return false;
+  }
+
+  bool startup_changed = false;
+  if (!install_managed_bytes(g_cfg.startup_script, MANAGED_APP_START,
+                             MANAGED_APP_START_LEN, MANAGED_APP_START_SHA256,
+                             0755, &startup_changed, err, err_len))
+    return false;
+  *changed = ping_changed || startup_changed;
+  write_compat_status("deployed", *changed ? "files_replaced" : "already_current");
+  return true;
+}
+
+static bool compatibility_restore_startup(char *err, size_t err_len) {
+  char backup_path[PATH_MAX];
+  if (!compat_path(backup_path, sizeof(backup_path),
+                   COMPAT_BACKUP_APP_START_REL)) {
+    snprintf(err, err_len, "invalid_backup_path");
+    return false;
+  }
+  if (!file_has_hash(g_cfg.startup_script, MANAGED_APP_START_SHA256) ||
+      !file_has_hash(backup_path, LEGACY_APP_START_SHA256)) {
+    snprintf(err, err_len, "startup_restore_validation_failed");
+    return false;
+  }
+  bool changed = false;
+  if (!install_managed_bytes(g_cfg.startup_script, LEGACY_APP_START,
+                             LEGACY_APP_START_LEN, LEGACY_APP_START_SHA256,
+                             0755, &changed, err, err_len))
+    return false;
+  write_compat_status("restored", "startup_backup_restored");
+  return true;
+}
+
+static bool compatibility_set_enabled(bool enabled, char *err, size_t err_len) {
+  char marker[PATH_MAX], ping_path[PATH_MAX];
+  if (!compat_path(marker, sizeof(marker), COMPAT_ENABLE_REL) ||
+      !compat_path(ping_path, sizeof(ping_path), COMPAT_PING_REL)) {
+    snprintf(err, err_len, "invalid_compatibility_path");
+    return false;
+  }
+  if (!enabled) {
+    if (unlink(marker) != 0 && errno != ENOENT) {
+      snprintf(err, err_len, "disable_marker_remove_failed");
+      return false;
+    }
+    (void)fsync_parent_directory(marker);
+    write_compat_status("deployed", "mitigation_disabled");
+    return true;
+  }
+  if (!file_matches_asset(g_cfg.startup_script, MANAGED_APP_START_SHA256, 0755) ||
+      !file_matches_asset(ping_path, MANAGED_PING_SHA256, 0755) ||
+      !original_ping_available()) {
+    snprintf(err, err_len, "compatibility_files_not_ready");
+    return false;
+  }
+  static const uint8_t enabled_marker[] = "enabled\n";
+  bool changed = false;
+  if (!install_managed_bytes(marker, enabled_marker,
+                             sizeof(enabled_marker) - 1, NULL, 0600, &changed,
+                             err, err_len))
+    return false;
+  write_compat_status("deployed", "mitigation_enabled");
+  return true;
+}
+
+static void build_compatibility_response(Str *s) {
+  char ping_path[PATH_MAX], marker[PATH_MAX], backup[PATH_MAX];
+  bool paths_ok = compat_path(ping_path, sizeof(ping_path), COMPAT_PING_REL) &&
+                  compat_path(marker, sizeof(marker), COMPAT_ENABLE_REL) &&
+                  compat_path(backup, sizeof(backup),
+                              COMPAT_BACKUP_APP_START_REL);
+  bool shim_current = paths_ok &&
+                      file_matches_asset(ping_path, MANAGED_PING_SHA256, 0755);
+  bool startup_current =
+      file_matches_asset(g_cfg.startup_script, MANAGED_APP_START_SHA256, 0755);
+  bool startup_supported =
+      file_has_hash(g_cfg.startup_script, MANAGED_APP_START_SHA256) ||
+      file_has_hash(g_cfg.startup_script, LEGACY_APP_START_SHA256);
+  bool enabled = paths_ok && regular_file_with_mode(marker, 0600);
+  /* The marker records how the currently running OEM process was launched.
+   * Replacing/restoring the on-disk startup script does not change that
+   * process, so startup_current must not erase the active/reboot-required
+   * state until the next boot. */
+  bool active = access(g_cfg.compat_active_marker, F_OK) == 0 && shim_current;
+  bool backup_available =
+      paths_ok && file_matches_asset(backup, LEGACY_APP_START_SHA256, 0700);
+  char reason[96] = "none";
+  (void)compat_status_reason(reason);
+  const char *ping_original = original_ping_path();
+  str_append(s, "{\"ok\":true,\"asset_version\":");
+  json_string(s, AGENT_VERSION);
+  str_append(s, ",\"original_ping_path\":");
+  if (ping_original)
+    json_string(s, ping_original);
+  else
+    str_append(s, "null");
+  str_appendf(s,
+              ",\"supported\":%s,\"deployed\":%s,\"shim_current\":%s,"
+              "\"startup_current\":%s,\"backup_available\":%s,"
+              "\"enabled\":%s,\"active\":%s,\"reboot_required\":%s,"
+              "\"last_reason\":",
+              original_ping_available() && startup_supported ? "true" : "false",
+              shim_current && startup_current ? "true" : "false",
+              shim_current ? "true" : "false",
+              startup_current ? "true" : "false",
+              backup_available ? "true" : "false", enabled ? "true" : "false",
+              active ? "true" : "false", enabled != active ? "true" : "false");
+  json_string(s, reason);
+  str_append(s, "}");
+}
+
+static bool empty_post_request(const HttpRequest *req, size_t prefetched_len) {
+  return !req->has_transfer_encoding && prefetched_len == 0 &&
+         (!req->has_content_length || req->content_length == 0);
+}
+
 static void build_version_response(Str *s) {
   str_append(s, "{\"ok\":true,");
   str_append(s, "\"version\":");
@@ -2743,6 +3150,8 @@ static void handle_client(int cfd, struct sockaddr_in *peer) {
       build_version_response(&body);
     else if (strcmp(req_path, "/v1/update-status") == 0)
       build_update_status_response(&body);
+    else if (strcmp(req_path, "/v1/compatibility") == 0)
+      build_compatibility_response(&body);
     else {
       status = 404;
       text = "Not Found";
@@ -2752,6 +3161,46 @@ static void handle_client(int cfd, struct sockaddr_in *peer) {
              strcmp(req_path, "/v1/update") == 0 && !query) {
     handle_update_post(cfd, &req, prefetched, prefetched_len, &status, &text,
                        &body);
+  } else if (strcmp(req.method, "POST") == 0 && !query &&
+             (strcmp(req_path, "/v1/compatibility/deploy") == 0 ||
+              strcmp(req_path, "/v1/compatibility/enable") == 0 ||
+              strcmp(req_path, "/v1/compatibility/disable") == 0 ||
+              strcmp(req_path, "/v1/compatibility/restore-startup") == 0)) {
+    if (!empty_post_request(&req, prefetched_len)) {
+      status = 400;
+      text = "Bad Request";
+      build_error(&body, "compatibility operation requires an empty body");
+    } else if (update_transaction_outstanding()) {
+      status = 409;
+      text = "Conflict";
+      build_error(&body, "state_agent_update_in_progress");
+    } else {
+      char operation_error[96] = {0};
+      bool changed = false;
+      bool ok = false;
+      if (strcmp(req_path, "/v1/compatibility/deploy") == 0)
+        ok = compatibility_deploy(operation_error, sizeof(operation_error),
+                                  &changed);
+      else if (strcmp(req_path, "/v1/compatibility/enable") == 0)
+        ok = compatibility_set_enabled(true, operation_error,
+                                       sizeof(operation_error));
+      else if (strcmp(req_path, "/v1/compatibility/disable") == 0)
+        ok = compatibility_set_enabled(false, operation_error,
+                                       sizeof(operation_error));
+      else
+        ok = compatibility_restore_startup(operation_error,
+                                           sizeof(operation_error));
+      if (!ok) {
+        write_compat_status("failed", operation_error[0] ? operation_error
+                                                          : "operation_failed");
+        status = 409;
+        text = "Conflict";
+        build_error(&body, operation_error[0] ? operation_error
+                                              : "compatibility operation failed");
+      } else {
+        build_compatibility_response(&body);
+      }
+    }
   } else {
     status = 405;
     text = "Method Not Allowed";
@@ -2805,6 +3254,8 @@ static void usage(FILE *f) {
       "  --poll-feed-ms N         Deprecated compatibility option (ignored)\n"
       "  --pid-file PATH          Write pid file\n"
       "  --log-file PATH          Append log file\n"
+      "  --startup-script PATH    Managed startup script, default /user/app_start.sh\n"
+      "  --compat-active-marker PATH  Runtime activation marker\n"
       "  --help\n");
 }
 
@@ -2812,6 +3263,10 @@ static void config_defaults(void) {
   memset(&g_cfg, 0, sizeof(g_cfg));
   snprintf(g_cfg.root, sizeof(g_cfg.root), "/user/data");
   snprintf(g_cfg.listen_ip, sizeof(g_cfg.listen_ip), "127.0.0.1");
+  snprintf(g_cfg.startup_script, sizeof(g_cfg.startup_script),
+           "/user/app_start.sh");
+  snprintf(g_cfg.compat_active_marker, sizeof(g_cfg.compat_active_marker),
+           "/tmp/plaf203-ping-shim-active");
   g_cfg.listen_port = 8765;
   g_cfg.poll_feed_ms = 500;
   g_cfg.socket_timeout_seconds = 30;
@@ -2852,6 +3307,12 @@ static bool parse_args(int argc, char **argv) {
       snprintf(g_cfg.pid_file, sizeof(g_cfg.pid_file), "%s", argv[++i]);
     else if (strcmp(argv[i], "--log-file") == 0 && i + 1 < argc)
       snprintf(g_cfg.log_file, sizeof(g_cfg.log_file), "%s", argv[++i]);
+    else if (strcmp(argv[i], "--startup-script") == 0 && i + 1 < argc)
+      snprintf(g_cfg.startup_script, sizeof(g_cfg.startup_script), "%s",
+               argv[++i]);
+    else if (strcmp(argv[i], "--compat-active-marker") == 0 && i + 1 < argc)
+      snprintf(g_cfg.compat_active_marker, sizeof(g_cfg.compat_active_marker),
+               "%s", argv[++i]);
     else {
       fprintf(stderr, "unknown/incomplete arg: %s\n", argv[i]);
       return false;

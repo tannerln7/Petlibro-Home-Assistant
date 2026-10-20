@@ -470,6 +470,7 @@ def test_manifest_option_rejects_query_parameters():
         ("1.2.3-alpha", "1.2.3-alpha.1", -1),
         ("1.2.3+build.2", "1.2.3+build.1", 0),
         ("0.10.0", "0.9.0", 1),
+        ("0.4.0-rc.1", "0.3.2", 1),
     ],
 )
 def test_semver_precedence(left, right, expected):

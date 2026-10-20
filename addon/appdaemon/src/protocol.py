@@ -20,6 +20,7 @@ class Commands:
     DEVICE_LOG_REPORT_EVENT = "DEVICE_LOG_REPORT_EVENT"
     DEVICE_REBOOT = "DEVICE_REBOOT"
     DEVICE_START_EVENT = "DEVICE_START_EVENT"
+    ERROR_EVENT = "ERROR_EVENT"
     FEEDING_PLAN_SERVICE = "FEEDING_PLAN_SERVICE"
     GET_CONFIG = "GET_CONFIG"
     GET_FEEDING_PLAN_EVENT = "GET_FEEDING_PLAN_EVENT"
@@ -607,14 +608,17 @@ class DeviceConfigSyncIn:
 class ManualFeedingServiceIn:
     message_id: MessageId
     timestamp: Timestamp
-    code: Code
+    # Firmware returns OEM-specific service codes (for example 2002). Keep the
+    # wire integer instead of forcing it through the deliberately small Code
+    # enum used by commands whose response set is closed.
+    code: int
 
     @staticmethod
     def from_mqtt_payload(payload: dict) -> ManualFeedingServiceIn:
         return ManualFeedingServiceIn(
             message_id = MessageId(payload['msgId']),
             timestamp = Timestamp.from_timestamp_epoch_ms(int(payload['ts'])),
-            code = Code(int(payload['code'])),
+            code = int(payload['code']),
         )
 
 @dataclass
@@ -650,7 +654,8 @@ class GrainOutputEventIn:
     exec_time: Timestamp
     exec_step: ExecStep
     plan_id: Optional[int] = None
-    retried: Optional[str] = None
+    retried: Optional[int] = None
+    error_code: Optional[int] = None
 
     @staticmethod
     def from_mqtt_payload(payload: dict) -> GrainOutputEventIn:
@@ -669,9 +674,41 @@ class GrainOutputEventIn:
             data = data | { 'plan_id': int(payload['planId']) }
 
         if 'retried' in payload:
-            data = data | { 'retried': payload['retried'] }
+            data = data | { 'retried': int(payload['retried']) }
+
+        if 'errorCode' in payload:
+            data = data | { 'error_code': int(payload['errorCode']) }
 
         return GrainOutputEventIn(**data)
+
+@dataclass
+class ErrorEventIn:
+    message_id: MessageId
+    timestamp: Timestamp
+    error_code: int
+    trigger_time: Timestamp
+    extend: Optional[str] = None
+
+    @staticmethod
+    def from_mqtt_payload(payload: dict) -> ErrorEventIn:
+        message_id = payload['msgId']
+        if not isinstance(message_id, str) or not message_id:
+            raise ValueError('msgId must be a nonempty string')
+        extend = payload.get('extend')
+        if extend is not None:
+            if not isinstance(extend, str):
+                raise ValueError('extend must be a string')
+            if len(extend.encode('utf-8')) > 4096:
+                raise ValueError('extend is too large')
+        return ErrorEventIn(
+            message_id=MessageId(message_id),
+            timestamp=Timestamp.from_timestamp_epoch_ms(int(payload['ts'])),
+            error_code=int(payload['errorCode']),
+            trigger_time=Timestamp.from_timestamp_epoch_ms(
+                int(payload['triggerTime'])
+            ),
+            extend=extend,
+        )
 
 @dataclass
 class GrainOutputEventOut:

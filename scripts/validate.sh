@@ -118,6 +118,9 @@ done
 
 for script in \
     state-agent/app_start_snippet.sh \
+    state-agent/managed/app_start.sh \
+    state-agent/managed/app_start.legacy.sh \
+    state-agent/managed/ping \
     state-agent/runit/*/run \
     state-agent/runit/plaf203-update-supervisor/supervisor.sh; do
     /bin/sh -n "${script}"
@@ -127,6 +130,9 @@ if (( has_shellcheck )); then
     shellcheck \
         scripts/*.sh \
         state-agent/app_start_snippet.sh \
+        state-agent/managed/app_start.sh \
+        state-agent/managed/app_start.legacy.sh \
+        state-agent/managed/ping \
         state-agent/runit/*/run \
         state-agent/runit/plaf203-update-supervisor/supervisor.sh \
         addon/run.sh \

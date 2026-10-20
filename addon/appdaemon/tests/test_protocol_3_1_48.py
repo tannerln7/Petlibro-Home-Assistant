@@ -816,7 +816,228 @@ class ProtocolCompatibilityTests(unittest.TestCase):
             p.MessageId(request['msgId']), p.Timestamp.from_timestamp_epoch_ms(request['ts']), request['grainNum'])
         self.assertEqual(request, message.to_mqtt_payload())
         parsed = p.ManualFeedingServiceIn.from_mqtt_payload(MANUAL_FEED_RESPONSE['payload'])
-        self.assertEqual(p.Code.OK, parsed.code)
+        self.assertEqual(p.Code.OK.value, parsed.code)
+
+        rejected = p.ManualFeedingServiceIn.from_mqtt_payload({
+            "cmd": "MANUAL_FEEDING_SERVICE",
+            "msgId": "manual-busy",
+            "ts": request["ts"],
+            "code": 2002,
+        })
+        self.assertEqual(2002, rejected.code)
+
+    def test_error_event_parses_and_routes_without_application_ack(self):
+        received = []
+        self.client.error_event_listen(received.append)
+        payload = {
+            "cmd": "ERROR_EVENT",
+            "msgId": "feed-error-1",
+            "ts": 1786354621000,
+            "errorCode": 2031,
+            "triggerTime": 1786354620000,
+            "extend": "diagnostic",
+        }
+
+        self.client._mqtt_recv_event_cb(
+            "MQTT_MESSAGE",
+            {
+                "topic": "dl/PLAF203/SERIAL/device/event/post",
+                "payload": json.dumps(payload),
+            },
+            {},
+        )
+
+        self.assertEqual(1, len(received))
+        self.assertEqual(2031, received[0].error_code)
+        self.assertEqual("diagnostic", received[0].extend)
+        self.assertEqual([], self.mqtt.published)
+
+    def test_grain_optional_error_code_and_numeric_retried_are_preserved(self):
+        payload = dict(GRAIN_REQUEST["payload"])
+        payload.update({"errorCode": 2031, "retried": 2})
+
+        parsed = p.GrainOutputEventIn.from_mqtt_payload(payload)
+
+        self.assertEqual(2031, parsed.error_code)
+        self.assertEqual(2, parsed.retried)
+
+    def test_error_event_rejects_oversized_extension_without_logging_contents(self):
+        self.client.error_event_listen(lambda _message: None)
+        secret = "x" * 4097
+        payload = {
+            "cmd": "ERROR_EVENT",
+            "msgId": "oversized-error",
+            "ts": 1786354621000,
+            "errorCode": 9999,
+            "triggerTime": 1786354620000,
+            "extend": secret,
+        }
+
+        self.client._mqtt_recv_event_cb(
+            "MQTT_MESSAGE",
+            {
+                "topic": "dl/PLAF203/SERIAL/device/event/post",
+                "payload": json.dumps(payload),
+            },
+            {},
+        )
+
+        rendered = "\n".join(self.ad.logs)
+        self.assertIn("invalid MQTT command payload ignored", rendered)
+        self.assertNotIn(secret, rendered)
+
+    def _error_backend(self):
+        backend = backend_module.Backend()
+        backend.logger = PetlibroLogger(self.ad, "petlibro.backend", "trace")
+        backend.client = types.SimpleNamespace(
+            grain_output_event_send=lambda message: self.mqtt.published.append(
+                ("event/sub", message.to_mqtt_payload())
+            )
+        )
+        backend.food_output_log_start_callback = None
+        backend.food_output_log_end_callback = None
+        backend.food_output_progress_callback = None
+        backend._device_timestamp_sync_drift_check_and_adjust = lambda _timestamp: None
+        return backend
+
+    def test_routine_error_diagnostics_do_not_report_device_errors(self):
+        backend = self._error_backend()
+        errors = []
+        backend._error_report = errors.append
+
+        for code in (2046, 2048):
+            backend._error_event_cb(p.ErrorEventIn(
+                p.MessageId(f"diagnostic-{code}"),
+                p.Timestamp.now(),
+                code,
+                p.Timestamp.now(),
+                "details",
+            ))
+
+        self.assertEqual([], errors)
+        rendered = "\n".join(self.ad.logs)
+        self.assertIn("cloud notification diagnostic", rendered)
+        self.assertIn("ISP exposure diagnostic", rendered)
+        self.assertNotIn("details", rendered)
+
+    def test_error_and_grain_duplicate_produce_one_operational_report(self):
+        backend = self._error_backend()
+        errors = []
+        backend._error_report = errors.append
+        message_id = p.MessageId("duplicate-feed-error")
+        event_time = p.Timestamp.now()
+        backend._remember_grain_operation(message_id.data)
+        backend._error_event_cb(p.ErrorEventIn(
+            message_id,
+            p.Timestamp.now(),
+            2031,
+            event_time,
+        ))
+        grain = p.GrainOutputEventIn(
+            message_id=message_id,
+            timestamp=p.Timestamp.now(),
+            finished=True,
+            type_=p.GrainOutputType.MANUAL_FEED,
+            actual_grain_num=0,
+            expected_grain_num=1,
+            exec_time=event_time,
+            exec_step=p.ExecStep.GRAIN_END,
+            error_code=2031,
+        )
+
+        backend._grain_output_event_cb(grain)
+
+        self.assertEqual(1, len(errors))
+        self.assertIn("motor overcurrent", errors[0])
+        self.assertEqual("GRAIN_OUTPUT_EVENT", self.mqtt.published[0][1]["cmd"])
+
+    def test_same_error_code_at_different_event_times_is_not_suppressed(self):
+        backend = self._error_backend()
+        errors = []
+        backend._error_report = errors.append
+        message_id = p.MessageId("reused-operation-id")
+        first = p.Timestamp.from_timestamp_epoch_ms(1786354620000)
+        second = p.Timestamp.from_timestamp_epoch_ms(1786354621000)
+
+        for event_time in (first, second):
+            backend._error_event_cb(p.ErrorEventIn(
+                message_id,
+                p.Timestamp.now(),
+                2031,
+                event_time,
+            ))
+
+        self.assertEqual(2, len(errors))
+
+    def test_grain_ack_precedes_and_survives_projection_failure(self):
+        backend = self._error_backend()
+        order = []
+        backend.client.grain_output_event_send = lambda _message: order.append("ack")
+        backend.food_output_log_start_callback = lambda *_args: (
+            order.append("projection"),
+            (_ for _ in ()).throw(RuntimeError("synthetic")),
+        )[-1]
+        backend.food_output_progress_callback = lambda _progress: order.append(
+            "progress"
+        )
+        grain = p.GrainOutputEventIn.from_mqtt_payload(GRAIN_REQUEST["payload"])
+
+        backend._grain_output_event_cb(grain)
+
+        self.assertEqual(["ack", "projection", "progress"], order)
+        self.assertIn("projection callback failed", "\n".join(self.ad.logs))
+
+    def test_grain_end_projection_failure_does_not_prevent_idle_or_error(self):
+        backend = self._error_backend()
+        order = []
+        backend.client.grain_output_event_send = lambda _message: order.append("ack")
+        backend.food_output_log_end_callback = lambda *_args: (
+            order.append("log_end"),
+            (_ for _ in ()).throw(RuntimeError("synthetic")),
+        )[-1]
+        backend.food_output_progress_callback = lambda progress: order.append(
+            progress
+        )
+        backend._error_report = lambda detail: order.append(("error", detail))
+        grain = p.GrainOutputEventIn(
+            message_id=p.MessageId("failed-terminal-operation"),
+            timestamp=p.Timestamp.now(),
+            finished=True,
+            type_=p.GrainOutputType.MANUAL_FEED,
+            actual_grain_num=0,
+            expected_grain_num=1,
+            exec_time=p.Timestamp.now(),
+            exec_step=p.ExecStep.GRAIN_END,
+            error_code=2031,
+        )
+
+        backend._grain_output_event_cb(grain)
+
+        self.assertEqual("ack", order[0])
+        self.assertEqual("log_end", order[1])
+        self.assertEqual(backend_module.FoodOutputProgress.IDLE, order[2])
+        self.assertEqual("error", order[3][0])
+
+    def test_transient_grain_error_warns_without_latching_device_error(self):
+        backend = self._error_backend()
+        errors = []
+        backend._error_report = errors.append
+        grain = p.GrainOutputEventIn(
+            message_id=p.MessageId("busy-manual-feed"),
+            timestamp=p.Timestamp.now(),
+            finished=True,
+            type_=p.GrainOutputType.MANUAL_FEED,
+            actual_grain_num=0,
+            expected_grain_num=1,
+            exec_time=p.Timestamp.now(),
+            exec_step=p.ExecStep.GRAIN_END,
+            error_code=2002,
+        )
+
+        backend._grain_output_event_cb(grain)
+
+        self.assertEqual([], errors)
+        self.assertIn("feeding request warning", "\n".join(self.ad.logs))
 
     def test_attr_push_capture_fields_ack_and_serializers(self):
         request = ATTR_PUSH_REQUEST['payload']

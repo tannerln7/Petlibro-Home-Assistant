@@ -90,6 +90,14 @@ the add-on version or branch lifecycle. Follow the
 [State Agent release instructions](../state-agent/README.md#signed-updates).
 An add-on-only change must not create a State Agent release.
 
+State Agent development candidates use SemVer prereleases and the opt-in
+`state-agent/dev/latest.json` pointer. GitHub Actions builds and validates an
+exact committed revision without signing credentials; the local guarded
+publisher downloads that workflow artifact, signs it with the existing key,
+publishes the immutable artifact, and only then advances the development
+pointer. The stable pointer is not involved. Promotion rebuilds a stable
+version from promoted source rather than renaming a development artifact.
+
 ## Standalone go2rtc releases
 
 The Petlibro camera fork has an independent release lifecycle in

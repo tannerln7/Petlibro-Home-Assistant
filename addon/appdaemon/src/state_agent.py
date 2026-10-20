@@ -76,6 +76,7 @@ class FeederQueue:
     head: int
     tail: int
     pending: bool
+    valid: bool = True
 
     @classmethod
     def from_dict(cls, data: object, name: str = "queue") -> FeederQueue:
@@ -84,10 +85,20 @@ class FeederQueue:
             head=_integer(obj.get("head"), f"{name}.head", 0, 255),
             tail=_integer(obj.get("tail"), f"{name}.tail", 0, 255),
             pending=_boolean(obj.get("pending"), f"{name}.pending"),
+            valid=(
+                _boolean(obj.get("valid"), f"{name}.valid")
+                if "valid" in obj
+                else True
+            ),
         )
 
     def to_dict(self) -> dict[str, object]:
-        return {"head": self.head, "tail": self.tail, "pending": self.pending}
+        return {
+            "head": self.head,
+            "tail": self.tail,
+            "pending": self.pending,
+            "valid": self.valid,
+        }
 
 
 @dataclass(frozen=True)
@@ -376,6 +387,10 @@ class FeedEventSnapshot:
     err_queue: FeederQueue
     events: tuple[Mapping[str, object], ...]
     semantics: str
+    error_events: tuple[Mapping[str, object], ...] = ()
+    snapshot_consistent: bool = True
+    normal_ring_valid: bool = True
+    error_ring_valid: bool = True
 
     @classmethod
     def from_dict(cls, data: object) -> FeedEventSnapshot:
@@ -385,11 +400,32 @@ class FeedEventSnapshot:
             isinstance(event_value, dict) for event_value in events
         ):
             raise StateAgentBadResponse("events must be an array of objects")
+        error_events = obj.get("error_events", [])
+        if not isinstance(error_events, list) or not all(
+            isinstance(event_value, dict) for event_value in error_events
+        ):
+            raise StateAgentBadResponse("error_events must be an array of objects")
         return cls(
             queue=FeederQueue.from_dict(obj.get("queue")),
             err_queue=FeederQueue.from_dict(obj.get("err_queue"), "err_queue"),
             events=tuple(dict(event_value) for event_value in events),
             semantics=_nonempty_string(obj.get("semantics"), "semantics"),
+            error_events=tuple(dict(event_value) for event_value in error_events),
+            snapshot_consistent=(
+                _boolean(obj.get("snapshot_consistent"), "snapshot_consistent")
+                if "snapshot_consistent" in obj
+                else True
+            ),
+            normal_ring_valid=(
+                _boolean(obj.get("normal_ring_valid"), "normal_ring_valid")
+                if "normal_ring_valid" in obj
+                else True
+            ),
+            error_ring_valid=(
+                _boolean(obj.get("error_ring_valid"), "error_ring_valid")
+                if "error_ring_valid" in obj
+                else True
+            ),
         )
 
 
@@ -473,6 +509,46 @@ class StateAgentUpdateSubmitResult:
         )
 
 
+@dataclass(frozen=True)
+class CompatibilityStatus:
+    asset_version: str
+    original_ping_path: str | None
+    supported: bool
+    deployed: bool
+    shim_current: bool
+    startup_current: bool
+    backup_available: bool
+    enabled: bool
+    active: bool
+    reboot_required: bool
+    last_reason: str
+
+    @classmethod
+    def from_dict(cls, data: object) -> CompatibilityStatus:
+        obj = _successful_object(data)
+        return cls(
+            asset_version=_nonempty_string(obj.get("asset_version"), "asset_version"),
+            original_ping_path=_optional_nonempty_string(
+                obj.get("original_ping_path"), "original_ping_path"
+            ),
+            supported=_boolean(obj.get("supported"), "supported"),
+            deployed=_boolean(obj.get("deployed"), "deployed"),
+            shim_current=_boolean(obj.get("shim_current"), "shim_current"),
+            startup_current=_boolean(
+                obj.get("startup_current"), "startup_current"
+            ),
+            backup_available=_boolean(
+                obj.get("backup_available"), "backup_available"
+            ),
+            enabled=_boolean(obj.get("enabled"), "enabled"),
+            active=_boolean(obj.get("active"), "active"),
+            reboot_required=_boolean(
+                obj.get("reboot_required"), "reboot_required"
+            ),
+            last_reason=_nonempty_string(obj.get("last_reason"), "last_reason"),
+        )
+
+
 class StateAgentClient:
     """Small blocking HTTP client intended to run in an AppDaemon executor."""
 
@@ -511,6 +587,29 @@ class StateAgentClient:
     def update_status(self) -> StateAgentUpdateStatus:
         return StateAgentUpdateStatus.from_dict(self._get("/v1/update-status"))
 
+    def compatibility_status(self) -> CompatibilityStatus:
+        return CompatibilityStatus.from_dict(self._get("/v1/compatibility"))
+
+    def compatibility_deploy(self) -> CompatibilityStatus:
+        return CompatibilityStatus.from_dict(
+            self._post_empty_json("/v1/compatibility/deploy")
+        )
+
+    def compatibility_enable(self) -> CompatibilityStatus:
+        return CompatibilityStatus.from_dict(
+            self._post_empty_json("/v1/compatibility/enable")
+        )
+
+    def compatibility_disable(self) -> CompatibilityStatus:
+        return CompatibilityStatus.from_dict(
+            self._post_empty_json("/v1/compatibility/disable")
+        )
+
+    def compatibility_restore_startup(self) -> CompatibilityStatus:
+        return CompatibilityStatus.from_dict(
+            self._post_empty_json("/v1/compatibility/restore-startup")
+        )
+
     def submit_update(self, payload: bytes) -> StateAgentUpdateSubmitResult:
         if not isinstance(payload, (bytes, bytearray)):
             raise TypeError("update payload must be bytes")
@@ -533,6 +632,20 @@ class StateAgentClient:
 
     def _get(self, path: str) -> Mapping[str, object]:
         body = self._request(path, method="GET", accept="application/json")
+        try:
+            decoded = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise StateAgentBadResponse("state agent returned invalid JSON") from None
+        return _object(decoded, "response")
+
+    def _post_empty_json(self, path: str) -> Mapping[str, object]:
+        body = self._request(
+            path,
+            method="POST",
+            body=b"",
+            content_type="application/json",
+            accept="application/json",
+        )
         try:
             decoded = json.loads(body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -593,6 +706,11 @@ class UnavailableStateAgentClient:
     version = _unavailable
     update_status = _unavailable
     submit_update = _unavailable
+    compatibility_status = _unavailable
+    compatibility_deploy = _unavailable
+    compatibility_enable = _unavailable
+    compatibility_disable = _unavailable
+    compatibility_restore_startup = _unavailable
 
 
 def _successful_object(data: object) -> Mapping[str, Any]:

@@ -9,6 +9,7 @@ from appdaemon.plugins.mqtt import mqttapi
 from backend import Backend
 from camera_metadata import CameraMetadataPublisher
 from commands import CommandRouter
+from compatibility import CompatibilityCoordinator
 from dispensing_status import DispensingStatusProjector, FoodOutputProgress
 from feeder_mqtt_validation import validate_feeder_mqtt_destination
 from ha_entities import HomeAssistantDiscoveryMqtt, HomeAssistantStatePublisher
@@ -87,6 +88,13 @@ class Plaf203(adbase.ADBase):
             update_options,
         )
         self.updater.start()
+        self.compatibility = CompatibilityCoordinator(
+            self.ad,
+            self.state,
+            state_agent,
+            PetlibroLogger(self.ad, "petlibro.compatibility", log_level),
+        )
+        self.compatibility.start()
         self.backend = Backend()
         self.backend.initialize(
             self.ad, self.mqtt, self.serial_number, log_level=log_level
@@ -118,6 +126,7 @@ class Plaf203(adbase.ADBase):
             self.state,
             self.logger,
             updater=self.updater,
+            compatibility=self.compatibility,
             raw_settings_diagnostics=self.logger.enabled("debug"),
         )
         self.commands.restore_local_preferences()
@@ -152,6 +161,7 @@ class Plaf203(adbase.ADBase):
     def terminate(self) -> None:
         self.camera_metadata.stop()
         self.updater.stop()
+        self.compatibility.stop()
         self.coordinator.shutdown()
         self.storage.terminate()
         self.dispensing_status.on_feeder_disconnected()
@@ -216,6 +226,7 @@ class Plaf203(adbase.ADBase):
         if not available:
             return
         self.updater.on_usable_connection()
+        self.compatibility.on_usable_connection()
         self.state.publish("device/error_state", False)
         self.state.publish("device/error_message", "No error")
         if self.persist_feeder_mqtt and self._feeder_mqtt_persistence_due:
@@ -295,6 +306,9 @@ class Plaf203(adbase.ADBase):
         updater = getattr(self, "updater", None)
         if updater is not None:
             updater.on_home_assistant_birth()
+        compatibility = getattr(self, "compatibility", None)
+        if compatibility is not None:
+            compatibility.on_home_assistant_birth()
         self.dispensing_status.mark_unavailable()
         self.backend.request_runtime_snapshot("Home Assistant birth")
 

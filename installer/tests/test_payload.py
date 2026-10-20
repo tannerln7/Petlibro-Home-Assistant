@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from installer.payload import build_payload, validate_public_key
+from installer.payload import APP_START_TEMPLATE, build_payload, validate_public_key
 
 
 VALID_PUBLIC_KEY = (
@@ -17,6 +17,15 @@ VALID_PUBLIC_KEY = (
 
 
 class PayloadTests(unittest.TestCase):
+    def test_installer_startup_matches_state_agent_managed_target(self) -> None:
+        managed = (
+            Path(__file__).resolve().parents[2]
+            / "state-agent"
+            / "managed"
+            / "app_start.sh"
+        ).read_text(encoding="ascii")
+        self.assertEqual(managed, APP_START_TEMPLATE)
+
     @staticmethod
     def _snapshots(data: Path) -> list[Path]:
         root = data / "plaf203-bootstrap" / "preinstall-state"
