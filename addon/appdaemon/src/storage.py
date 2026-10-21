@@ -14,6 +14,9 @@ class Storage:
         self.namespace: str = namespace
         self.food_manual_feed_grain_num_entity_id: str = 'sensor.plaf203_{}_food_manual_feed_grain_num'.format(serial_number)
         self.verified_truth_entity_id: str = 'sensor.plaf203_{}_verified_feeder_truth'.format(serial_number)
+        self.compatibility_reboot_entity_id = (
+            'sensor.plaf203_{}_compatibility_reboot_attempt'.format(serial_number)
+        )
 
     def initialize(self):
         self.ad.set_namespace(self.namespace)
@@ -40,6 +43,31 @@ class Storage:
             truth.to_dict(),
             check_existence=self._entity_state_exists(self.verified_truth_entity_id),
         )
+
+    def compatibility_reboot_version_get(self) -> str | None:
+        if not self._entity_state_exists(self.compatibility_reboot_entity_id):
+            return None
+        return self.ad.get_state(
+            self.compatibility_reboot_entity_id, namespace=self.namespace
+        )
+
+    def compatibility_reboot_version_set(self, version: str) -> None:
+        # Save before publishing a reboot, so a controller restart does not
+        # repeatedly reboot a feeder whose activation never became healthy.
+        previous = self.compatibility_reboot_version_get()
+        try:
+            self.ad.set_state(
+                self.compatibility_reboot_entity_id, state=version,
+                namespace=self.namespace, check_existence=False,
+            )
+            if self.ad.save_namespace(namespace=self.namespace) is not True:
+                raise RuntimeError("compatibility reboot guard could not be saved")
+        except Exception:
+            self.ad.set_state(
+                self.compatibility_reboot_entity_id, state=previous or "",
+                namespace=self.namespace, check_existence=False,
+            )
+            raise
 
     def _entity_state_exists(self, name: str) -> bool:
         return self.ad.entity_exists(name, namespace=self.namespace)

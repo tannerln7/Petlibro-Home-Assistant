@@ -11,7 +11,11 @@ from backend import Backend, ErrorCategory, OperationalError
 from camera_metadata import CameraMetadataPublisher
 from commands import CommandRouter
 from compatibility import CompatibilityCoordinator
-from dispensing_status import DispensingStatusProjector, FoodOutputProgress
+from dispensing_status import (
+    DispensingStatusProjector,
+    FoodOutputProgress,
+    RuntimeSnapshotResult,
+)
 from feeder_mqtt_validation import validate_feeder_mqtt_destination
 from ha_entities import HomeAssistantDiscoveryMqtt, HomeAssistantStatePublisher
 from petlibro_logging import PetlibroLogger
@@ -30,6 +34,9 @@ from state_coordinator import (
 )
 from storage import Storage
 from telemetry import TelemetryPublisher
+
+COMPATIBILITY_IDLE_MAX_AGE_SECONDS = 20
+COMPATIBILITY_PLAN_GUARD_SECONDS = 5 * 60
 
 
 class Plaf203(adbase.ADBase):
@@ -55,6 +62,7 @@ class Plaf203(adbase.ADBase):
             ErrorCategory, tuple[OperationalError, float]
         ] = {}
         self._ntp_sync_failed = False
+        self._compatibility_snapshot_request: tuple[str, int, int] | None = None
         self._publish_device_error()
         self.storage = Storage(self.ad, "plaf203", self.serial_number)
         self.storage.initialize()
@@ -93,6 +101,7 @@ class Plaf203(adbase.ADBase):
             self.state,
             state_agent,
             PetlibroLogger(self.ad, "petlibro.compatibility", log_level),
+            activate_if_safe=self._activate_compatibility_if_safe,
         )
         self.compatibility.start()
         self.updater = StateAgentUpdateCoordinator(
@@ -222,12 +231,65 @@ class Plaf203(adbase.ADBase):
         self.backend.food_output_progress_listen(self._food_output_progress)
         self.backend.runtime_snapshot_listen(
             self.dispensing_status.runtime_snapshot_started,
-            self.dispensing_status.apply_runtime_snapshot,
+            self._runtime_snapshot_result,
             self.dispensing_status.runtime_event_generation_get,
         )
 
+    def _runtime_snapshot_result(self, result: RuntimeSnapshotResult) -> None:
+        if self.dispensing_status.apply_runtime_snapshot(result):
+            self.compatibility.on_runtime_snapshot()
+
     def _apply_feeder_truth(self, truth: FeederTruth) -> None:
         self.state.apply_feeder_truth(truth)
+
+    def _activate_compatibility_if_safe(self, version: str) -> bool:
+        if self.storage.compatibility_reboot_version_get() == version:
+            return True  # One automatic reboot request per release, even after restart.
+        if (
+            not self._overall_available or not self.backend.is_online
+            or not self.coordinator.is_ready_for_user_write()
+            or self.updater.update_in_progress or self._ntp_sync_failed
+        ):
+            self.logger.debug("compatibility reboot deferred until feeder is ready")
+            return False
+        truth = self.coordinator.latest_truth()
+        if truth is None:
+            return False
+        now = datetime.datetime.now(datetime.timezone.utc)
+        seconds = now.hour * 3600 + now.minute * 60 + now.second
+        # Deliberately conservative: protect every known plan's UTC time even
+        # on non-execution days. Include midnight and the post-feed window.
+        if any(
+            abs((plan.hour_utc * 3600 + plan.minute * 60 - seconds + 43200)
+                % 86400 - 43200) <= COMPATIBILITY_PLAN_GUARD_SECONDS
+            for plan in truth.plans.semantic_records
+        ):
+            self.logger.debug("compatibility reboot deferred near scheduled feeding")
+            return False
+        if not self.dispensing_status.idle_confirmed_recently(
+            COMPATIBILITY_IDLE_MAX_AGE_SECONDS
+        ):
+            key = (
+                version, self.backend.connection_generation,
+                self.dispensing_status.runtime_event_generation_get(),
+            )
+            # A failed/unsupported query must not cause endless snapshot
+            # warnings. New runtime activity or reconnect permits a new probe.
+            if (
+                self.backend.runtime_snapshot_pending is None
+                and self._compatibility_snapshot_request != key
+            ):
+                self._compatibility_snapshot_request = key
+                self.backend.request_runtime_snapshot("compatibility activation")
+            self.logger.debug("compatibility reboot deferred until live idle is confirmed")
+            return False
+        self.storage.compatibility_reboot_version_set(version)
+        self.logger.info(
+            "rebooting feeder to activate release-managed compatibility",
+            asset_version=version,
+        )
+        self.backend.device_reboot()
+        return True
 
     def _coordinator_availability_set(self, available: bool) -> None:
         was_available = self._overall_available

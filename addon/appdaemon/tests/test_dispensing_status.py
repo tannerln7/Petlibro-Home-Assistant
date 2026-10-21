@@ -96,6 +96,32 @@ def connected_projector():
     return projector, state
 
 
+def test_automatic_reboot_idle_proof_expires_and_is_invalidated_by_runtime_events(
+    monkeypatch,
+):
+    import dispensing_status
+
+    clock = [100.0]
+    monkeypatch.setattr(dispensing_status.time, "monotonic", lambda: clock[0])
+    projector, _state = connected_projector()
+    assert not projector.idle_confirmed_recently(20)
+    projector.apply_runtime_snapshot(
+        RuntimeSnapshotResult(request=request(), motor_state=2)
+    )
+    assert projector.idle_confirmed_recently(20)
+    clock[0] = 121
+    assert not projector.idle_confirmed_recently(20)
+    clock[0] = 110
+    projector.apply_grain_event(FoodOutputProgress.IDLE, 1)
+    assert not projector.idle_confirmed_recently(20)
+    projector.apply_runtime_snapshot(
+        RuntimeSnapshotResult(request=request(runtime_generation=1), motor_state=2)
+    )
+    assert projector.idle_confirmed_recently(20)
+    projector.mark_unavailable()
+    assert not projector.idle_confirmed_recently(20)
+
+
 @pytest.mark.parametrize(
     ("motor_state", "expected"),
     [

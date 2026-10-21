@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+from unittest.mock import Mock
+
+import pytest
 from compatibility import CompatibilityCoordinator
 from ha_entities import HomeAssistantDiscoveryMqtt
 from petlibro_logging import PetlibroLogger
@@ -193,3 +197,94 @@ def test_discovery_exposes_only_actual_ping_mitigation_state_and_removes_old_ent
     assert any(
         topic.endswith("/compatibility_ping_mitigation/config") for topic in removed
     )
+
+
+def activation_coordinator():
+    ad = FakeAd()
+    agent = FakeAgent()
+    agent.status = replace(agent.status, enabled=True, reboot_required=True)
+    activate = Mock(return_value=False)
+    coordinator = CompatibilityCoordinator(
+        ad, FakeState(), agent, PetlibroLogger(ad, "test", "trace"), activate
+    )
+    return coordinator, ad, agent, activate
+
+
+def test_activation_waits_for_safety_then_rechecks_status_on_fresh_runtime():
+    coordinator, ad, agent, activate = activation_coordinator()
+    coordinator.on_state_agent_update_complete("0.4.0")
+    activate.assert_called_once_with("0.4.0")
+    assert len(ad.timers) == 1
+
+    activate.return_value = True
+    coordinator.on_runtime_snapshot()
+
+    assert agent.calls == ["reconcile", "reconcile"]
+    assert activate.call_count == 2
+    assert ad.timers == []
+    assert coordinator.state.messages[-1] == ("compatibility/active", False, True)
+
+
+@pytest.mark.parametrize("changes", [
+    {"supported": False}, {"deployed": False}, {"enabled": False},
+    {"active": True}, {"reboot_required": False}, {"backup_available": False},
+    {"shim_current": False}, {"startup_current": False},
+])
+def test_automatic_activation_requires_complete_supported_pending_status(changes):
+    coordinator, ad, agent, activate = activation_coordinator()
+    agent.status = replace(agent.status, **changes)
+    coordinator.on_usable_connection()
+    activate.assert_not_called()
+    assert ad.timers == []
+
+
+def test_activation_timer_does_not_reboot_from_cached_status():
+    coordinator, ad, agent, activate = activation_coordinator()
+    coordinator.on_usable_connection()
+    agent.status = replace(agent.status, active=True, reboot_required=False)
+    callback, _delay, kwargs = ad.timers.pop()
+    callback(kwargs)
+    assert agent.calls == ["reconcile", "reconcile"]
+    assert activate.call_count == 1
+    assert ad.timers == []
+
+
+def test_activation_never_uses_a_stale_result_during_update_conflict():
+    coordinator, ad, agent, activate = activation_coordinator()
+    coordinator.on_usable_connection()
+    agent.compatibility_reconcile = Mock(
+        side_effect=StateAgentConflict("state_agent_update_in_progress")
+    )
+    callback, _delay, kwargs = ad.timers.pop()
+    callback(kwargs)
+    assert activate.call_count == 1
+    assert len(ad.timers) == 1
+
+
+def test_stop_cancels_activation_and_ignores_late_executor_completion():
+    coordinator, ad, agent, activate = activation_coordinator()
+    coordinator.on_usable_connection()
+    coordinator.stop()
+    coordinator._finished(action="reconcile", result=agent.status)
+    coordinator.on_runtime_snapshot()
+    assert activate.call_count == 1
+    assert ad.timers == []
+
+
+def test_activation_callback_failure_is_sanitized_and_does_not_break_reconciliation():
+    coordinator, ad, _agent, activate = activation_coordinator()
+    activate.side_effect = RuntimeError("private detail")
+    coordinator.on_usable_connection()
+    assert len(ad.timers) == 1
+    assert "private detail" not in "\n".join(ad.logs)
+    assert ad.executor_errors == []
+
+
+def test_older_agent_without_compatibility_api_never_requests_reboot():
+    coordinator, ad, agent, activate = activation_coordinator()
+    agent.compatibility_reconcile = Mock(side_effect=StateAgentUnsupported("old"))
+    agent.compatibility_status = Mock(side_effect=StateAgentUnsupported("old"))
+    coordinator.on_usable_connection()
+    activate.assert_not_called()
+    assert coordinator.state.messages == []
+    assert ad.timers == []

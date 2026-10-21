@@ -280,6 +280,10 @@ class VerifiedReleaseBundle:
 class StateAgentUpdateCoordinator:
     """Dedicated OTA checker/uploader independent from feeder truth reconciliation."""
 
+    @property
+    def update_in_progress(self) -> bool:
+        return self._latest_state.in_progress
+
     def __init__(
         self,
         ad,

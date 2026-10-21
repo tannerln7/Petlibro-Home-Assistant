@@ -13,12 +13,16 @@ from state_agent import (
 )
 
 RETRY_DELAYS_SECONDS = (30, 60, 120)
+ACTIVATION_RETRY_SECONDS = 30
 
 
 class CompatibilityCoordinator:
     """Run fixed State Agent compatibility operations outside AppDaemon's loop."""
 
-    def __init__(self, ad, state, state_agent, logger):
+    def __init__(
+        self, ad, state, state_agent, logger,
+        activate_if_safe: Callable[[str], bool] | None = None,
+    ):
         self.ad = ad
         self.state = state
         self.state_agent = state_agent
@@ -28,14 +32,20 @@ class CompatibilityCoordinator:
         self._retry_timer = None
         self._retry_attempt = 0
         self._latest: CompatibilityStatus | None = None
+        self._activate_if_safe = activate_if_safe
+        self._activation_timer = None
+        self._stopped = False
 
     def start(self) -> None:
+        self._stopped = False
         self._publish_unavailable("not_checked")
 
     def stop(self) -> None:
+        self._stopped = True
         if self._retry_timer is not None:
             self.ad.cancel_timer(self._retry_timer, True)
             self._retry_timer = None
+        self._cancel_activation()
 
     def on_usable_connection(self) -> None:
         self._reset_retry()
@@ -45,6 +55,11 @@ class CompatibilityCoordinator:
         self._reset_retry()
         self.request_reconcile(reason="state_agent_update", version=version)
 
+    def on_runtime_snapshot(self) -> None:
+        if self._activation_timer is not None:
+            self._cancel_activation()
+            self.request_reconcile(reason="activation_runtime")
+
     def on_home_assistant_birth(self) -> None:
         if self._latest is None:
             self._publish_unavailable("not_checked")
@@ -53,6 +68,8 @@ class CompatibilityCoordinator:
         self.request_reconcile(reason="ha_birth")
 
     def request_reconcile(self, *, reason: str, version: str | None = None) -> None:
+        if self._stopped:
+            return
         self.logger.debug(
             "feeder compatibility reconciliation requested",
             reason=reason,
@@ -98,6 +115,8 @@ class CompatibilityCoordinator:
 
     def _finished(self, *, action: str, result: object) -> None:
         self._busy = False
+        if self._stopped:
+            return
         if isinstance(result, Exception):
             if isinstance(result, StateAgentUnsupported):
                 self.logger.debug(
@@ -138,7 +157,42 @@ class CompatibilityCoordinator:
             reboot_required=result.reboot_required,
             reason=result.last_reason,
         )
+        self._activate_when_safe(result)
         self._run_pending()
+
+    def _activate_when_safe(self, status: CompatibilityStatus) -> None:
+        if self._activate_if_safe is None or not (
+            status.supported and status.deployed and status.shim_current
+            and status.startup_current and status.backup_available
+            and status.enabled and not status.active and status.reboot_required
+        ):
+            self._cancel_activation()
+            return
+        try:
+            requested = self._activate_if_safe(status.asset_version)
+        except Exception as error:
+            self.logger.warning(
+                "compatibility activation could not request a safe reboot",
+                error_type=type(error).__name__,
+            )
+            requested = False
+        if requested:
+            self._cancel_activation()
+        elif self._activation_timer is None:
+            self._activation_timer = self.ad.run_in(
+                self._retry_activation, ACTIVATION_RETRY_SECONDS
+            )
+
+    def _retry_activation(self, _kwargs: dict[str, object]) -> None:
+        self._activation_timer = None
+        # Re-read release status and update exclusion before considering a
+        # reboot; a cached pending result is not sufficient authority.
+        self.request_reconcile(reason="activation")
+
+    def _cancel_activation(self) -> None:
+        if self._activation_timer is not None:
+            self.ad.cancel_timer(self._activation_timer, True)
+            self._activation_timer = None
 
     def _retryable(self, error: Exception) -> bool:
         if isinstance(error, StateAgentConflict):

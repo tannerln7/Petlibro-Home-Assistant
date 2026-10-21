@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.15-beta.6
+
+- Automatically request a feeder reboot to activate fully deployed compatibility
+  files when fresh live Idle is confirmed, no write or agent update is in
+  progress, and no scheduled feeding time is nearby. Defer unknown/busy states
+  and persist a per-release attempt guard to prevent repeated reboot requests.
+- Keep actual mitigation activation distinct from deployment and reboot requests;
+  document runtime snapshot timeout warnings and conservative activation fallback.
+
 ## 0.3.15-beta.5
 
 - Run State Agent update and compatibility connection checks only when feeder

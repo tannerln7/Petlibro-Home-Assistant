@@ -1,9 +1,14 @@
 from dataclasses import replace
+import datetime
 from unittest.mock import Mock
 
 import pytest
 from backend import Backend
-from dispensing_status import DispensingStatusProjector
+from compatibility import CompatibilityCoordinator
+from dispensing_status import (
+    DispensingStatusProjector, FoodOutputProgress,
+    RuntimeSnapshotRequest, RuntimeSnapshotResult,
+)
 from ha_entities import HomeAssistantStatePublisher
 from plaf203 import Plaf203
 from protocol import ErrorEventIn, MessageId, Timestamp
@@ -19,6 +24,8 @@ from state_coordinator import (
 from test_plaf203_state_integration import CapturingMqtt, Logger
 from test_state_agent import core_payload
 from test_state_coordinator import FakeAD, FakeAgent
+from test_compatibility import FakeAgent as CompatibilityAgent
+from storage import Storage
 
 
 def night_vision_truth(mode="auto"):
@@ -80,6 +87,174 @@ def report_feeding_error(app):
     )
     assert last_value(app, "device/error_state") == "true"
     return last_value(app, "device/error_message")
+
+
+def set_activation_clock(monkeypatch, hour=12, minute=0):
+    class Clock(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2030, 1, 1, hour, minute, tzinfo=datetime.timezone.utc)
+
+    monkeypatch.setattr("plaf203.datetime.datetime", Clock)
+
+
+@pytest.fixture
+def activation_controller(controller, monkeypatch):
+    app = controller
+    set_activation_clock(monkeypatch)
+    values = {}
+    storage_ad = Mock()
+    storage_ad.entity_exists.side_effect = lambda name, **kw: name in values
+    storage_ad.get_state.side_effect = lambda name, **kw: values[name]
+    storage_ad.set_state.side_effect = lambda name, state, **kw: values.update(
+        {name: state}
+    )
+    storage_ad.save_namespace.return_value = True
+    app.storage = Storage(storage_ad, "plaf203", "SERIAL")
+    app._compatibility_snapshot_request = None
+    app.updater.update_in_progress = False
+    app.backend.is_online = True
+    app.backend.connection_generation = 1
+    app.backend.runtime_snapshot_pending = None
+    app.backend.device_reboot = Mock()
+    app._went_online()
+    app.dispensing_status.apply_runtime_snapshot(
+        RuntimeSnapshotResult(
+            request=RuntimeSnapshotRequest("idle", 1, 0, "test"), motor_state=2
+        )
+    )
+    return app
+
+
+def test_compatibility_activation_saves_guard_before_reboot_and_survives_restart(
+    activation_controller,
+):
+    app = activation_controller
+    app.backend.device_reboot.side_effect = lambda: (
+        app.storage.ad.save_namespace.assert_called_once_with(namespace="plaf203")
+    )
+    assert app._activate_compatibility_if_safe("0.4.0-rc.3")
+    app.backend.device_reboot.assert_called_once_with()
+    # A new Storage instance uses the same persisted guard, not session memory.
+    app.storage = Storage(app.storage.ad, "plaf203", "SERIAL")
+    assert app._activate_compatibility_if_safe("0.4.0-rc.3")
+    app.backend.device_reboot.assert_called_once_with()
+
+
+@pytest.mark.parametrize("unsafe", [
+    "offline", "unavailable", "write", "update", "ntp", "running", "unknown",
+])
+def test_compatibility_activation_defers_while_safety_is_unknown_or_busy(
+    activation_controller, unsafe,
+):
+    app = activation_controller
+    if unsafe == "offline":
+        app.backend.is_online = False
+    elif unsafe == "unavailable":
+        app._overall_available = False
+    elif unsafe == "write":
+        app.coordinator.state = FeederState.PENDING_WRITE
+    elif unsafe == "update":
+        app.updater.update_in_progress = True
+    elif unsafe == "ntp":
+        app._ntp_sync_failed = True
+    elif unsafe == "running":
+        app.dispensing_status.apply_grain_event(FoodOutputProgress.RUNNING, 1)
+    else:
+        app.dispensing_status.mark_unavailable()
+    assert not app._activate_compatibility_if_safe("0.4.0-rc.3")
+    app.backend.device_reboot.assert_not_called()
+    app.storage.ad.save_namespace.assert_not_called()
+
+
+@pytest.mark.parametrize("hour,minute,plan_hour,plan_minute", [
+    (10, 58, 11, 0), (11, 2, 11, 0), (0, 1, 23, 59), (23, 59, 0, 1),
+])
+def test_compatibility_activation_protects_schedule_including_midnight(
+    activation_controller, monkeypatch, hour, minute, plan_hour, plan_minute,
+):
+    app = activation_controller
+    set_activation_clock(monkeypatch, hour, minute)
+    truth = app.coordinator.latest_truth()
+    plan = replace(
+        truth.plans.semantic_records[0], hour_utc=plan_hour, minute=plan_minute
+    )
+    app.coordinator._latest_truth = replace(
+        truth, plans=replace(truth.plans, semantic_records=(plan,))
+    )
+    assert not app._activate_compatibility_if_safe("0.4.0-rc.3")
+    app.backend.device_reboot.assert_not_called()
+
+
+def test_snapshot_failure_does_not_cause_endless_activation_probe_warnings(
+    activation_controller,
+):
+    app = activation_controller
+    app.dispensing_status.mark_unavailable()
+    for _ in range(3):
+        assert not app._activate_compatibility_if_safe("0.4.0-rc.3")
+    app.backend.request_runtime_snapshot.assert_called_once_with(
+        "compatibility activation"
+    )
+    app.dispensing_status.apply_grain_event(FoodOutputProgress.IDLE, 1)
+    assert not app._activate_compatibility_if_safe("0.4.0-rc.3")
+    assert app.backend.request_runtime_snapshot.call_count == 2
+    app.backend.device_reboot.assert_not_called()
+
+
+def test_failed_reboot_guard_save_prevents_reboot_and_allows_safe_retry(
+    activation_controller,
+):
+    app = activation_controller
+    app.storage.ad.save_namespace.return_value = False
+    with pytest.raises(RuntimeError, match="could not be saved"):
+        app._activate_compatibility_if_safe("0.4.0-rc.3")
+    app.backend.device_reboot.assert_not_called()
+    assert app.storage.compatibility_reboot_version_get() != "0.4.0-rc.3"
+    app.storage.ad.save_namespace.return_value = True
+    assert app._activate_compatibility_if_safe("0.4.0-rc.3")
+    app.backend.device_reboot.assert_called_once_with()
+
+
+def test_fresh_correlated_runtime_result_wakes_pending_activation(activation_controller):
+    app = activation_controller
+    app._runtime_snapshot_result(RuntimeSnapshotResult(
+        RuntimeSnapshotRequest("fresh", 1, 0, "test"), motor_state=2,
+    ))
+    app.compatibility.on_runtime_snapshot.assert_called_once_with()
+    app.compatibility.on_runtime_snapshot.reset_mock()
+    app._runtime_snapshot_result(RuntimeSnapshotResult(
+        RuntimeSnapshotRequest("stale", 0, 0, "test"), motor_state=2,
+    ))
+    app.compatibility.on_runtime_snapshot.assert_not_called()
+
+
+def test_release_reconcile_to_live_idle_to_reboot_to_actual_active_projection(
+    activation_controller,
+):
+    app = activation_controller
+    agent = CompatibilityAgent()
+    agent.status = replace(agent.status, enabled=True, reboot_required=True)
+    app.compatibility = CompatibilityCoordinator(
+        app.ad, app.state, agent, app.logger, app._activate_compatibility_if_safe
+    )
+    app.dispensing_status.mark_unavailable()
+    app.compatibility.on_state_agent_update_complete("0.4.0")
+    app.backend.device_reboot.assert_not_called()
+    assert last_value(app, "compatibility/active") == "false"
+
+    app._runtime_snapshot_result(RuntimeSnapshotResult(
+        RuntimeSnapshotRequest("fresh", 1, 0, "compatibility activation"), motor_state=2,
+    ))
+    app.backend.device_reboot.assert_called_once_with()
+    assert agent.calls == ["reconcile", "reconcile"]
+    assert app.compatibility._activation_timer is None
+    assert last_value(app, "compatibility/active") == "false"
+
+    agent.status = replace(agent.status, active=True, reboot_required=False)
+    app.compatibility.on_usable_connection()
+    app.backend.device_reboot.assert_called_once_with()
+    assert last_value(app, "compatibility/active") == "true"
 
 
 def test_initial_usable_connection_runs_lifecycle_once(controller):
