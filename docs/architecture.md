@@ -93,6 +93,62 @@ coordinator reads a new State Agent revision and verifies the requested value
 before changing its model. If reconciliation fails, persistent controls become
 unavailable rather than using retained Home Assistant values as feeder truth.
 
+Connection lifecycle work is distinct from coordinator readiness. State Agent
+update checks and compatibility reconciliation run when combined MQTT/state-API
+availability becomes usable, not on every `READY` transition after a settings
+write or truth refresh. Home Assistant birth still republishes projections and
+runs its dedicated update/compatibility hooks; confirmed State Agent updates
+retain their separate compatibility reconciliation hook.
+
+## Operational error lifecycle
+
+The device error diagnostic is independent of availability. The controller
+keeps one latest unresolved observation in each of seven fixed categories:
+no-food, outlet, motor, scheduled execution, portion mismatch, unknown, and
+other device errors. The existing Home Assistant entities show the latest
+outstanding category. Resolving it reveals any remaining incident, including
+an independent NTP failure. There is no persistent incident store or event
+history; controller restart starts a new observation session, not a physical
+recovery.
+
+Known no-food, outlet/switch, motor, and portion-mismatch incidents may resolve
+after a newer, coherent successful feed. Scheduled execution failure 2003
+requires a successful scheduled feed. Unknown and unrelated device errors are
+not resolved by feeding. Command rejections remain contextual warnings and
+coordinator feedback, rather than persistent hardware faults.
+
+Recovery requires an observed start/end pair with matching ID, trigger type,
+plan ID and retry context, consistent positive expected counts, full actual
+output, `finished=true` at the end, and no error observed for that operation.
+Its start must follow the incident in both device execution time and local
+observation order. The feeder must be online, and both phases and the failure
+timestamp must be fresh at receipt under the existing 10-second clock-drift
+tolerance. This is an evidence check, **not** a timeout that clears errors.
+Only one candidate and the most recent terminal execution timestamp are kept;
+the latter survives reconnects for this controller session so completed-feed
+replays cannot masquerade as newly started operations. Only fresh terminal
+timestamps update that bound.
+Blocking, conflicting/reused identities, stale or
+incomplete records, disconnect, device restart, and clock correction prevent
+recovery inference. Uncertain cases remain unresolved until stronger evidence
+is available or the diagnostic session ends.
+
+The backend retains the code, category, event/receipt timestamps, and available
+grain context rather than reducing failures to strings. Existing bounded
+cross-event deduplication also covers uncoded portion mismatches. It is not a
+permanent replay ledger: a sufficiently late old failure may be reported again
+after deduplication expires, conservatively, rather than risking false clearing.
+Observed recovery means dispensing capability was subsequently demonstrated;
+it does not mean a missed meal was compensated, every bowl received food, or a
+mechanical fault was permanently repaired.
+
+NTP recovery remains separate: a calibration response being sent is not
+successful synchronization. An in-tolerance device-time observation or a
+matching successful `NTP_SYNC` acknowledgement with an in-tolerance timestamp
+can clear an NTP failure, but never an operational incident. Settings writes,
+reconnections, State Agent updates, and Home Assistant birth do not themselves
+resolve incidents. Birth republishes the current diagnostic.
+
 ## Dispensing runtime ordering
 
 At first heartbeat, feeder reconnect, and `homeassistant/status = online`, the

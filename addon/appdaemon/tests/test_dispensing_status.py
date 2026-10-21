@@ -364,6 +364,7 @@ def test_backend_preserves_grain_event_mappings(step, expected):
         timestamp=Timestamp.now(),
         exec_time=Timestamp.now(),
         error_code=None,
+        finished=step == ExecStep.GRAIN_END,
     )
 
     backend._grain_output_event_cb(event)
@@ -375,6 +376,8 @@ def test_ha_birth_republishes_availability_and_requests_runtime_without_reconnec
     app = object.__new__(Plaf203)
     app.logger = Logger()
     app._overall_available = True
+    app._operational_errors = {}
+    app._ntp_sync_failed = False
     app.state = CapturingState()
     app.discovery = SimpleNamespace(calls=0)
     app.discovery.discovery_issue = lambda: setattr(
@@ -417,6 +420,8 @@ def test_ha_birth_correlated_response_restores_each_recognized_state(
     app = object.__new__(Plaf203)
     app.logger = Logger()
     app._overall_available = True
+    app._operational_errors = {}
+    app._ntp_sync_failed = False
     app.state = CapturingState()
     app.discovery = SimpleNamespace(discovery_issue=lambda: None)
     app.coordinator = SimpleNamespace(latest_truth=lambda: None)

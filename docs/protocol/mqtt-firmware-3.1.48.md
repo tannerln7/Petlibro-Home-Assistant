@@ -403,6 +403,18 @@ diagnostic) are routine diagnostics on a WAN-isolated feeder. Confirmed
 feeding codes are handled separately, and error-ring operations may emit the
 same code through both `ERROR_EVENT` and `GRAIN_OUTPUT_EVENT.errorCode`.
 
+The normal-ring publisher at `0x00066E70` and error-ring publisher at
+`0x00067AB4` serialize queued observations, not necessarily live operations;
+IDs can be generated at publication or taken from the runtime manual-request
+buffer. Terminal error-code fields are cleared in memory after emission, so an
+errorless repeat is not independent success evidence. `finished:true` and
+`GRAIN_END` are also used by failed operations. Portion counts are backed by
+mechanism-switch processing, not food-weight measurements. The integration's
+[conservative recovery policy](../architecture.md#operational-error-lifecycle)
+therefore requires coherent, fresh start/end evidence as well as counts and
+error context. It changes neither grain acknowledgements nor the deliberate
+absence of `ERROR_EVENT` application acknowledgements.
+
 ### ATTR_PUSH_EVENT
 
 **Command:** `ATTR_PUSH_EVENT`<br>

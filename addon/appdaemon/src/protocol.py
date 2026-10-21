@@ -659,6 +659,21 @@ class GrainOutputEventIn:
 
     @staticmethod
     def from_mqtt_payload(payload: dict) -> GrainOutputEventIn:
+        if not isinstance(payload['msgId'], str) or not payload['msgId']:
+            raise ValueError('msgId must be a nonempty string')
+        if type(payload['finished']) is not bool:
+            raise ValueError('finished must be a boolean')
+        for field in ('actualGrainNum', 'expectGrainNum'):
+            if type(payload[field]) is not int or not 0 <= payload[field] <= 255:
+                raise ValueError(f'{field} must be a portion-count integer')
+        for field in ('execTime', 'ts', 'errorCode'):
+            if field in payload and (
+                type(payload[field]) is not int or payload[field] < 0
+            ):
+                raise ValueError(f'{field} must be a nonnegative integer')
+        for field in ('type', 'planId', 'retried'):
+            if field in payload and type(payload[field]) is not int:
+                raise ValueError(f'{field} must be an integer')
         data = {
             'message_id': MessageId(payload['msgId']),
             'timestamp': Timestamp.from_timestamp_epoch_ms(int(payload['ts'])),

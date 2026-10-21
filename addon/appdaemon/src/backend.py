@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import datetime
+from dataclasses import dataclass, field, replace
+import enum
 import time
 
 from appdaemon import adapi
@@ -40,6 +42,7 @@ from protocol import (
     GetFeedingPlanEventIn,
     GrainOutputEventIn,
     GrainOutputEventOut,
+    GrainOutputType,
     HeartbeatIn,
     InitializeSdCardServiceIn,
     InitializeSdCardServiceOut,
@@ -65,6 +68,29 @@ from protocol import (
 )
 from state_agent import FeederPlan as AgentFeederPlan
 from state_coordinator import CommandReceipt, MqttAck
+
+
+class ErrorCategory(enum.Enum):
+    NO_FOOD = "no_food"
+    OUTLET = "outlet"
+    MOTOR = "motor"
+    SCHEDULED = "scheduled"
+    PORTIONS = "portions"
+    UNKNOWN = "unknown"
+    DEVICE = "device"
+
+
+@dataclass(frozen=True)
+class OperationalError:
+    message: str
+    category: ErrorCategory = ErrorCategory.DEVICE
+    code: int | None = None
+    message_id: str | None = None
+    event_time_ms: int | None = None
+    feed_event: GrainOutputEventIn | None = None
+    received_time_ms: int = field(
+        default_factory=lambda: Timestamp.now().to_timestamp_epoch_ms()
+    )
 
 
 class Watchdog:
@@ -149,6 +175,11 @@ class Backend:
         self._recent_grain_operations: dict[str, float] = {}
         self._reported_feed_errors: dict[tuple[str, int, int], float] = {}
         self._unknown_error_log_times: dict[int, float] = {}
+        self.feed_success_callback = None
+        # One candidate is sufficient: the OEM dispenser runs serially. Keep
+        # the protocol model rather than constructing a second event model.
+        self._recovery_start: tuple[GrainOutputEventIn, float, int] | None = None
+        self._last_feed_end_ms: int | None = None
 
     def initialize(
         self,
@@ -237,6 +268,9 @@ class Backend:
         self._recent_grain_operations = {}
         self._reported_feed_errors = {}
         self._unknown_error_log_times = {}
+        self.feed_success_callback = None
+        self._recovery_start = None
+        self._last_feed_end_ms = None
 
         self.client.initialize()
 
@@ -251,6 +285,13 @@ class Backend:
 
     def error_listen(self, callback):
         self.error_callback = callback
+
+    def feed_success_listen(self, callback):
+        self.feed_success_callback = callback
+
+    def invalidate_feed_recovery(self) -> None:
+        """Discard unfinished evidence, not the session's completed-feed bound."""
+        self._recovery_start = None
 
     def device_info_listen(self, callback):
         self.device_info_callback = callback
@@ -573,7 +614,9 @@ class Backend:
 
         self.client.ntp_send(ntp_out)
 
-        if self.ntp_sync_status_callback != None:
+        if force_time_calibration:
+            self.invalidate_feed_recovery()
+        elif self.ntp_sync_status_callback != None:
             self.ntp_sync_status_callback(True)
 
     def _ntp_sync_cb(self, ntp_sync_in: NtpSyncIn):
@@ -603,6 +646,7 @@ class Backend:
                 self.ntp_sync_status_callback(True)
 
     def _device_start_event_cb(self, device_start_event: DeviceStartEventIn):
+        self.invalidate_feed_recovery()
         if device_start_event.success == True:
             if self.device_info_callback != None:
                 self.device_info_callback(
@@ -630,7 +674,9 @@ class Backend:
 
     def _device_reboot_cb(self, device_reboot_in: DeviceRebootIn):
         if device_reboot_in.code != Code.OK:
-            self._error_report("Rebooting failed")
+            self.logger.warning(
+                "reboot request rejected", error_code=device_reboot_in.code
+            )
             return
 
         self.is_online = False
@@ -643,7 +689,9 @@ class Backend:
 
     def _restore_cb(self, restore_in: RestoreIn):
         if restore_in.code != Code.OK:
-            self._error_report("Factory reset failed")
+            self.logger.warning(
+                "factory reset request rejected", error_code=restore_in.code
+            )
             return
 
         self.is_online = False
@@ -658,7 +706,9 @@ class Backend:
         self, initialize_sd_card_service_in: InitializeSdCardServiceIn
     ):
         if initialize_sd_card_service_in.code != Code.OK:
-            self._error_report("Formatting SD card failed")
+            self.logger.warning(
+                "SD format request rejected", error_code=initialize_sd_card_service_in.code
+            )
             return
 
         self._device_timestamp_sync_drift_check_and_adjust(
@@ -669,7 +719,9 @@ class Backend:
         self, wifi_reconnect_service_in: WifiReconnectServiceIn
     ):
         if wifi_reconnect_service_in.code != Code.OK:
-            self._error_report("Wifi force reconnect failed")
+            self.logger.warning(
+                "Wi-Fi reconnect request rejected", error_code=wifi_reconnect_service_in.code
+            )
             return
 
         self.is_online = False
@@ -817,7 +869,9 @@ class Backend:
     def _attr_set_service_cb(self, attr_set_service_in: AttrSetServiceIn):
         success = attr_set_service_in.code == Code.OK
         if not success:
-            self._error_report("Updating device attribute(s) failed")
+            self.logger.warning(
+                "attribute update rejected", error_code=attr_set_service_in.code
+            )
         else:
             self._device_timestamp_sync_drift_check_and_adjust(
                 attr_set_service_in.timestamp
@@ -871,8 +925,10 @@ class Backend:
                     reason="feeder_busy",
                 )
             else:
-                self._error_report(
-                    f"Manual feeding failed (code {manual_feeding_service_in.code})"
+                self.logger.warning(
+                    "manual feeding request rejected",
+                    error_code=manual_feeding_service_in.code,
+                    reason="firmware_rejection",
                 )
             return
 
@@ -883,7 +939,9 @@ class Backend:
     def _feeding_plan_service_cb(self, feeding_plan_service_in: FeedingPlanServiceIn):
         success = feeding_plan_service_in.code == Code.OK
         if not success:
-            self._error_report("Configuring feeding plan failed")
+            self.logger.warning(
+                "feeding plan update rejected", error_code=feeding_plan_service_in.code
+            )
         else:
             self._device_timestamp_sync_drift_check_and_adjust(
                 feeding_plan_service_in.timestamp
@@ -902,7 +960,9 @@ class Backend:
     def _device_config_sync_cb(self, device_config_sync_in: DeviceConfigSyncIn):
         success = device_config_sync_in.code == Code.OK
         if not success:
-            self._error_report("Configuring device endpoints failed")
+            self.logger.warning(
+                "device endpoint update rejected", error_code=device_config_sync_in.code
+            )
         else:
             self._device_timestamp_sync_drift_check_and_adjust(
                 device_config_sync_in.timestamp
@@ -987,6 +1047,7 @@ class Backend:
                             f"Feeding failed (firmware code {grain_error_code})",
                         ),
                         event_time_ms,
+                        feed_event=grain_output_event_in,
                     )
 
             if (
@@ -997,16 +1058,108 @@ class Backend:
                 and grain_output_event_in.expected_grain_num
                 != grain_output_event_in.actual_grain_num
             ):
-                self._error_report(
-                    f"Food output actual != expected: {grain_output_event_in.actual_grain_num} != {grain_output_event_in.expected_grain_num}"
+                self._report_feed_error_once(
+                    grain_output_event_in.message_id.data,
+                    None,
+                    f"Food output actual != expected: {grain_output_event_in.actual_grain_num} != {grain_output_event_in.expected_grain_num}",
+                    event_time_ms,
+                    feed_event=grain_output_event_in,
                 )
         else:
             self.logger.warning(
                 "unhandled grain-output step", step=grain_output_event_in.exec_step
             )
 
+        self._observe_feed_recovery(grain_output_event_in)
         self._device_timestamp_sync_drift_check_and_adjust(
             grain_output_event_in.timestamp
+        )
+
+    def _observe_feed_recovery(self, event: GrainOutputEventIn) -> None:
+        execution_ms = event.exec_time.to_timestamp_epoch_ms()
+        if event.exec_step == ExecStep.GRAIN_START:
+            if (
+                self._last_feed_end_ms is not None
+                and execution_ms <= self._last_feed_end_ms
+            ):
+                return  # A replayed completed operation cannot become a new candidate.
+            previous = self._recovery_start
+            if previous is not None:
+                start, _observed, _generation = previous
+                if event.message_id == start.message_id:
+                    if replace(event, timestamp=start.timestamp) != start:
+                        self._recovery_start = None
+                    return  # Duplicate receipt order stays fixed; conflicts fail closed.
+                if event.exec_time.value <= start.exec_time.value:
+                    return  # Delayed older starts cannot replace a newer one.
+            self._recovery_start = None
+            if (
+                event.finished is False
+                and event.type_ != GrainOutputType.INVALID
+                and 0 < event.expected_grain_num <= 255
+                and event.actual_grain_num == 0
+                and event.error_code in (None, 0)
+                and (
+                    event.type_ != GrainOutputType.FEED_PLAN
+                    or (event.plan_id is not None and event.plan_id > 0)
+                )
+                and self._fresh_feed_phase(event)
+            ):
+                self._recovery_start = (
+                    event, time.monotonic(), self.connection_generation
+                )
+            return
+        if event.exec_step == ExecStep.GRAIN_END:
+            if not self._fresh_feed_phase(event):
+                self._recovery_start = None
+                return
+            if (
+                self._last_feed_end_ms is not None
+                and execution_ms <= self._last_feed_end_ms
+            ):
+                return
+            self._last_feed_end_ms = execution_ms
+        candidate = self._recovery_start
+        if candidate is None:
+            return
+        start, observed, generation = candidate
+        if event.message_id != start.message_id:
+            return
+        self._recovery_start = None
+        if (
+            event.exec_step == ExecStep.GRAIN_END
+            and generation == self.connection_generation
+            and time.monotonic() - observed <= self.ERROR_DEDUP_TTL_SEC
+            and event.finished is True
+            and event.type_ == start.type_
+            and event.plan_id == start.plan_id
+            and event.retried == start.retried
+            and event.expected_grain_num == start.expected_grain_num
+            and event.actual_grain_num == event.expected_grain_num
+            and event.error_code in (None, 0)
+            and event.exec_time.value > start.exec_time.value
+            and event.timestamp.value >= start.timestamp.value
+            and not self._operation_has_reported_error(event.message_id.data)
+            and self._fresh_feed_phase(event)
+        ):
+            self._invoke_grain_projection(
+                "feeding_recovery", self.feed_success_callback, start, event, observed
+            )
+
+    def _fresh_feed_phase(self, event: GrainOutputEventIn) -> bool:
+        # Publication ts/arrival order alone cannot identify replayed ring
+        # records. Only fresh execution times under the existing clock-drift
+        # tolerance qualify; clock-ambiguous records remain diagnostic only.
+        return (
+            getattr(self, "is_online", False)
+            and getattr(self, "ntp_sync_pending_message_id", None) is None
+            and event.exec_time.value <= event.timestamp.value
+            and self._device_timestamp_sync_drift_check(
+                Timestamp.now(), event.exec_time
+            )
+            and self._device_timestamp_sync_drift_check(
+                Timestamp.now(), event.timestamp
+            )
         )
 
     def _invoke_grain_projection(self, name: str, callback, *args) -> None:
@@ -1132,14 +1285,43 @@ class Backend:
         )
 
     def _report_feed_error_once(
-        self, message_id: str, code: int, detail: str, event_time_ms: int
+        self,
+        message_id: str,
+        code: int | None,
+        detail: str,
+        event_time_ms: int,
+        *,
+        feed_event: GrainOutputEventIn | None = None,
     ) -> bool:
-        if not self._mark_feed_error_once(message_id, code, event_time_ms):
+        if self._recovery_start is not None:
+            if self._recovery_start[0].message_id.data == message_id:
+                self._recovery_start = None
+        if not self._mark_feed_error_once(
+            message_id, code if code is not None else -1, event_time_ms
+        ):
             return False
         reported_detail = (
-            detail if f"code {code}" in detail else f"{detail} (firmware code {code})"
+            detail if code is None or f"code {code}" in detail
+            else f"{detail} (firmware code {code})"
         )
-        self._error_report(reported_detail)
+        category = {
+            2003: ErrorCategory.SCHEDULED,
+            2008: ErrorCategory.OUTLET,
+            2011: ErrorCategory.OUTLET,
+            2012: ErrorCategory.OUTLET,
+            2024: ErrorCategory.OUTLET,
+            2025: ErrorCategory.NO_FOOD,
+            2026: ErrorCategory.NO_FOOD,
+            2027: ErrorCategory.NO_FOOD,
+            2031: ErrorCategory.MOTOR,
+            None: ErrorCategory.PORTIONS,
+        }.get(code, ErrorCategory.UNKNOWN)
+        self._error_report(
+            OperationalError(
+                reported_detail, category, code, message_id, event_time_ms,
+                feed_event,
+            )
+        )
         return True
 
     def _report_transient_feed_error_once(
@@ -1174,6 +1356,7 @@ class Backend:
         self.logger.warning("unknown firmware error event", **metadata)
 
     def _heartbeat_watchdog_trigger(self):
+        self.invalidate_feed_recovery()
         if self.is_online:
             self.is_online = False
             self._clear_runtime_snapshot_pending()
@@ -1265,6 +1448,7 @@ class Backend:
             self._request_ntp_sync()
 
     def _request_ntp_sync(self) -> bool:
+        self.invalidate_feed_recovery()
         if self.ntp_sync_pending_message_id is not None:
             self.logger.debug("device NTP correction already in progress")
             return False
@@ -1314,6 +1498,16 @@ class Backend:
 
         return delta < datetime.timedelta(seconds=self.NTP_SYNC_TIME_DIFF_THRESHOLD_SEC)
 
-    def _error_report(self, message: str):
-        if self.error_callback != None:
-            self.error_callback(message)
+    def _error_report(self, message: str | OperationalError):
+        callback = getattr(self, "error_callback", None)
+        if callback is not None:
+            error = (
+                message if isinstance(message, OperationalError)
+                else OperationalError(message)
+            )
+            try:
+                callback(error)
+            except Exception as exc:
+                self.logger.warning(
+                    "device error callback failed", error_type=type(exc).__name__
+                )

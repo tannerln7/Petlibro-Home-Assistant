@@ -948,7 +948,7 @@ class ProtocolCompatibilityTests(unittest.TestCase):
         backend._grain_output_event_cb(grain)
 
         self.assertEqual(1, len(errors))
-        self.assertIn("motor overcurrent", errors[0])
+        self.assertIn("motor overcurrent", errors[0].message)
         self.assertEqual("GRAIN_OUTPUT_EVENT", self.mqtt.published[0][1]["cmd"])
 
     def test_same_error_code_at_different_event_times_is_not_suppressed(self):

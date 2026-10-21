@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.15-beta.5
+
+- Run State Agent update and compatibility connection checks only when feeder
+  availability becomes usable, not after routine settings-write verification
+  or truth refreshes.
+- Preserve operational errors across settings writes, reconnects, and Home
+  Assistant birth; resolve NTP errors only after successful synchronization
+  without clearing a feeding failure.
+- Track a bounded set of session-scoped failure categories and resolve eligible
+  dispensing incidents only after a coherent newer successful feed. Scheduled
+  execution failures require a subsequent successful scheduled feed; unknown
+  and unrelated errors remain independent.
+- Preserve structured error context, deduplicate uncoded portion mismatches,
+  and report command rejections as warnings rather than hardware faults.
+- Do not report NTP synchronization as successful merely because a calibration
+  response was sent.
+
 ## 0.3.15-beta.4
 
 - Log expected temporary State Agent unavailability during update activation at

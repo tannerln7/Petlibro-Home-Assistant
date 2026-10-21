@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import datetime
+import time
 
 from appdaemon import adapi, adbase
 from appdaemon.plugins.mqtt import mqttapi
-from backend import Backend
+from backend import Backend, ErrorCategory, OperationalError
 from camera_metadata import CameraMetadataPublisher
 from commands import CommandRouter
 from compatibility import CompatibilityCoordinator
@@ -14,7 +15,7 @@ from dispensing_status import DispensingStatusProjector, FoodOutputProgress
 from feeder_mqtt_validation import validate_feeder_mqtt_destination
 from ha_entities import HomeAssistantDiscoveryMqtt, HomeAssistantStatePublisher
 from petlibro_logging import PetlibroLogger
-from protocol import GetFeedingPlanEventIn
+from protocol import GetFeedingPlanEventIn, GrainOutputEventIn, GrainOutputType
 from state_agent import (
     FeederPlan,
     FeederTruth,
@@ -48,6 +49,13 @@ class Plaf203(adbase.ADBase):
         self.dispensing_status = DispensingStatusProjector(self.state, self.logger)
         self.dispensing_status.initialize()
         self._overall_available = False
+        # One latest unresolved observation per fixed category; never an event
+        # history. A controller restart starts a new diagnostic session.
+        self._operational_errors: dict[
+            ErrorCategory, tuple[OperationalError, float]
+        ] = {}
+        self._ntp_sync_failed = False
+        self._publish_device_error()
         self.storage = Storage(self.ad, "plaf203", self.serial_number)
         self.storage.initialize()
 
@@ -201,6 +209,7 @@ class Plaf203(adbase.ADBase):
         self.backend.went_offline_listen(self._went_offline)
         self.backend.ntp_sync_status_listen(self._ntp_sync_status)
         self.backend.error_listen(self._device_error)
+        self.backend.feed_success_listen(self._feed_succeeded)
         self.backend.heartbeat_event_listen(self.coordinator.on_heartbeat)
         self.backend.persistent_state_hint_listen(
             self.coordinator.on_persistent_state_hint
@@ -221,14 +230,16 @@ class Plaf203(adbase.ADBase):
         self.state.apply_feeder_truth(truth)
 
     def _coordinator_availability_set(self, available: bool) -> None:
+        was_available = self._overall_available
         self._overall_available = available
         self.state.publish("device/online", available)
         if not available:
             return
-        self.updater.on_usable_connection()
-        self.compatibility.on_usable_connection()
-        self.state.publish("device/error_state", False)
-        self.state.publish("device/error_message", "No error")
+        # READY also follows ordinary write verification and truth refreshes.
+        # Only a genuine availability recovery starts connection lifecycle work.
+        if not was_available:
+            self.updater.on_usable_connection()
+            self.compatibility.on_usable_connection()
         if self.persist_feeder_mqtt and self._feeder_mqtt_persistence_due:
             request = PersistentWriteRequest(
                 control="device.feeder_mqtt_destination",
@@ -281,6 +292,7 @@ class Plaf203(adbase.ADBase):
 
     def _went_offline(self) -> None:
         self.logger.info("device offline", serial=self.serial_number)
+        self.backend.invalidate_feed_recovery()
         self.dispensing_status.on_feeder_disconnected()
         self.coordinator.on_feeder_disconnected("feeder MQTT heartbeat lost")
 
@@ -300,6 +312,7 @@ class Plaf203(adbase.ADBase):
         self.logger.info("Home Assistant online; restoring MQTT projections")
         self.discovery.discovery_issue()
         self.state.publish("device/online", self._overall_available)
+        self._publish_device_error()
         latest_truth = self.coordinator.latest_truth()
         if latest_truth is not None:
             self._apply_feeder_truth(latest_truth)
@@ -317,12 +330,67 @@ class Plaf203(adbase.ADBase):
             self.state.publish(
                 "device/ntp_last_correct", datetime.datetime.now().astimezone()
             )
+            self._ntp_sync_failed = False
+            self._publish_device_error()
             return
         self.logger.warning("device NTP correction failed")
-        self.state.publish("device/error_state", True)
-        self.state.publish("device/error_message", "NTP sync with device failed")
+        self._ntp_sync_failed = True
+        self._publish_device_error()
 
-    def _device_error(self, message: str) -> None:
-        self.logger.error("device error", detail=message)
-        self.state.publish("device/error_state", True)
-        self.state.publish("device/error_message", message)
+    def _device_error(self, error: OperationalError) -> None:
+        self.logger.error(
+            "device error", detail=error.message, category=error.category.value,
+            error_code=error.code,
+        )
+        previous = self._operational_errors.get(error.category)
+        if (
+            previous is not None
+            and previous[0].event_time_ms is not None
+            and error.event_time_ms is not None
+            and error.event_time_ms < previous[0].event_time_ms
+        ):
+            # Preserve newer metadata, but a newly received ambiguous record
+            # must still prevent an already-running feed from clearing it.
+            error = previous[0]
+        self._operational_errors.pop(error.category, None)
+        self._operational_errors[error.category] = (error, time.monotonic())
+        self._publish_device_error()
+
+    def _feed_succeeded(
+        self, start: GrainOutputEventIn, end: GrainOutputEventIn, observed: float
+    ) -> None:
+        recoverable = {
+            ErrorCategory.NO_FOOD, ErrorCategory.OUTLET, ErrorCategory.MOTOR,
+            ErrorCategory.PORTIONS, ErrorCategory.SCHEDULED,
+        }
+        for category, (error, reported) in list(self._operational_errors.items()):
+            if (
+                category not in recoverable
+                or error.event_time_ms is None
+                or abs(error.received_time_ms - error.event_time_ms)
+                >= Backend.NTP_SYNC_TIME_DIFF_THRESHOLD_SEC * 1000
+                or error.message_id == start.message_id.data
+                or observed <= reported
+                or start.exec_time.to_timestamp_epoch_ms() <= error.event_time_ms
+                or (
+                    category == ErrorCategory.SCHEDULED
+                    and end.type_ != GrainOutputType.FEED_PLAN
+                )
+            ):
+                continue
+            del self._operational_errors[category]
+            self.logger.info(
+                "subsequent dispensing capability observed; feeding incident resolved",
+                category=category.value, error_code=error.code,
+            )
+        self._publish_device_error()
+
+    def _publish_device_error(self) -> None:
+        latest = next(reversed(self._operational_errors.values()), None)
+        message = latest[0].message if latest is not None else None
+        if message is None and self._ntp_sync_failed:
+            message = "NTP sync with device failed"
+        self.state.publish("device/error_state", message is not None)
+        self.state.publish(
+            "device/error_message", message if message is not None else "No error"
+        )
