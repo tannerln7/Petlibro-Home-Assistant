@@ -11,6 +11,9 @@ Feeder** family. It is independent community software and is not affiliated
 with Petlibro.
 
 > [!WARNING]
+> _**It is clear that unstable Wi-Fi and frequent reconnects make many of these problems much more likely to surface, so in the meantime, I'd recommend making sure the feeder has a strong,
+> stable Wi-Fi connection.**_
+> 
 > I've been digging much deeper into the original firmware, and I've uncovered a
 > pretty alarming mess of unsafe memory handling and race conditions. Several systems,
 > including MQTT command/reply handling, camera streaming, Wi-Fi handling, and feeding
@@ -31,8 +34,6 @@ with Petlibro.
 > Unfortunately, that is just one example of a single buffer and that pattern is spread across the entire firmware. The problems are built into the feeder's factory firmware, not the Home Assistant integration.
 >
 > At this point, my goal is to replace the OEM firmware entirely rather than continue patching around its problems. It's a much bigger undertaking, but I've already made substantial progress, and I think it's the best path toward a genuinely reliable local integration.
->
-> _**It is clear that unstable Wi-Fi and frequent reconnects make many of these problems much more likely to surface, so in the meantime, I'd recommend making sure the feeder has a strong, stable Wi-Fi connection.**_
 
 > [!IMPORTANT]
 > **Feedback wanted:** If you set up—or attempt to set up—this project with your
