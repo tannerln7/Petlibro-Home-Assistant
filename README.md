@@ -10,6 +10,30 @@ The project currently targets the MQTT-based **PLAF203 / Granary Camera
 Feeder** family. It is independent community software and is not affiliated
 with Petlibro.
 
+> [!WARNING]
+> I've been digging much deeper into the original firmware, and I've uncovered a
+> pretty alarming mess of unsafe memory handling and race conditions. Several systems,
+> including MQTT command/reply handling, camera streaming, Wi-Fi handling, and feeding
+> operations, have issues with shared memory, overlapping threads, and delayed callbacks.
+> These can cause runtime state to be overwritten, delayed, or associated with the wrong operation.
+> Some can even lead to memory corruption.
+>
+> For example, each of these operations share the same 240-byte buffer:
+> - Preparing a reply to any mqtt message
+> - Retrieving the state of the device's sensors over mqtt
+> - Updating the device attributes or config over mqtt
+> - Writing the device attributes or config to storage
+> - Device Reboots
+> - WIFI Change Service and WIFI Reconnects
+> - Device Error Logging
+> - Device Config push to Petlibro's servers.
+> 
+> Unfortunately, that is just one example of a single buffer and that pattern is spread across the entire firmware. The problems are built into the feeder's factory firmware, not the Home Assistant integration.
+>
+> At this point, my goal is to replace the OEM firmware entirely rather than continue patching around its problems. It's a much bigger undertaking, but I've already made substantial progress, and I think it's the best path toward a genuinely reliable local integration.
+>
+> _**It is clear that unstable Wi-Fi and frequent reconnects make many of these problems much more likely to surface, so in the meantime, I'd recommend making sure the feeder has a strong, stable Wi-Fi connection.**_
+
 > [!IMPORTANT]
 > **Feedback wanted:** If you set up—or attempt to set up—this project with your
 > PLAF203, please share your experience in the
@@ -22,6 +46,7 @@ with Petlibro.
 > [open an issue](https://github.com/tannerln7/Petlibro-Home-Assistant/issues/new/choose)
 > with reproduction steps, relevant logs, firmware and add-on versions, and a
 > link to any related discussion as supporting context.
+
 
 ## Components
 
