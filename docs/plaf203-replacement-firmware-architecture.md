@@ -5,8 +5,9 @@
 This is the maintained development centerline for a complete, local-first PLAF203
 replacement. It preserves product intent, ownership boundaries, rationale and
 revision criteria; it is not an immutable specification, a flashing procedure,
-an implementation backlog or a comprehensive research-gap register. The next
-planning assignment will establish that evidence/gap tracker separately.
+an implementation backlog or a comprehensive research-gap register. The
+[living research-gap register](plaf203-replacement-firmware-research-gaps.md)
+tracks implementation-knowledge sufficiency and qualification separately.
 
 ## 1. Decision authority and scope
 
@@ -532,6 +533,7 @@ change, and the evidence repository only in separately authorized research work.
 | Date | Change | Rationale / validation status |
 | --- | --- | --- |
 | 2026-10-28 | Initial centerline on a separate management-based feature worktree; linked from maintained navigation. | Preserves agreed product intent, distinguishes evidence from decisions, and records existing-worktree/base limitations. Documentation-only; no firmware, emulator or hardware qualification claimed. |
+| 2026-10-28 | Added living research-gap register and pinned upstream-source evidence. | Confirms concrete source/configuration starting points, not a boot result; stock camera profile and model defaults are not a qualified PLAF203 image. No major architectural decision changed; new OEM/Ghidra and SSH work deferred by owner. |
 
 External upstream references in this document were consulted on 2026-10-28.
 They are candidate/support evidence, not pinned build inputs or a claim that an
