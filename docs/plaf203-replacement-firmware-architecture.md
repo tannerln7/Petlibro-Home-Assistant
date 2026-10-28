@@ -169,6 +169,19 @@ configuration are a reasonable starting point, not verified compatibility with
 this feeder's pinmux, flash, Wi-Fi, power transitions or peripherals. Qualify the
 actual board and avoid selecting a similarly named vendor binary by filename.
 
+**Evidence refinement (2026-10-28):** the [read-only platform investigation](https://github.com/tannerln7/plaf203-firmware-reconstruction/blob/b29b6455e06a5f15b5e06aea41f08a8cd3d91ae8/docs/research/replacement-platform-device-contracts.md)
+observes a contiguous 32 MiB NOR partition window, current JFFS2 root and 45 MiB
+Linux allocation; total physical DDR and replacement layout remain unqualified.
+Actual WLAN is USB RTL8733BU (`0bda:b733`), with a matching OpenIPC source
+candidate—not stock lite's MT7601U or an identity inferred from rtl8723fu blobs.
+Kernel/module ABI, radio power/reset and real reconnect behavior need qualification.
+The OEM init loader/application can alter sensor selection and reboot; bulk OEM
+startup is not a minimal platform recipe. Watchdog load can arm hardware before
+userspace ownership. Preserve explicit safe initialization/health ownership rather
+than importing these side effects into generic Linux/network bring-up. These
+facts refine constraints; they do not choose an A/B scheme, waive recovery, require
+OEM architecture or justify replacing the selected OpenIPC direction.
+
 Initial platform coverage must include bootable Linux, board support/drivers,
 network/Wi-Fi management, secure key-based SSH, lightweight init/supervision,
 essential utilities, bounded logs, diagnostics and validated configuration.
@@ -534,6 +547,7 @@ change, and the evidence repository only in separately authorized research work.
 | --- | --- | --- |
 | 2026-10-28 | Initial centerline on a separate management-based feature worktree; linked from maintained navigation. | Preserves agreed product intent, distinguishes evidence from decisions, and records existing-worktree/base limitations. Documentation-only; no firmware, emulator or hardware qualification claimed. |
 | 2026-10-28 | Added living research-gap register and pinned upstream-source evidence. | Confirms concrete source/configuration starting points, not a boot result; stock camera profile and model defaults are not a qualified PLAF203 image. No major architectural decision changed; new OEM/Ghidra and SSH work deferred by owner. |
+| 2026-10-28 | Incorporated resumed live platform evidence and kernel/module-ABI dependency; adopted routine-save versus milestone-export research cadence through the linked register. | NOR map, Linux allocation and RTL8733BU identity are observed; independent boot, physical DDR/driver/time qualification and full restoration are not. No major product requirement changed, implementation begun or device mutation authorized. |
 
 External upstream references in this document were consulted on 2026-10-28.
 They are candidate/support evidence, not pinned build inputs or a claim that an

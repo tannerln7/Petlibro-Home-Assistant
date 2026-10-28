@@ -16,13 +16,16 @@ distinguishing missing knowledge from independent design and qualification work.
 - OEM saved baseline: reconstruction `adfe4c7`, application SHA-256
   `da353ba37a7d8c1c0790827e5ec267a180519affb5666ae4efd93e5362e00b71`,
   90 programs, 87 executable-function exports, all 14 direct runtime providers.
-  These are committed verification records, **not fresh live Ghidra inspection**.
+  The 2026-10-28 E8 investigation freshly verified that baseline, applied a
+  bounded boot/radio/watchdog group, and established the next saved/exported
+  checkpoint at reconstruction `b29b645`. Program count/provider coverage did not
+  change. E8 records saved times, snapshot digests, preservation and restore checks.
 - Camera reference: standalone go2rtc `petlibro` at `6ca2e665`, not automatically
   equivalent to the management base's vendored snapshot. Local edits are preserved.
-- **Owner-directed hold:** new OEM/Ghidra analysis and SSH validation are deferred
-  to the next turn. No device observation command authenticated; no Ghidra
-  change/save/export occurred. No emulation, flashing or firmware implementation
-  was performed in this initial pass.
+- **Access resumed:** authoritative Ghidra and dedicated `ssh petlibro` access
+  are working. E8 records read-only observations and saved analysis; the initial
+  hold remains historical in the change log. No emulation, flashing, firmware
+  implementation or disruptive physical experiment has been performed.
 
 Priorities: **P0** unblocks minimal Linux/QEMU/network/SSH or constrains safe
 deployment; **P1** unblocks essential feeding; **P2** follows those foundations.
@@ -62,6 +65,11 @@ value makes a test pass. Consolidate existing evidence instead of rediscovering 
   [installer](../installer/README.md), [camera contract](mqtt-camera-contract.md).
 - **[E7 — standalone camera source/tests](https://github.com/tannerln7/go2rtc/tree/6ca2e665b1bf483462562165e1cf011526a259f8)**:
   session, transport and media behavior, not a proprietary-transport requirement.
+- **[E8 — live platform contracts and saved checkpoint](https://github.com/tannerln7/plaf203-firmware-reconstruction/blob/b29b6455e06a5f15b5e06aea41f08a8cd3d91ae8/docs/research/replacement-platform-device-contracts.md)**
+  and **[allowlisted observations](https://github.com/tannerln7/plaf203-firmware-reconstruction/blob/b29b6455e06a5f15b5e06aea41f08a8cd3d91ae8/agents/codex/outputs/replacement-platform-research/device-observations.json)**:
+  live NOR/boot/init/radio/RTC facts; six function annotations, one name/return
+  recovery, unchanged bytes/types/boundaries/links, 90-program archive restore
+  comparison. Raw/private captures remain outside tracked source.
 
 E0–E5 may require authorized access to private evidence. Old revision-specific
 prose is not a current absence claim: runtime providers and codec are recovered.
@@ -72,12 +80,13 @@ prose is not a current absence claim: runtime providers and codec are recovered.
 | --- | --- | --- | --- |
 | SRC-01 | Concrete upstream source/configuration starting point | P0 | Resolved for scope |
 | BUILD-01 | Minimal profile and complete immutable input closure | P0 | Partial |
-| PLAT-01 | Actual RAM/flash/partition inventory | P0 | Access deferred |
+| PLAT-01 | Actual RAM/flash/partition inventory | P0 | Partial |
 | BOOT-01 | OEM-independent boot/init dependencies | P0 | Partial |
-| REC-01 | Complete off-device backup and meaningful restoration | P0 | Access deferred |
+| REC-01 | Complete off-device backup and meaningful restoration | P0 | Partial |
+| KABI-01 | Kernel configuration and module source/ABI closure | P0 | Partial |
 | EMU-01 | Pinned GK7205V200 machine and exact boot artifacts | P0 | Partial |
 | EMU-02 | Emulated network, secure SSH and reboot/persistence | P0 | Open |
-| WIFI-01 | Physical radio bus/driver/firmware/initialization | P0 | Access deferred |
+| WIFI-01 | Physical radio bus/driver/firmware/initialization | P0 | Partial |
 | TRUST-01 | Secure first access, custody and update trust | P0 | Partial |
 | BSP-01 | Pinmux, GPIO/expander and safe initialization | P1 | Partial |
 | FEED-01 | Portion evidence, sequencing and dual bowls | P1 | Partial |
@@ -133,27 +142,33 @@ Linux bring-up on perfect media analysis.
 ### PLAT-01 — actual board and storage map
 
 - **Question/current evidence:** What are detected RAM, flash type/geometry,
-  erase semantics, partition offsets, active slot and filesystems? E2/E5 provide
-  leads, not a complete live map. Captured loader 64/45/19 MiB differs from
-  QEMU 64/32/32; upstream image-size selection is not a board observation.
-- **Impact/dependencies:** P0, **Access deferred**; constrains BOOT-01, REC-01,
+  erase semantics, partition offsets, active slot and filesystems? E8 resolves
+  the contiguous 32 MiB exposed NOR map: boot 512 KiB, bootargs 512 KiB, kernel
+  4 MiB, rootfs 27 MiB; 64 KiB erase/1-byte write; active JFFS2 root. Live
+  `mem=45M` and System RAM range corroborate Linux allocation, not total physical
+  DDR. Captured loader 64/45/19 and QEMU 64/32/32 remain distinct profiles.
+- **Impact/dependencies:** P0, **Partial**; constrains BOOT-01, REC-01,
   physical image layout and rollback, not portable application tests.
-- **Next/accept:** Allowlisted read-only `/proc`/sysfs and startup metadata;
-  validate coverage/overlap and provenance. No casual MMIO or hardware probing.
-  Keep identity/raw captures outside Git. Owner will supply dedicated SSH access.
-- **Architecture:** No physical RAM budget, NAND/NOR choice, partition plan or
-  A/B fit is approved without the corresponding evidence.
+- **Next/accept:** Retain E8's verified map; independently qualify physical DDR,
+  reserved-memory/device budgets and whole-chip capacity before approving a
+  physical profile. No casual MMIO or destructive probing. Raw captures stay
+  protected outside Git; do not repeat completed access/map discovery.
+- **Architecture:** NOR and current Linux allocation are no longer guesses.
+  Physical DDR, replacement partition layout and A/B feasibility remain open.
 
 ### BOOT-01 — Linux boot without AF203_FW
 
 - **Question/current evidence:** Which scripts/drivers/actions are essential for
   Linux/network/SSH rather than media or feeding? E2 separates application
   startup from boot evidence. E1 has devtmpfs/MTD and module/network/SSH init
-  sources; captured media loaders are not the whole OEM boot chain.
+  sources. E8 records current rcS loading media then radio modules/application;
+  AF203 repairs the GC2053 loader assignment despite the imx307 argument. The
+  literal `-osmen` is misspelled, not a working OS-memory override. Current SSH
+  startup is locally added, not proven stock enrollment functionality.
 - **Impact/dependencies:** P0, **Partial**; needs BUILD-01, and PLAT-01 for the
   physical profile; feeds EMU-01/BSP-01. Version-string equality is not module ABI.
-- **Next/accept:** Read-only boot/init/mount/module parameters; inspect only
-  unresolved cross-program dependencies when Ghidra resumes. Qualify exact
+- **Next/accept:** Separate the minimal board/network/init dependency set from
+  OEM media loading, sensor repair/reboot and watchdog arming. Qualify exact
   AF203-independent boot without motor writes or an unowned watchdog, separately
   in emulation and on hardware with authorization.
 - **Architecture:** Kernel/U-Boot remain replaceable. Neither wholesale OEM init
@@ -163,15 +178,41 @@ Linux bring-up on perfect media analysis.
 
 - **Question/current evidence:** Can wireless transition preserve a complete
   restorable OEM image and identity/calibration, and what survives failed boot?
-  E6's slot restoration is valuable, not whole-flash backup/rescue proof.
-- **Impact/dependencies:** P0, **Access deferred**; needs PLAT-01/BOOT-01;
+  E6's slot restoration is not whole-flash rescue. E8 acquired the first three
+  partitions (5 MiB) privately; the kernel uImage passes both CRCs. The environment
+  CRC covers 256 KiB of its 512 KiB partition; unexplained trailing contents are
+  not spare space or a proven redundant copy. Bootcmd reads the 4 MiB kernel
+  at flash offset `0x100000` then uses bootm.
+- **Impact/dependencies:** P0, **Partial**; needs PLAT-01/BOOT-01;
   constrains destructive installation, data migration and rollback design.
-- **Next/accept:** Define read-only acquisition/coverage first, obtain device-bound
-  off-device manifests and independently checked hashes; validate restoration
+- **Next/accept:** Complete protected flash acquisition and establish coherent
+  rootfs/data capture while OEM runs; explain trailing bootargs contents. Obtain
+  device-bound manifests/checked hashes and actual bootloader capabilities;
+  validate restoration
   later under explicit authority. Include bootenv and ECC/bad-block information
   where applicable. No flash/bootenv writes or reboot are authorized now.
 - **Architecture:** Wireless normal installation stays firm; do not promise
   wireless recovery from every bootloader failure or choose A/B before sizing.
+
+### KABI-01 — kernel configuration and module source/ABI closure
+
+- **Question/current evidence:** Which exact kernel configuration/source and
+  symbol interfaces support the selected physical drivers? E8 observes Linux
+  4.9.37 and acquires five unstripped `/user` modules excluded from the earlier
+  recovery. RTL8733BU vermagic is `4.9.37 mod_unload ARMv7 p2v8`; no `__versions`
+  section was found. `/proc/config.gz` is unavailable and no IKCFG marker was
+  found in the captured kernel container. E1's version label is not ABI proof.
+- **Impact/dependencies:** P0, **Partial**; BUILD-01/BOOT-01/WIFI-01 and later
+  media depend on a qualified kernel/module set. Does not block portable ARM
+  tests or require every OEM module in the minimal image.
+- **Next/accept:** Recover configuration through matching source/build evidence
+  or further static kernel extraction where possible; pin selected upstream
+  kernel/driver inputs, verify symbols/config and qualify actual builds. Import
+  acquired radio modules only for a bounded unanswered binary question; their
+  absence from the 90-program project is now explicit, not missing acquisition.
+- **Architecture:** Build drivers for the selected kernel. Do not copy old `.ko`
+  files into a nominally equal-version kernel and call it compatible; musl versus
+  uClibc userspace is a separate ABI boundary.
 
 ### EMU-01 — actual model and boot compatibility
 
@@ -184,6 +225,8 @@ Linux bring-up on perfect media analysis.
 - **Next/accept:** Review/build pinned emulator, record base/patch/compiler and
   artifact hashes, boot isolated exact artifacts and capture kernel/init/effective
   arguments and unsupported devices. No physical storage/device passthrough.
+  E8 found no active Meson or GLib/pixman pkg-config development dependencies in
+  the inspected VM environment; use a reproducible sandbox, not ad hoc host fixes.
 - **Architecture:** QEMU is foundational. Generic `virt` remains a separate
   portable profile, not SoC or physical flash qualification.
 
@@ -203,13 +246,16 @@ Linux bring-up on perfect media analysis.
 ### WIFI-01 — physical networking and Linux facilities
 
 - **Question/current evidence:** What bus/modalias/driver/firmware/init is actually
-  used? E5 has `rtl8723fu` blobs; E1 selects MT7601U in stock `lite`. Neither
-  proves the installed radio. Named OEM station functions do not identify boot
-  driver ownership.
-- **Impact/dependencies:** P0, **Access deferred**; needs PLAT-01/BOOT-01;
+  used? E8 resolves USB `0bda:b733` bound to rtl8733bu, matching recovered module
+  alias and embedded firmware arrays. Its declared dependency is cfg80211, not
+  mac80211 despite OEM loading both. OpenIPC's rtl8733bu package has an exact
+  USB-ID source match at Realtek commit `86485bef`; it is not build/RF proof.
+  Recovered rtl8723fu blob names and stock lite's MT7601U do not identify WLAN.
+- **Impact/dependencies:** P0, **Partial**; needs BOOT-01/KABI-01/BSP-01;
   physical network/SSH/provisioning depend on it.
-- **Next/accept:** Read-only sysfs driver/modalias and module/firmware/init evidence;
-  compare exact upstream support and qualify association/reconnect later. No link
+- **Next/accept:** Pin/qualify the source/kernel combination and necessary board
+  power/reset initialization (OEM sets AW9523B output 5 HIGH; electrical role
+  remains unqualified). Qualify association/reconnect later. No link
   resets, scans, credential changes or module reloads during observation.
 - **Architecture:** Favor standard Linux networking, not package selection by
   filename or wholesale reuse of OEM shell orchestration.
@@ -279,6 +325,9 @@ Linux bring-up on perfect media analysis.
   and what reset response is safe? E0/E2 establish enable-before-open,
   close-not-disarm, option meanings and OEM audio coupling. Do not rediscover
   these facts; the replacement health/fault policy is still unqualified.
+  E8 rechecks them cross-program, clarifies exclusive open sets service mode 2
+  while the fallback thread services only mode 1, and observes the matching live
+  AF203 process owning a watchdog fd. No actual timeout/reset was measured.
 - **Impact/dependencies:** P1, **Partial**, startup risk also relevant to BOOT-01;
   needs selected kernel/driver and BSP-01/FEED-01.
 - **Next/accept:** Resume outstanding lifecycle paths; qualify acquisition failure,
@@ -320,9 +369,11 @@ Linux bring-up on perfect media analysis.
 - **Question/current evidence:** What establishes valid time after power loss and
   how are DST/time jumps/missed occurrences/reboot handled? E3/E4 identify exact-
   second scheduling hazards; monotonic deadlines and durable occurrence identity
-  are design requirements. E1's fake-hwclock/ntpd is not proof of a reliable RTC.
+  are design requirements. E8 observes RTC `120e0000.rtc`, `hctosys=1`; RTC
+  presence/boot use are resolved, retention and accuracy are not. E1's
+  fake-hwclock/ntpd is not proof of reliable offline time.
 - **Impact/dependencies:** P1, **Partial**; needs STATE-01/FEED-01/POWER-01.
-- **Next/accept:** Establish clock/retention facilities read-only later, agree
+- **Next/accept:** Investigate remaining retention/accuracy evidence, agree
   invalid-time/catch-up policy, then test offline/reboot/time-change cases.
   Do not silently dispense overdue meals or introduce cloud dependence.
 - **Architecture:** Offline feeding is firm; uncertain calendar time needs a
@@ -350,6 +401,9 @@ Linux bring-up on perfect media analysis.
   available and is BLE preferable to AP/another secure recovery path? E0/E4
   recover GATT/frame/mailbox behavior, not the complete HCI hardware/init chain.
   The status worker clears readiness on status change; it is not a producer.
+  E8 recovers blue_star.sh loading bluetooth.ko/rtk_btusb.ko and using hciconfig:
+  a USB initialization lead, not a UART assumption. No HCI class entry was
+  observed; absence of Bluetooth hardware is not established.
 - **Impact/dependencies:** P2, **Partial**; needs WIFI-01/BOOT-01 observations and
   TRUST-01 for a secure role decision.
 - **Next/accept:** Establish actual transport/init dependencies, compare secure
@@ -388,17 +442,22 @@ Linux bring-up on perfect media analysis.
 
 ## Next bounded investigation and change log
 
-Next turn: restore native Ghidra and dedicated read-only SSH access. Obtain a
-sanitized PLAT-01/BOOT-01/WIFI-01 fact set without MMIO, service changes or resets;
-verify saved program identities before choosing new binary questions. In parallel,
-qualify EMU-01/EMU-02 against locked source/artifact identities. Keep execution
-proof separate from the source-discovery closure already recorded here.
+Next: prepare a reproducible emulator-build environment, qualify the pinned
+GK7205V200 model against exact OpenIPC boot artifacts, then isolated networking,
+key-only SSH and lifecycle (EMU-01 → EMU-02). In parallel, narrow KABI-01 and
+complete protected backup feasibility (REC-01), without device changes. Physical
+Wi-Fi and recovery remain separate gates; do not rediscover the verified map.
 
-For resumed OEM groups: identity/checkpoint → investigation → supported bounded
-annotations → save/readback/preservation → affected canonical exports/derived
-evidence → tracker update with immutable links. Until then, this register must
-not claim new Ghidra improvements or a new saved-project checkpoint.
+Routine OEM groups: exact identity/current-state checks → investigation → bounded
+supported annotations → affected readback/basic integrity → explicit save →
+research/register update. Record newer saved work versus the last exported
+checkpoint. Full exports, regeneration, exhaustive comparisons and validated
+archives belong at deliberate milestones or warranted risk, not every session;
+follow the [reconstruction workflow](https://github.com/tannerln7/plaf203-firmware-reconstruction/blob/b29b6455e06a5f15b5e06aea41f08a8cd3d91ae8/DEVELOPMENT.md#analysis-preservation-and-milestone-cadence).
+Native MCP remains the interactive analysis path; unattended existing exporters
+handle milestone batches serially. No separate synchronization framework.
 
 | Date | Change / evidence | Remaining boundary |
 | --- | --- | --- |
 | 2026-10-28 | Initial 20 entries; SRC-01 closed only for source-selection scope using E1. Existing contracts reused rather than reopened. | OEM/Ghidra and SSH deferred by owner; no build/boot, firmware implementation or physical qualification. |
+| 2026-10-28 | Access resumed; E8 closes live map/radio/RTC-interface subquestions, narrows boot/recovery and adds KABI-01 (21 retained entries). Bounded saved Ghidra findings and a deliberate exported/restore-verified checkpoint are preserved. | Independent boot, complete backup/restoration, physical DDR/driver/radio/time/safety qualification and actual QEMU execution remain open. Routine saves no longer require full synchronization. |
