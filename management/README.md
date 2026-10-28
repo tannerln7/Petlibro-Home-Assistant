@@ -289,3 +289,7 @@ and proposed [UI concept plan](../docs/petlibro-management-ui-concept-plan.md)
 for target responsibilities, visual direction, and subsequent work. The UI
 concept is design guidance rather than evidence that its illustrated runtime
 states or controls are implemented.
+
+The [PLAF203 replacement-firmware architecture centerline](../docs/plaf203-replacement-firmware-architecture.md)
+defines the proposed native-device integration and device-side authority without
+replacing these management foundations or claiming a qualified firmware cutover.

@@ -186,6 +186,7 @@ Camera sessions are lazy and begin when a consumer opens the generated stream.
 ### Development
 
 - [Architecture](docs/architecture.md)
+- [PLAF203 replacement-firmware architecture centerline — proposed, not deployed](docs/plaf203-replacement-firmware-architecture.md)
 - [Development guide](docs/development.md)
 - [Release process](docs/release-process.md)
 - [Contributing](CONTRIBUTING.md)

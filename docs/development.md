@@ -23,6 +23,11 @@ belongs in a shared package only when at least two runtime components genuinely
 need the same implementation; do not create a generic utility layer for test
 convenience.
 
+The [PLAF203 replacement-firmware architecture centerline](plaf203-replacement-firmware-architecture.md)
+defines the proposed device platform and native management boundary separately
+from the existing OEM-based production system. It is planning guidance, not a
+buildable replacement image or installation procedure.
+
 ## Prerequisites
 
 - Python 3.12 or newer;
