@@ -126,11 +126,11 @@ field from the update.
 | `go2rtc_webrtc_port` | `8555`            | WebRTC TCP/UDP port                                                                               |
 
 The tested HD stream may first emit a 640x360 SPS and switch to 1920x1080 later.
-The camera adapter automatically waits up to 15 seconds for that transition.
+With `camera_quality=hd`, the camera adapter waits up to 15 seconds for that transition.
 Some observed sessions transitioned after several minutes and were initially
-advertised as 640x360. `camera_quality` is the request sent to the device;
-runtime `actual_resolution` is the observed SPS and is not forced by that
-request.
+advertised as 640x360. `camera_quality` is a startup-readiness preference, not a physical resolution command;
+runtime `actual_resolution` is the observed SPS and is not forced by the
+preference.
 
 `camera_audio` is disabled by default for backward compatibility. Enabling it
 requests inbound AAC (44.1 kHz mono on the tested PLAF203). Native-AAC clients may consume

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.15-beta.7
+
+- Update the embedded go2rtc fork to `v1.9.14-petlibro.4-dev.1` for PLAF203 physical-device qualification.
+- Correct transport receipt tracking independently of H.264/AAC decoding, native
+  reset correlation, bootstrap sequence continuity, and sender-clear/reset handling.
+- Correct fragmented AAC and 16-bit fragment counts; align ACK scheduling with
+  native protocol behavior. No additional configuration switches are required.
+- Automated transport tests passed upstream; this beta requires camera hardware
+  qualification before promotion to stable.
+
 ## 0.3.15-beta.6
 
 - Automatically request a feeder reboot to activate fully deployed compatibility

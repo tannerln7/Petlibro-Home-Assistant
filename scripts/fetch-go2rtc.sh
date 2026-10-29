@@ -19,7 +19,7 @@ require_hex() {
 
 require_hex GO2RTC_REVISION "${GO2RTC_REVISION}" 40
 require_hex GO2RTC_SOURCE_SHA256 "${GO2RTC_SOURCE_SHA256}" 64
-if [[ ! ${GO2RTC_VERSION} =~ ^v[0-9]+\.[0-9]+\.[0-9]+-petlibro\.[0-9]+$ ]]; then
+if [[ ! ${GO2RTC_VERSION} =~ ^v[0-9]+\.[0-9]+\.[0-9]+-petlibro\.[0-9]+(-dev\.[1-9][0-9]*)?$ ]]; then
     printf 'Invalid GO2RTC_VERSION in %s\n' "${lock_file}" >&2
     exit 1
 fi
