@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.15-beta.8
+
+- Update the embedded go2rtc fork to `v1.9.14-petlibro.4-dev.2`.
+- Fix PLAF203 receive-reset bootstrap by accepting the observed device
+  protocol version and correcting the initial reliable sequence.
+- Add physical-device capture regression coverage for both observed
+  reset-completion orderings and correlation validation.
+- Confirm 1920x1080 H.264 and AAC playback in a successful five-minute
+  physical-device FFmpeg decode test.
+
 ## 0.3.15-beta.7
 
 - Update the embedded go2rtc fork to `v1.9.14-petlibro.4-dev.1` for PLAF203 physical-device qualification.
