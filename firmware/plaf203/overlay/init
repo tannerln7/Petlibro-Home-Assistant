@@ -1,0 +1,4 @@
+#!/bin/sh
+# The retained OpenIPC kernel appends init=/init to its command line.
+# No OEM/OpenIPC camera bootstrap is inherited by this rootfs.
+exec /sbin/init

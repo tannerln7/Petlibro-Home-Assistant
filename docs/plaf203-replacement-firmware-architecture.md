@@ -1,6 +1,8 @@
 # PLAF203 replacement firmware — architecture centerline
 
-**Baseline:** 2026-10-28 · **Status:** initial architecture; no replacement firmware implemented or hardware-qualified by this document.
+**Architecture baseline:** 2026-10-28 · **Implementation checkpoint:** 2026-10-29.
+Source-built Linux and the non-actuating runtime/journal are QEMU-qualified;
+physical-board operation and installation remain unqualified.
 
 This is the maintained development centerline for a complete, local-first PLAF203
 replacement. It preserves product intent, ownership boundaries, rationale and
@@ -33,7 +35,7 @@ and layouts are means, not product requirements.
 | Repository | Ownership and inspected baseline |
 | --- | --- |
 | [Petlibro-Home-Assistant](https://github.com/tannerln7/Petlibro-Home-Assistant) | Replacement development, management integration, independent source, build configuration and future implementation planning. This branch starts at management foundation `9edd22d65508ccef934c4c749d212c9cac36d2c1`. |
-| [plaf203-firmware-reconstruction](https://github.com/tannerln7/plaf203-firmware-reconstruction) | OEM evidence, Ghidra, captures, hardware research and analysis corrections. Inspected `main` at `adfe4c7e71678aec933c19f9f94230b6a4d71426`; no evidence files are copied into this development repository. |
+| [plaf203-firmware-reconstruction](https://github.com/tannerln7/plaf203-firmware-reconstruction) | OEM evidence, Ghidra, captures, hardware research and analysis corrections. Committed baseline `bbd4f113738f4e43f572babc3cbd047fb88122e5`; E9 and the independent review are subsequent working-tree findings, not contents of that commit. No original evidence files are copied into this development repository. |
 | [Patched go2rtc](https://github.com/tannerln7/go2rtc) | Existing camera transport/session/media reference. Actual local branch is lowercase `petlibro`, inspected at `6ca2e665b1bf483462562165e1cf011526a259f8`; the requested `Petlibro` spelling is not the checked-out ref. |
 
 The dedicated worktree is `/srv/dev/repos/Petlibro-firmware-replacement/`, branch
@@ -169,18 +171,37 @@ configuration are a reasonable starting point, not verified compatibility with
 this feeder's pinmux, flash, Wi-Fi, power transitions or peripherals. Qualify the
 actual board and avoid selecting a similarly named vendor binary by filename.
 
-**Evidence refinement (2026-10-28):** the [read-only platform investigation](https://github.com/tannerln7/plaf203-firmware-reconstruction/blob/b29b6455e06a5f15b5e06aea41f08a8cd3d91ae8/docs/research/replacement-platform-device-contracts.md)
-observes a contiguous 32 MiB NOR partition window, current JFFS2 root and 45 MiB
-Linux allocation; total physical DDR and replacement layout remain unqualified.
-Actual WLAN is USB RTL8733BU (`0bda:b733`), with a matching OpenIPC source
-candidate—not stock lite's MT7601U or an identity inferred from rtl8723fu blobs.
-Kernel/module ABI, radio power/reset and real reconnect behavior need qualification.
-The OEM init loader/application can alter sensor selection and reboot; bulk OEM
-startup is not a minimal platform recipe. Watchdog load can arm hardware before
-userspace ownership. Preserve explicit safe initialization/health ownership rather
-than importing these side effects into generic Linux/network bring-up. These
-facts refine constraints; they do not choose an A/B scheme, waive recovery, require
-OEM architecture or justify replacing the selected OpenIPC direction.
+**Evidence refinement (2026-10-28, E8–E10):** the [read-only platform investigation](https://github.com/tannerln7/plaf203-firmware-reconstruction/blob/bbd4f113738f4e43f572babc3cbd047fb88122e5/docs/research/replacement-platform-device-contracts.md)
+and [boot/runtime contract](https://github.com/tannerln7/plaf203-firmware-reconstruction/blob/bbd4f113738f4e43f572babc3cbd047fb88122e5/docs/drivers/boot-and-runtime-contract.md)
+establish a contiguous 32 MiB NOR partition window (`512K(boot),512K(bootargs),4M(kernel),27M(rootfs)`),
+a two-stage Goke bootloader (`mtd0` 3,908-byte `regbin` + SPL + U-Boot `2016.11`),
+a single-copy 256 KiB U-Boot environment in `mtd1` (`0x000000..0x03ffff`, with
+`0x040000..0x07ffff` `0x00`-padded and no `bootcmd` in the compiled-in default
+environment), a 12,436-byte `ARM_APPENDED_DTB` in `mtd2`, and a 64 MiB DDR
+software configuration (`mem=45M` Linux + 19 MiB MMZ). Both the OEM DTB and
+upstream OpenIPC's `gk7205v200` DTB omit `gpio_chip@120b3000` (`gpio3`, GPIO
+24–31). **Independent correction:** GPIO25/26 export in QEMU is an emulator
+test, not proof of a PLAF203 button/mute mapping or a mandatory board GPIO3 fix.
+The application initializes the lock input as bank 1 bit 4 (GPIO12,
+`0x120c0010 = 0x1002`) and detection input GPIO13 at `0x120c0014 = 0x1802`;
+the former GPIO3_1/GPIO3_2, `0x1100`, and `system(devmem)` claims are withdrawn.
+The QEMU model's inability to probe bank 8 does not prove that bank nonexistent
+on the feeder: OEM software uses bank 8 for keys. Board pinmux must be qualified
+from actual callers and electrical behavior, not emulator omissions.
+Preserving stock `mtd0`/`mtd1` remains a **candidate** for initial transition,
+not an approved installer design; the single-copy environment deserves caution.
+Actual WLAN is USB RTL8733BU
+(`0bda:b733`), requiring SoC USB CRG init (`0x12010140 = 0xb7`) and `AW9523B`
+port 0 pin 5 HIGH. Stock OpenIPC's `CONFIG_CMDLINE="init=/init"`, blank-password
+Dropbear (`-B`), `/usr/sbin/openipc-claim` login shell, and read-only `/var/lib/seedrng`
+assumptions must be replaced in the PLAF203 Buildroot profile.
+
+The implementation under [firmware/plaf203](../firmware/plaf203/README.md)
+is a development-only minimal Buildroot external tree, using the separately
+qualified OpenIPC kernel/SDK. Its synthetic NOR layout is not the physical
+installation/update layout. NOR-mounted rootfs and state tests must be reported
+separately from kernel loading through SPI/U-Boot. Host-seeded test entropy and
+per-build development enrollment are not production provisioning policies.
 
 Initial platform coverage must include bootable Linux, board support/drivers,
 network/Wi-Fi management, secure key-based SSH, lightweight init/supervision,
@@ -222,12 +243,40 @@ state and reboot tests, and installation/update/failure-recovery simulation.
 
 There are two complementary test profiles, not two unrelated implementations:
 
-1. **PC: SoC-specific profile.** The upstream
-   [OpenIPC QEMU fork](https://github.com/OpenIPC/qemu-bench), previously named
-   `qemu-hisilicon`, advertises a `gk7205v200` model. Its existence makes this a
-   concrete qualification candidate, not proof that the PLAF203 kernel, flash,
-   board peripherals or media pipeline are faithfully modeled. Pin a revision
-   and establish what actually boots and which interfaces are synthetic.
+1. **AD: SoC-specific profile (`gk7205v200`).** Pinned upstream QEMU `v10.2.0`
+   (`698104725efad4b29079d857dfdebbd804e34c99`) patched with
+   [OpenIPC/qemu-bench](https://github.com/OpenIPC/qemu-bench)
+   (`b011673b31884683a534a3f3e1a2b080d5a99f19`) is built and qualified via
+   [Dockerfile.qemu-bringup](../docker/Dockerfile.qemu-bringup) and
+   [qualify_qemu_gk7205v200.py](../scripts/qualify_qemu_gk7205v200.py). With the
+   PLAF203 DTB `gpio3` fixup, `mem=64M osmem=45M mmz_allocator=gk`, and
+   `-global driver=hisi-fmc,property=flash-jedec,value=0xc22019` (32 MiB
+   `mx25l25635f`), it boots `Linux-4.9.37-gk7205v200` to userspace with all 8
+   PL061 GPIO banks (`gpiochip0..56`, including `gpio25`/`gpio26` sysfs access),
+   all four PLAF203 MTD partitions, `120e0000.rtc`, `1.0004x` real-time timer
+   progression, `femac` SLIRP networking, key-only Dropbear SSH (with
+   unauthorized/password rejection), and `SC_SYSRES` hardware reboot. Feeder-specific
+   peripherals (`AW9523B` on I2C2 `0x5b`, `SAR_ADC`, USB `RTL8733BU`) are not
+   modeled in upstream `qemu-bench` and remain synthetic test boundaries.
+   The independent continuation adds a source-built minimal userspace and
+   actual SPI-NOR/SPL/U-Boot/kernel/rootfs boot (no `-kernel`/`-initrd`), using
+   the verified OEM boot partition only in a new emulated image. Three cold
+   boots, software reset, retained JFFS2 state/host identity, and failure-mode
+   boots are qualified by the [profile harness](../firmware/plaf203/README.md).
+   Its five-partition layout is a development fixture, not an installer/OTA
+   decision. The selected kernel rounds the tested `osmem=45M` request to 48M;
+   observed 40/44/45/48M requests yield 40/44/48/48M, consistent with 4 MiB
+   granularity. Do not claim physical 45/19 memory parity.
+
+   A separate [OEM reference profile](../firmware/plaf203/oem-reference.md)
+   boots a disposable primary OEM flash copy through original Linux/JFFS2 and
+   verifies the original running application hash. It now provides interactive
+   normal-init Linux with application-disabled or PTY-isolated application modes,
+   tested responsiveness and same-flash storage persistence. UART/QMP draining
+   and a tracked NOR erase fix resolve identified tooling defects. Watchdog
+   suppression in the application profile remains emulator-only; missing
+   peripherals and full application semantics remain unqualified. This optional
+   comparison tool is not a dependency of replacement firmware or physical validation.
 2. **AD: portable ARM integration profile.** A supported generic QEMU board can
    exercise the same application packages/contracts with synthetic hardware
    adapters and an appropriate kernel/configuration. Upstream
@@ -246,7 +295,6 @@ reconsider the test split and unsupported claims with the owner.
 QEMU results do not qualify flash durability, Wi-Fi/RF, electrical motor stops,
 sensor thresholds, real timing, battery behavior, watchdog reset or camera/audio
 hardware. Even a faithful-looking boot model needs independent physical evidence.
-No emulator was built or run in this planning assignment.
 
 ## 6. Feeding, timing and failure semantics
 
@@ -294,8 +342,32 @@ loop, automatic service restart or watchdog reset alone is not proof of safe
 actuator state. Qualify startup, acquisition failure, shutdown, crash and reset
 behavior; never weaken watchdog safeguards merely to simplify bring-up.
 
-## 7. Persistent state and configuration
+**Implemented foundation (2026-10-29):** The [native runtime](../firmware/plaf203/README.md#native-runtime-and-health-ownership)
+is one C11 foreground owner, supervised by the existing BusyBox init. Its pure
+health policy has injectable monotonic time, subsystem observations and watchdog
+operations. Control/sensor adapters are explicitly synthetic and non-actuating;
+storage checks the real schema and device journal. Optional networking/media cannot
+substitute for essential progress. Initialization, degraded/stale health,
+latched faults, generation-safe callbacks and orderly shutdown are implemented;
+there is no physical feeder state machine, schedule or operation replay yet.
+The default watchdog is simulated. Standard SP805 capability builds as a module,
+but the current QEMU CMSDK/DT identity does not provide a compatible Linux
+watchdog device. Driver presence/model reset is not physical watchdog coverage.
+The subsequent [durable feeding foundation](../firmware/plaf203/README.md#durable-feeding-operations-synthetic-only)
+adds one authoritative synthetic feeding owner and a bounded device journal.
+It persists admission, pre-actuation intent, the effect fence, progress and
+terminal results; incomplete effect-bearing operations become indeterminate
+without replay. A 16-result history plus durable highwater fence rejects old
+IDs even after detailed outcomes are retired. Cancellation/retry require a
+fresh stopped observation, not successful output submission. Request/token/
+event contracts preserve owner, operation and deadline generations, revisions
+and uncertainty. A private Unix control socket exercises the same owner; it is
+not the future authenticated network API. Readiness now includes journal
+reconciliation; failed/corrupt/indeterminate state blocks new operations and
+watchdog feeds. These crash tests are not physical power-cut or actuator-safety
+qualification. Do not turn restart or synthetic `running` into permission to move.
 
+## 7. Persistent state and configuration
 **AD:** Prefer human-readable, versioned configuration/state where practical.
 Validate schemas, bounds, units, ranges and cross-record relationships before
 activation; separate desired changes, durable committed state and effective
@@ -548,8 +620,36 @@ change, and the evidence repository only in separately authorized research work.
 | 2026-10-28 | Initial centerline on a separate management-based feature worktree; linked from maintained navigation. | Preserves agreed product intent, distinguishes evidence from decisions, and records existing-worktree/base limitations. Documentation-only; no firmware, emulator or hardware qualification claimed. |
 | 2026-10-28 | Added living research-gap register and pinned upstream-source evidence. | Confirms concrete source/configuration starting points, not a boot result; stock camera profile and model defaults are not a qualified PLAF203 image. No major architectural decision changed; new OEM/Ghidra and SSH work deferred by owner. |
 | 2026-10-28 | Incorporated resumed live platform evidence and kernel/module-ABI dependency; adopted routine-save versus milestone-export research cadence through the linked register. | NOR map, Linux allocation and RTL8733BU identity are observed; independent boot, physical DDR/driver/time qualification and full restoration are not. No major product requirement changed, implementation begun or device mutation authorized. |
+| 2026-10-28 | Reconciled E9 OEM bootloader/environment/DTB/pinmux/RTC/codec findings and completed E10 QEMU `gk7205v200` build, DTB `gpio3` patch, 32 MiB NOR, networking, key-only SSH, and reboot qualification. | Promotes `gk7205v200` QEMU model from candidate (`PC`) to qualified SoC emulation profile (`AD`) for kernel/DTB/GPIO3/NOR/network/SSH/reboot; documents `ARM_APPENDED_DTB` + `gpio3` requirement, single-copy `mtd1` preservation rationale, four-stage pinmux/USB CRG dependencies, and OpenIPC `init`/`seedrng`/Dropbear overrides needed in the replacement Buildroot profile. |
+
+**Independent continuation (2026-10-28):** E11 withdraws the unproven physical
+GPIO3/button/mute claims and corrects the OEM boot-image/default-environment
+interpretations. The minimal external-tree userspace and actual NOR boot/state/
+SSH lifecycle are now qualified under QEMU. Existing product requirements are
+unchanged; production trust, partition/update policy, full source closure and
+physical-board qualification remain open. See the profile receipt and living
+register rather than treating the earlier revision row as current acceptance.
 
 External upstream references in this document were consulted on 2026-10-28.
 They are candidate/support evidence, not pinned build inputs or a claim that an
 upstream advertised capability has been verified on the PLAF203. Pin and
 qualify the chosen revisions during implementation.
+
+**Native build continuation (2026-10-29):** the minimal external tree now has a
+hash-locked Buildroot/SDK recipe, checked package downloads, and a deterministic
+build receipt. Two independently extracted source/SDK/build trees produced
+identical userspace images with the same offline container and disposable
+development inputs; see [E14](plaf203-replacement-firmware-research-gaps.md#evidence-routes).
+This is userspace reproducibility evidence, not an independently rebuilt kernel,
+reconstructible container, production enrollment scheme or physical firmware
+qualification. The retained kernel/bootloader and hardware gates remain explicit;
+no feeding owner, actuator policy or product requirement changes here.
+
+**Source-kernel continuation (2026-10-29):** E15 supersedes the retained-kernel
+dependency above. Buildroot now builds pinned Linux 4.9.37, a separate QEMU DTS,
+modules and userspace; two independent offline kernel builds are identical.
+Both previous-userspace and integrated-image NOR/security suites pass. OEM
+SPL/U-Boot remains retained. The QEMU DTS is not a qualified physical-board DTS,
+the source baseline is not claimed as an exact retained-binary reconstruction,
+and watchdog ownership, physical drivers and production trust remain gates.
+See the [kernel checkpoint](../firmware/plaf203/kernel-qualification-20261029.json).

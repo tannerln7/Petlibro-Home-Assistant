@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: GPL-2.0
+/* Source-built equivalent of the qualified emulator DTB adaptation.
+ * Not a physical PLAF203 board definition: GPIO3 is synthesized for QEMU
+ * tests and GPIO8 is disabled because the machine does not model it.
+ * All other board definitions come from the pinned vendor/OpenIPC tree.
+ */
+#include "gk7205v200-demb.dts"
+
+/ {
+	aliases {
+		gpio3 = &gpio_chip3;
+	};
+	soc {
+		gpio_chip3: gpio_chip@120b3000 {
+			compatible = "arm,pl061", "arm,primecell";
+			reg = <0x120b3000 0x1000>;
+			interrupts = <0 19 4>;
+			clocks = <&clock GK7205V200_SYSAPB_CLK>;
+			clock-names = "apb_pclk";
+			#gpio-cells = <2>;
+			status = "okay";
+		};
+	};
+};
+
+&gpio_chip8 {
+	status = "disabled";
+};

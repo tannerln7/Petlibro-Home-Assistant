@@ -15,6 +15,8 @@ Petlibro Local provides local Home Assistant control and camera streaming for th
 | `addon/` | HA add-on packaging, configuration rendering, s6 supervision, image build |
 | `docs/` | Architecture, development, protocol, installation, component, and management-planning documents |
 | `docker/`, `scripts/` | Local development/runtime helpers, packaging and validation |
+| `firmware/plaf203/` | Development-only Buildroot/kernel profile, native synthetic runtime, operation journal and qualified milestone receipts |
+| `emulation/` | Emulator integration guidance; the local nested QEMU checkout/build is ignored, not a submodule |
 
 The existing add-on is the production operational system; **Petlibro Management** is an implemented expansion whose individual capabilities still have explicit qualification states. Do not describe unqualified bootstrap, recovery, Supervisor control, or future controller migration as production-ready. The initial supported guided deployment is **one feeder per add-on**; do not silently expand that support.
 
@@ -76,6 +78,16 @@ Management development may occur in a worktree separate from `develop`; the orig
 Keep existing production components intact during initial scaffolding. Port cohesive capabilities behind tested contracts instead of restructuring files by language alone. Use sanitized byte-exact protocol fixtures and behavioral/parity tests. Changing source behavior is different from mechanical extraction; record and validate either explicitly.
 
 ## Development and validation
+
+For replacement firmware, start with `firmware/plaf203/README.md`, the architecture
+and research-gap register in `docs/plaf203-replacement-firmware-*.md`, and the
+latest feeding qualification receipt. Use the pinned build/qualified isolated
+QEMU workflows, not a generic VM launch or physical deployment. Host checks use
+`python3 -m unittest discover -s installer/tests -q`; native self-tests compile
+into temporary directories. Preserve OEM inputs, keep keys/seeds/images outside
+Git, and retain the distinction between synthetic control and physical safety.
+Historical receipts identify their original artifact/input snapshots, not every
+later source revision. New API or physical-control work requires its own task.
 
 Use `docs/development.md` for prerequisites and the canonical current commands. From the repository root:
 

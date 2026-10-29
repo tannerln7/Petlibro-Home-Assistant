@@ -1,0 +1,33 @@
+#!/bin/sh
+set -eu
+umask 077
+fail() { echo "PLAF203_SSH_DISABLED: $*" >&2; exit 1; }
+case "${1:-}" in
+  start)
+    [ -f /run/plaf203-state-ready ] || fail state-not-ready
+    mountpoint -q /state || fail no-state
+    [ "$(cat /state/schema 2>/dev/null)" = plaf203-state-v1 ] || fail schema
+    [ -s /etc/plaf203/enrollment.pub ] || fail no-enrollment
+    # This development enrollment permits exactly one Ed25519 public key.
+    awk 'NR == 1 && NF >= 2 && $1 == "ssh-ed25519" && length($2) == 68 &&
+         $2 ~ /^AAAAC3NzaC1lZDI1NTE5AAAAI/ && $2 ~ /^[A-Za-z0-9+\/]+$/ {ok=1}
+         END {exit !(ok && NR == 1)}' /etc/plaf203/enrollment.pub || fail invalid-enrollment
+    if [ ! -e /state/dropbear/enrolled ]; then
+        [ ! -e /state/dropbear/authorized_keys ] || fail interrupted-enrollment
+        cp /etc/plaf203/enrollment.pub /state/dropbear/authorized_keys
+        dropbearkey -t ed25519 -f /state/dropbear/host_key >/dev/null 2>&1 || fail host-key-generation
+        (cd /state/dropbear && sha256sum authorized_keys host_key > enrolled.new)
+        sync
+        mv /state/dropbear/enrolled.new /state/dropbear/enrolled
+    fi
+    (cd /state/dropbear && sha256sum -c enrolled >/dev/null) || fail corrupt-identity
+    dropbearkey -y -f /state/dropbear/host_key >/dev/null 2>&1 || fail invalid-host-key
+    mkdir -p /run/plaf203-ssh
+    cp /state/dropbear/authorized_keys /root/.ssh/authorized_keys
+    chmod 0600 /root/.ssh/authorized_keys
+    /usr/sbin/dropbear -r /state/dropbear/host_key -s -g -j -k -p 22
+    echo PLAF203_SSH_READY
+    ;;
+  stop) killall dropbear 2>/dev/null || true; sync ;;
+  *) exit 1 ;;
+esac

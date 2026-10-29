@@ -1,0 +1,8 @@
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet dhcp
+    # Synthetic QEMU Ethernet only: stable DHCP identity across warm resets.
+    # Never use this shared development MAC on bridged/physical deployments.
+    hwaddress ether 02:50:4c:41:46:01

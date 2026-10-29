@@ -1,0 +1,1 @@
+source "$BR2_EXTERNAL_PLAF203_PATH/package/plaf203-runtime/Config.in"

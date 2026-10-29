@@ -1,0 +1,23 @@
+#!/bin/sh
+# QEMU-only layout: 512K boot, 512K env, 4M kernel, 16M rootfs, 11M state.
+set -eu
+[ "${1:-}" = start ] || exit 0
+umask 077
+fail() { echo "PLAF203_STATE_FAILED: $*" >&2; exit 1; }
+mount -t jffs2 -o nodev,nosuid /dev/mtdblock4 /state || fail mount
+if [ ! -e /state/schema ]; then
+    # Never erase, reformat or silently adopt unknown existing state.
+    [ -z "$(ls -A /state)" ] || fail unknown-state
+    mkdir -m 0700 /state/seedrng /state/dropbear
+    if [ -f /etc/plaf203/test.seed ]; then
+        cp /etc/plaf203/test.seed /state/seedrng/seed.credit
+        chmod 0400 /state/seedrng/seed.credit
+    fi
+    printf 'plaf203-state-v1\n' > /state/schema.new
+    sync
+    mv /state/schema.new /state/schema
+fi
+[ "$(cat /state/schema)" = plaf203-state-v1 ] || fail schema
+seedrng -d /state/seedrng || fail entropy
+touch /run/plaf203-state-ready
+echo PLAF203_STATE_READY

@@ -1,0 +1,7 @@
+#!/bin/sh
+# Init starts respawn after rcS and suppresses respawn during shutdown actions.
+case "${1:-}" in
+  start) mkdir -p /run/plaf203; chmod 0700 /run/plaf203 ;;
+  stop) killall -TERM plaf203-runtime 2>/dev/null || : ;;
+  *) exit 1 ;;
+esac

@@ -24,9 +24,12 @@ need the same implementation; do not create a generic utility layer for test
 convenience.
 
 The [PLAF203 replacement-firmware architecture centerline](plaf203-replacement-firmware-architecture.md)
-defines the proposed device platform and native management boundary separately
-from the existing OEM-based production system. It is planning guidance, not a
-buildable replacement image or installation procedure.
+defines the device platform and native management boundary separately from the
+existing OEM-based production system. The [firmware guide](../firmware/plaf203/README.md)
+now owns the source-built Linux/Buildroot, synthetic native runtime/journal and
+isolated NOR/QEMU commands. These are development images, not a physical
+installation release. The [emulation entry point](../emulation/README.md) explains
+the pinned source recipe and deliberately ignored local emulator checkout.
 
 ## Prerequisites
 

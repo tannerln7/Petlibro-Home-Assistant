@@ -1,0 +1,4 @@
+#!/bin/sh
+# BusyBox init owns respawn; bound even early-crash logging without another loop.
+sleep 1
+exec /usr/sbin/plaf203-runtime

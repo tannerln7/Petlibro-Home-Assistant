@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "source_date_epoch": 1738368000,
+  "buildroot": {
+    "version": "2024.02.10",
+    "file": "buildroot-2024.02.10.tar.xz",
+    "sha256": "b193867d91ed468925a76828bd35ba64d8b4bd1ec238e35db8722fdd406926c2",
+    "url": "https://buildroot.org/downloads/buildroot-2024.02.10.tar.xz"
+  },
+  "toolchain": {
+    "file": "toolchain.goke-gk7205v200.tgz",
+    "sha256": "f5062be797d0b2714b9311437168cde2bc72f28273d8d9797e6a897774775924",
+    "url": "https://github.com/OpenIPC/firmware/releases/download/toolchain/toolchain.goke-gk7205v200.tgz"
+  },
+  "kernel": {
+    "version": "4.9.37",
+    "revision": "bb0266a361ebc03dc258aed20119793eab4835f1",
+    "file": "linux-bb0266a361ebc03dc258aed20119793eab4835f1.tar.gz",
+    "sha256": "cc8eafe42f6019c180b40c57bbec038df98485401379952ef2a19ce343df96cf",
+    "url": "https://codeload.github.com/OpenIPC/linux/tar.gz/bb0266a361ebc03dc258aed20119793eab4835f1",
+    "configuration_origin": "OpenIPC/firmware@856f22ef7e046f59a3f409e157eb1e06d42fd03c:br-ext-chip-goke/board/gk7205v200/gk7205v200.generic.config",
+    "configuration_sha256": "7c07e1a0099368c61bd7388a80af5e94234c000b4468ac3410db354377e9db54",
+    "provenance_scope": "Kernel branch tip at release date plus matching release board config; exact retained-binary reconstruction is not established"
+  }
+}

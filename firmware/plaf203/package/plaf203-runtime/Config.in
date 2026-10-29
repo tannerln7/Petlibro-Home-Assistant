@@ -1,0 +1,4 @@
+config BR2_PACKAGE_PLAF203_RUNTIME
+	bool "PLAF203 native runtime"
+	help
+	  Single-owner non-actuating runtime with health-gated watchdog support.

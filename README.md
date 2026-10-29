@@ -32,6 +32,8 @@ with Petlibro.
 | [`installer/`](installer/) | Guided no-UART bootstrap that migrates an already claimed stock feeder to the local architecture |
 | [`docker/`](docker/) | Docker Compose deployment for Linux hosts outside Home Assistant OS |
 | [`management/`](management/) | Packaged React/TypeScript management application, durable operation journal, and private native-TypeScript capability worker |
+| [`firmware/plaf203/`](firmware/plaf203/README.md) | Development-only replacement Linux, synthetic feeding runtime and device-local operation journal; not a physical installation release |
+| [`emulation/`](emulation/README.md) | Pinned GK7205V200 QEMU integration and isolated qualification guidance |
 
 The add-on is the long-running coordinator. The State Agent does not replace the
 OEM firmware: it runs beside it and exposes only narrowly defined local files.
