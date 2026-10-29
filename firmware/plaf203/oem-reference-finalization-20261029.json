@@ -1,0 +1,437 @@
+{
+  "checkpoint": "OEM interactive/storage finalization; artifact naming uses UTC 2026-10-29",
+  "preserved_original_flash_sha256": "cb812b7619bfe77cea4d35b2a7e0fd80df76fb673335673e1e3af16657dac1d7",
+  "source_lock": "qemu/source-lock.json",
+  "source_file_sha256": {
+    "scripts/run_plaf203_oem_qemu.py": "ad57815da65962334118375acf7f8593fdc5dd20778b458d176e704b635e9a53",
+    "scripts/run_plaf203_oem_qemu.sh": "8344b5c008a6de90e26a45f91e3a50577caf72f065a7f135d0c001fa256fd456",
+    "scripts/build_plaf203_emulator.sh": "da6b2528b704a2152332353c8bf8b41d21952681b0bf76267038dcfe6863cef9",
+    "scripts/test_plaf203_fmc.py": "03b5a9be6dbcb9b261792530ba56f12f84ac31dbdb93491b65ea569b0521c808",
+    "installer/tests/test_run_plaf203_oem_qemu.py": "aee832a7e543d69267ab7a3d38db42905b65a28d4b6e6afae0c07ab03fb9a075",
+    "firmware/plaf203/qemu/source-lock.json": "b57539d04d6b391c211e0405fadc966c10f8658a617a99d5ff750a70b1bf2508",
+    "firmware/plaf203/qemu/0001-hisi-fmc-nor-erase4.patch": "82da4cae9f33686bd8df106a2b46185d9e2b63ccbcc9c696fe55ddd42721bb4f"
+  },
+  "container_id": "sha256:5923c3ab77c74cd61322e9a46c7fa1dd62c29c8e083f9d31f7c2fcff1c0bba94",
+  "historical_pre_erase_fix_stability": [
+    {
+      "receipt_sha256": "9aac1863b51c491cc0d036eee0165323235631f8c8e186f12ce0e2e246545713",
+      "profile": "app-disabled",
+      "watchdog_action": "reset",
+      "seconds": 930.23,
+      "qemu_sha256": "5c6541e22fc4986f393d5ad7aa5c385a84327b333f408c9bf77840fa03285693",
+      "runner_sha256": "443999fcf9a2989b025502856fef737657c782b55c591751ff9d1352b87dbeb6",
+      "boot_sequences": 1,
+      "termination": "time_budget",
+      "source_unchanged": true,
+      "terminal_probes_passed": 31,
+      "terminal_probes_total": 31,
+      "terminal_first_last_seconds": [
+        10.01,
+        910.98
+      ],
+      "qmp_checks_passed": 61,
+      "qmp_checks_total": 61,
+      "all_present_application_hashes_original": true,
+      "application_counts": [
+        0
+      ],
+      "loaded_module_counts": [
+        34
+      ],
+      "qmp_events": [],
+      "diagnostics": null
+    },
+    {
+      "receipt_sha256": "4018af571867c303574792114f063bc638a331bddd751675f818fa1f8f99c6c4",
+      "profile": "app-pty",
+      "watchdog_action": "none",
+      "seconds": 930.16,
+      "qemu_sha256": "5c6541e22fc4986f393d5ad7aa5c385a84327b333f408c9bf77840fa03285693",
+      "runner_sha256": "443999fcf9a2989b025502856fef737657c782b55c591751ff9d1352b87dbeb6",
+      "boot_sequences": 1,
+      "termination": "time_budget",
+      "source_unchanged": true,
+      "terminal_probes_passed": 31,
+      "terminal_probes_total": 31,
+      "terminal_first_last_seconds": [
+        10.01,
+        910.91
+      ],
+      "qmp_checks_passed": 61,
+      "qmp_checks_total": 61,
+      "all_present_application_hashes_original": true,
+      "application_counts": [
+        1
+      ],
+      "loaded_module_counts": [
+        34,
+        35
+      ],
+      "qmp_events": [
+        {
+          "event": "WATCHDOG",
+          "data": {
+            "action": "none"
+          }
+        }
+      ],
+      "diagnostics": null
+    }
+  ],
+  "fixed_binary_smoke": {
+    "receipt_sha256": "dd29a0ab121f65abb22d391af126f05e95aca5c9ebb4577f10982b21516d2037",
+    "profile": "app-pty",
+    "watchdog_action": "none",
+    "seconds": 120.24,
+    "qemu_sha256": "a2d54f7b32c4cd50522bec44d73c6aab590fbd77359b8355acde38e1a72a796c",
+    "runner_sha256": "448194a450eeee32453a3ed4a17c08b07a0c140fac9f8fd615549480e38c390e",
+    "boot_sequences": 1,
+    "termination": "time_budget",
+    "source_unchanged": true,
+    "terminal_probes_passed": 4,
+    "terminal_probes_total": 4,
+    "terminal_first_last_seconds": [
+      10.01,
+      100.02
+    ],
+    "qmp_checks_passed": 7,
+    "qmp_checks_total": 7,
+    "all_present_application_hashes_original": true,
+    "application_counts": [
+      1
+    ],
+    "loaded_module_counts": [
+      34,
+      35
+    ],
+    "qmp_events": [
+      {
+        "event": "WATCHDOG",
+        "data": {
+          "action": "none"
+        }
+      }
+    ],
+    "diagnostics": null
+  },
+  "fixed_binary_final_launcher": {
+    "receipt_sha256": "1f7ebd2d4bfe480d9cc8534d434ccb7d387729414ca5d87dd5f71dea8caa2c2f",
+    "profile": "app-pty",
+    "watchdog_action": "none",
+    "seconds": 35.15,
+    "qemu_sha256": "a2d54f7b32c4cd50522bec44d73c6aab590fbd77359b8355acde38e1a72a796c",
+    "runner_sha256": "ad57815da65962334118375acf7f8593fdc5dd20778b458d176e704b635e9a53",
+    "boot_sequences": 1,
+    "termination": "time_budget",
+    "source_unchanged": true,
+    "terminal_probes_passed": 1,
+    "terminal_probes_total": 1,
+    "terminal_first_last_seconds": [
+      10.01,
+      10.01
+    ],
+    "qmp_checks_passed": 2,
+    "qmp_checks_total": 2,
+    "all_present_application_hashes_original": true,
+    "application_counts": [
+      1
+    ],
+    "loaded_module_counts": [
+      34
+    ],
+    "qmp_events": [
+      {
+        "event": "WATCHDOG",
+        "data": {
+          "action": "none"
+        }
+      }
+    ],
+    "diagnostics": {
+      "jffs2_gc_errors": 0,
+      "unsupported_erase4": 0
+    }
+  },
+  "storage": {
+    "receipt_sha256": "aa89d10a2948c22d6bd4662577e803e9ce915920ca0852ac755dd233ee6e9c22",
+    "initial": {
+      "receipt_sha256": "aa89d10a2948c22d6bd4662577e803e9ce915920ca0852ac755dd233ee6e9c22",
+      "profile": "app-pty",
+      "watchdog_action": "none",
+      "seconds": 180.21,
+      "qemu_sha256": "a2d54f7b32c4cd50522bec44d73c6aab590fbd77359b8355acde38e1a72a796c",
+      "runner_sha256": "7def3e449a79ea227144b7a6f12b6f01a93392ef0c6bbdb695fd16175ccbd3f6",
+      "boot_sequences": 1,
+      "termination": "time_budget",
+      "source_unchanged": true,
+      "terminal_probes_passed": 6,
+      "terminal_probes_total": 6,
+      "terminal_first_last_seconds": [
+        10.02,
+        160.09
+      ],
+      "qmp_checks_passed": 11,
+      "qmp_checks_total": 11,
+      "all_present_application_hashes_original": true,
+      "application_counts": [
+        1
+      ],
+      "loaded_module_counts": [
+        34,
+        35
+      ],
+      "qmp_events": [
+        {
+          "event": "WATCHDOG",
+          "data": {
+            "action": "none"
+          }
+        }
+      ],
+      "diagnostics": {
+        "jffs2_gc_errors": 0,
+        "unsupported_erase4": 0
+      }
+    },
+    "filesystem_test": {
+      "completed": true,
+      "integrity_pass": true,
+      "cycles": 24,
+      "churn_bytes": 6291456,
+      "payload_sha256": "a5b6b88831e4f680a6ef1f9074ef323e52781b8417da54389ce650cafeafa57a",
+      "rootfs_sectors_with_erase_evidence": [
+        6094848,
+        7536640,
+        8060928,
+        9502720,
+        9961472,
+        12713984,
+        13434880,
+        15466496,
+        15597568,
+        16515072,
+        17235968,
+        18546688,
+        24969216,
+        25034752,
+        25100288,
+        26804224,
+        26869760,
+        27066368,
+        27131904,
+        27197440,
+        27262976,
+        27328512,
+        27394048,
+        27459584,
+        27525120,
+        27590656,
+        27656192,
+        27721728,
+        27787264,
+        27918336,
+        28114944,
+        28311552,
+        28442624,
+        28508160,
+        28573696,
+        28639232,
+        28770304,
+        28901376,
+        29294592,
+        29360128,
+        29425664,
+        29949952,
+        30015488,
+        30212096,
+        30277632,
+        30343168,
+        30408704,
+        30670848,
+        30867456,
+        30932992,
+        31326208,
+        31391744,
+        31457280,
+        31522816,
+        31588352,
+        31981568,
+        32899072,
+        33030144,
+        33357824,
+        33423360,
+        33488896
+      ],
+      "persisted_after_cold_restart": true
+    },
+    "restart": {
+      "seconds": 65.19,
+      "qemu_sha256": "a2d54f7b32c4cd50522bec44d73c6aab590fbd77359b8355acde38e1a72a796c",
+      "runner_sha256": "7def3e449a79ea227144b7a6f12b6f01a93392ef0c6bbdb695fd16175ccbd3f6",
+      "boot_sequences": 1,
+      "termination": "time_budget",
+      "diagnostics": {
+        "jffs2_gc_errors": 0,
+        "unsupported_erase4": 0
+      },
+      "storage_restart": {
+        "completed": true,
+        "payload_sha256": "a5b6b88831e4f680a6ef1f9074ef323e52781b8417da54389ce650cafeafa57a",
+        "deleted_file_still_absent": true,
+        "same_disposable_flash": true
+      }
+    },
+    "restart_application_original": true,
+    "restart_single_application": true,
+    "restart_all_probes_passed": true,
+    "restart_all_qmp_checks_passed": true,
+    "scope": "Synced cold restart using the same disposable backing, not clean unmount/kernel-reboot/power-loss qualification."
+  },
+  "fmc_mmio_regression": {
+    "qemu_sha256": "a2d54f7b32c4cd50522bec44d73c6aab590fbd77359b8355acde38e1a72a796c",
+    "synthetic_flash_bytes": 33554432,
+    "sector_bytes": 65536,
+    "checks": [
+      {
+        "opcode": "0xdc",
+        "address": "0x23456",
+        "address_enable": true,
+        "locked": false,
+        "pass": true
+      },
+      {
+        "opcode": "0xdc",
+        "address": "0x1023456",
+        "address_enable": true,
+        "locked": false,
+        "pass": true
+      },
+      {
+        "opcode": "0xdc",
+        "address": "0x34567",
+        "address_enable": false,
+        "locked": false,
+        "pass": true
+      },
+      {
+        "opcode": "0xdc",
+        "address": "0x1034567",
+        "address_enable": false,
+        "locked": false,
+        "pass": true
+      },
+      {
+        "opcode": "0xd8",
+        "address": "0x44567",
+        "address_enable": true,
+        "locked": false,
+        "pass": true
+      },
+      {
+        "opcode": "0xdc",
+        "address": "0x1ffffff",
+        "address_enable": false,
+        "locked": false,
+        "pass": true
+      },
+      {
+        "opcode": "0xdc",
+        "address": "0x200007b",
+        "address_enable": true,
+        "locked": false,
+        "pass": true
+      },
+      {
+        "opcode": "0xdc",
+        "address": "0x23456",
+        "address_enable": true,
+        "locked": true,
+        "pass": true
+      },
+      {
+        "opcode": "0xdc",
+        "address": "0x1023456",
+        "address_enable": true,
+        "locked": true,
+        "pass": true
+      },
+      {
+        "opcode": "0xdc",
+        "address": "0x34567",
+        "address_enable": false,
+        "locked": true,
+        "pass": true
+      },
+      {
+        "opcode": "0xdc",
+        "address": "0x1034567",
+        "address_enable": false,
+        "locked": true,
+        "pass": true
+      },
+      {
+        "individual_unlock_above_16m": true,
+        "other_blocks_still_protected": true,
+        "pass": true
+      }
+    ],
+    "scope": "real NOR MMIO and backing-file readback; not physical flash or all protection modes"
+  },
+  "interactive": {
+    "receipt_sha256": "0c8c603c3ceab1472d3cd218429d280d313a98e53ccd8f9aee3c1cbb4d9bfa5b",
+    "qemu_sha256": "a2d54f7b32c4cd50522bec44d73c6aab590fbd77359b8355acde38e1a72a796c",
+    "profile": "app-pty",
+    "watchdog_action": "none",
+    "manual_split_command_response_count": 1,
+    "automatic_probe_count": 0,
+    "qmp_checks_passed": 4,
+    "qmp_checks_total": 4,
+    "termination": "operator_exit",
+    "partial_manual_command_across_qmp_polls": true,
+    "raw_terminal_output_private": true
+  },
+  "replacement_regression": {
+    "qemu_sha256": "a2d54f7b32c4cd50522bec44d73c6aab590fbd77359b8355acde38e1a72a796c",
+    "cold_boots": 3,
+    "software_reboot_verified": true,
+    "invalid_state_fails_closed": true,
+    "synthetic_environment_crc_rejected": true,
+    "enrollment_negative_tests": 2,
+    "qualification_exit_code": 0,
+    "environment": "Nonroot offline container with a synthetic passwd entry and a private test-key copy; original key was not modified."
+  },
+  "validation": {
+    "installer_tests_passed": 103,
+    "installer_subtests_passed": 14,
+    "oem_runner_unit_tests_passed": 15,
+    "reconstruction_tests_passed": 171,
+    "fmc_mmio_checks_passed": 12,
+    "patch_replay_sha256_matches": true,
+    "incremental_rebuild_binary_sha256_matches": true
+  },
+  "preservation": {
+    "original_and_repository_images_unchanged": true,
+    "historical_receipts_copied_without_changes_to": "/srv/dev/artifacts/plaf203-oem-reference/20261029/receipts/",
+    "raw_guest_logs_images_remain_private": true,
+    "no_physical_device_operations": true,
+    "no_ghidra_mutations_exports_or_archives": true
+  },
+  "maintained_interactive_launcher": {
+  "qemu_sha256": "a2d54f7b32c4cd50522bec44d73c6aab590fbd77359b8355acde38e1a72a796c",
+  "runner_sha256": "ad57815da65962334118375acf7f8593fdc5dd20778b458d176e704b635e9a53",
+  "profile": "app-pty",
+  "watchdog_action": "none",
+  "manual_response_count": 1,
+  "automatic_probe_count": 0,
+  "termination": "operator_exit",
+  "qmp_responsive_at_end": true,
+  "source_unchanged": true,
+  "receipt_sha256": "307c5f41d1d8963fdf73628258b1bfcfe89fcd6abf7f1f9fc605a69bab13236e"
+},
+  "limits": [
+    "930-second receipts predate the erase fix and demonstrate responsiveness, not storage correctness. Fixed-binary qualification is separately scoped to the recorded smoke, churn and restart runs.",
+    "Watchdog suppression is emulator-only; physical UART pinmux effects are not modeled. No full feeding/media/radio/network or physical flash/recovery qualification.",
+    "Observed 61 sectors with erase evidence under JFFS2 churn; not an exhaustive proof of all GC phases or failure recovery.",
+    "Fresh independent-cache build and frozen distro dependency reproducibility not qualified; incremental rebuild and patch replay were verified."
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "qemu_revision": "698104725efad4b29079d857dfdebbd804e34c99",
+  "qemu_bench_revision": "b011673b31884683a534a3f3e1a2b080d5a99f19",
+  "upstream_setup_sha256": "a5c07ef74d5d0b2d3700e945df049b9d34981582116a9020175844d073d8be0b",
+  "upstream_fmc_sha256": "a0399f32eea147de4946a88538c47f060d89671948259c6c7afb5a8bc7dacf6f",
+  "patched_fmc_sha256": "2b585caf382934987cdeddea560e1c59f0ce4f80bc4f57f26829d70c14788184",
+  "patch": "0001-hisi-fmc-nor-erase4.patch",
+  "patch_sha256": "82da4cae9f33686bd8df106a2b46185d9e2b63ccbcc9c696fe55ddd42721bb4f",
+  "qualified_binary_sha256": "a2d54f7b32c4cd50522bec44d73c6aab590fbd77359b8355acde38e1a72a796c",
+  "scope": "Pinned upstream integration plus a minimal NOR-only erase4 patch; distro build dependencies are not fully frozen."
+}

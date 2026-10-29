@@ -43,6 +43,18 @@ docker/data/
 /state-agent/plaf203-state-agent
 /state-agent/plaf203-update-fs
 /state-agent/build/
+
+# PLAF203 replacement firmware: source recipes are tracked, local builds are not.
+/emulation/qemu/
+/emulation/private/
+/emulation/artifacts/
+/firmware/plaf203/output/
+/firmware/plaf203/downloads/
+/firmware/plaf203/private/
+/firmware/plaf203/runtime/plaf203-runtime
+/firmware/plaf203/runtime/plaf203-runtime-selftest
+/firmware/plaf203/runtime/plaf203-feeding-selftest
+/firmware/plaf203/runtime/plaf203-ctl
 /addon/go2rtc/go2rtc
 /addon/go2rtc/petlibro-resolve
 

@@ -1,0 +1,241 @@
+{
+  "date": "2026-10-29",
+  "scope": "Bounded isolated original full-flash execution; early userspace/application observed, not sustained health or physical qualification.",
+  "sources": {
+    "original_flash_bytes": 33554432,
+    "original_flash_sha256": "cb812b7619bfe77cea4d35b2a7e0fd80df76fb673335673e1e3af16657dac1d7",
+    "inventory": "reconstruction provenance/replacement-platform-research/device-observations.json:primary_oem_flash_backup",
+    "qemu_base_revision": "698104725efad4b29079d857dfdebbd804e34c99",
+    "qemu_bench_revision": "b011673b31884683a534a3f3e1a2b080d5a99f19",
+    "container_id": "sha256:5923c3ab77c74cd61322e9a46c7fa1dd62c29c8e083f9d31f7c2fcff1c0bba94"
+  },
+  "repository_baselines": {
+    "replacement": "487de19f73c5793bafa8ed95b9a19fb7f03fdeb6",
+    "reconstruction": "bbd4f113738f4e43f572babc3cbd047fb88122e5",
+    "includes_uncommitted_work": true
+  },
+  "source_file_sha256": {
+    "scripts/run_plaf203_oem_qemu.py": "c8540696261b1c7df5bc5513bfc44d318035d0ba44519cbf5139ef32140c5235",
+    "scripts/qualify_qemu_gk7205v200.py": "b43b58b186e2f521b2f23eaf826fabb1ff3378b535d3e4d4ad9e43f7831f87f6",
+    "docker/Dockerfile.qemu-bringup": "13fed02dd28dac5a72a951ab4a58c8fba376f6c185b3fb5a0bd82ca9cde846ea",
+    "installer/tests/test_run_plaf203_oem_qemu.py": "6201f982064af59164f9af2e9ef3b9dfd5ca5545ff1fee2a874f2a0c762e1fc9"
+  },
+  "runs": [
+    {
+      "mode": "unmodified-full-flash",
+      "watchdog_action": "reset",
+      "source_sha256": "cb812b7619bfe77cea4d35b2a7e0fd80df76fb673335673e1e3af16657dac1d7",
+      "source_bytes": 33554432,
+      "source_unchanged": true,
+      "qemu_sha256": "5c6541e22fc4986f393d5ad7aa5c385a84327b333f408c9bf77840fa03285693",
+      "disposable_flash_sha256_after": "b5ae8059f0510fa1331dc641696227c5b8bc602ff11a25a97b5b6b03d4d35dc8",
+      "network": {
+        "namespace_interfaces": [
+          "lo"
+        ],
+        "qemu_backends": "none; checked through QMP before execution"
+      },
+      "termination": "time_budget",
+      "seconds": 20.2,
+      "milestones": {
+        "uboot_banner": true,
+        "nor_32m": true,
+        "environment_crc_failure": false,
+        "kernel_handoff": true,
+        "oem_linux_banner": true,
+        "kernel_panic": false,
+        "jffs2_root_mounted": true,
+        "init_started": true
+      },
+      "qmp_events": [],
+      "qmp_responsive_at_end": true,
+      "boot_sequences": 1,
+      "console_probe": {
+        "completed": true,
+        "pid1_is_busybox": true,
+        "root_is_jffs2": true,
+        "application_present": true,
+        "application_original_sha256": true
+      },
+      "qualification": "early OEM userspace/application observed; not hardware or sustained-operation qualification",
+      "run_label": "native-short-1",
+      "requested_seconds": 20,
+      "changed_partitions": [
+        "rootfs"
+      ]
+    },
+    {
+      "mode": "unmodified-full-flash",
+      "watchdog_action": "reset",
+      "source_sha256": "cb812b7619bfe77cea4d35b2a7e0fd80df76fb673335673e1e3af16657dac1d7",
+      "source_bytes": 33554432,
+      "source_unchanged": true,
+      "qemu_sha256": "5c6541e22fc4986f393d5ad7aa5c385a84327b333f408c9bf77840fa03285693",
+      "disposable_flash_sha256_after": "2cf35b2fa98eb9ac2796ccea360c11ddb0334a666219b85b882e439978740117",
+      "network": {
+        "namespace_interfaces": [
+          "lo"
+        ],
+        "qemu_backends": "none; checked through QMP before execution"
+      },
+      "termination": "time_budget",
+      "seconds": 25.21,
+      "milestones": {
+        "uboot_banner": true,
+        "nor_32m": true,
+        "environment_crc_failure": false,
+        "kernel_handoff": true,
+        "oem_linux_banner": true,
+        "kernel_panic": false,
+        "jffs2_root_mounted": true,
+        "init_started": true
+      },
+      "qmp_events": [],
+      "qmp_responsive_at_end": false,
+      "boot_sequences": 1,
+      "console_probe": {
+        "completed": true,
+        "pid1_is_busybox": true,
+        "root_is_jffs2": true,
+        "application_present": true,
+        "application_original_sha256": true
+      },
+      "qualification": "early OEM userspace/application observed; not hardware or sustained-operation qualification",
+      "run_label": "native-short-2",
+      "requested_seconds": 20,
+      "changed_partitions": [
+        "rootfs"
+      ]
+    },
+    {
+      "mode": "unmodified-full-flash",
+      "source_sha256": "cb812b7619bfe77cea4d35b2a7e0fd80df76fb673335673e1e3af16657dac1d7",
+      "source_bytes": 33554432,
+      "source_unchanged": true,
+      "qemu_sha256": "5c6541e22fc4986f393d5ad7aa5c385a84327b333f408c9bf77840fa03285693",
+      "disposable_flash_sha256_after": "f317611395047eb3d9315192ea415acfc5a3457bb8a779868cff832c49ced4d7",
+      "network": {
+        "namespace_interfaces": [
+          "lo"
+        ],
+        "qemu_backends": "none; checked through QMP before execution"
+      },
+      "termination": "time_budget",
+      "seconds": 60.2,
+      "milestones": {
+        "uboot_banner": true,
+        "nor_32m": true,
+        "environment_crc_failure": false,
+        "kernel_handoff": true,
+        "oem_linux_banner": true,
+        "kernel_panic": false,
+        "jffs2_root_mounted": true,
+        "init_started": true
+      },
+      "qmp_events": [
+        {
+          "event": "WATCHDOG",
+          "data": {
+            "action": "reset"
+          }
+        },
+        {
+          "event": "RESET",
+          "data": {
+            "guest": true,
+            "reason": "guest-reset"
+          }
+        }
+      ],
+      "qmp_responsive_at_end": false,
+      "boot_sequences": 2,
+      "console_probe": {
+        "completed": true,
+        "pid1_is_busybox": true,
+        "root_is_jffs2": true,
+        "application_present": true,
+        "application_original_sha256": true
+      },
+      "run_label": "native-long-reset",
+      "requested_seconds": 55,
+      "changed_partitions": [
+        "rootfs"
+      ]
+    },
+    {
+      "mode": "full-flash-watchdog-reset-ignored",
+      "watchdog_action": "none",
+      "source_sha256": "cb812b7619bfe77cea4d35b2a7e0fd80df76fb673335673e1e3af16657dac1d7",
+      "source_bytes": 33554432,
+      "source_unchanged": true,
+      "qemu_sha256": "5c6541e22fc4986f393d5ad7aa5c385a84327b333f408c9bf77840fa03285693",
+      "disposable_flash_sha256_after": "8668c722fd4b9251baa16be6400fcbe037864056ebfb0a3b6c07e0cae72b2f49",
+      "network": {
+        "namespace_interfaces": [
+          "lo"
+        ],
+        "qemu_backends": "none; checked through QMP before execution"
+      },
+      "termination": "time_budget",
+      "seconds": 70.17,
+      "milestones": {
+        "uboot_banner": true,
+        "nor_32m": true,
+        "environment_crc_failure": false,
+        "kernel_handoff": true,
+        "oem_linux_banner": true,
+        "kernel_panic": false,
+        "jffs2_root_mounted": true,
+        "init_started": true
+      },
+      "qmp_events": [
+        {
+          "event": "WATCHDOG",
+          "data": {
+            "action": "none"
+          }
+        }
+      ],
+      "qmp_responsive_at_end": false,
+      "boot_sequences": 1,
+      "console_probe": {
+        "completed": true,
+        "pid1_is_busybox": true,
+        "root_is_jffs2": true,
+        "application_present": true,
+        "application_original_sha256": true
+      },
+      "run_label": "watchdog-reset-ignored",
+      "requested_seconds": 65,
+      "changed_partitions": [
+        "rootfs"
+      ]
+    }
+  ],
+  "validation": {
+    "installer_tests_passed": 95,
+    "installer_subtests_passed": 14,
+    "new_oem_profile_tests": 7,
+    "reconstruction_tests_passed": 171,
+    "canonical_snapshot_checks_passed_without_regeneration": true,
+    "documentation_local_links_and_anchors_passed": true,
+    "all_five_preserved_images_and_metadata_verified_at_both_locations": true,
+    "no_guest_process_left_running": true
+  },
+  "conclusions": {
+    "repeated_early_original_userspace_application_verified": true,
+    "network_backend_absent_checked_before_execution": true,
+    "preserved_source_unchanged": true,
+    "sustained_healthy_operation_qualified": false,
+    "physical_hardware_or_restoration_qualified": false,
+    "fallback_kernel_userspace_or_firmware_patch_used": false,
+    "qemu_or_peripheral_model_patch_added": false
+  },
+  "limits": [
+    "Watchdog-triggered reset under native policy; ignored policy is a separate emulator variant, not a fix.",
+    "End-of-run QMP timeouts occurred in long runs and one short repeat; process kill/reap still completed.",
+    "I2C failures, watchdog read-only-register writes and unsupported FMC 0xdc command observed; cause of later stalls remains unresolved.",
+    "Only early serial execution tested; no SSH, cloud, network, feeding, camera, radio or flash recovery qualification.",
+    "Private raw images/logs excluded from Git; every experiment has a fresh independent backing."
+  ]
+}

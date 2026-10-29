@@ -1,0 +1,20 @@
+--- a/hw/misc/hisi-fmc.c
++++ b/hw/misc/hisi-fmc.c
+@@ -131,6 +131,7 @@
+ #define SPI_CMD_FAST_READ     0x0B
+ #define SPI_CMD_PAGE_PROGRAM  0x02
+ #define SPI_CMD_SECTOR_ERASE  0xD8
++#define SPI_CMD_SECTOR_ERASE4 0xDC
+ #define SPI_CMD_CHIP_ERASE    0xC7
+ 
+ /* SPI NAND specific commands */
+@@ -558,7 +559,8 @@
+         }
+         break;
+ 
+-    case SPI_CMD_SECTOR_ERASE: {
++    case SPI_CMD_SECTOR_ERASE:
++    case SPI_CMD_SECTOR_ERASE4: {
+         /* Two callers, two conventions, and FMC_OP.ADDR_EN is what tells
+          * them apart.
+          *

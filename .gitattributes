@@ -3,3 +3,6 @@
 *.bat text eol=crlf
 *.cmd text eol=crlf
 # <<< dev-core text normalization <<<
+
+# Unified-diff blank context lines require a single space; retain patch hashes.
+firmware/plaf203/qemu/*.patch whitespace=-blank-at-eol
