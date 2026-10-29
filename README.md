@@ -1,4 +1,13 @@
-# Petlibro Local
+
+<h1>Petlibro Local 🐈</h1>
+<img
+  src="https://app.repohistory.com/api/svg?repo=tannerln7/Petlibro-Home-Assistant&type=Date&background=0D1117&color=f86262"
+  alt="Repo History Chart"
+  width="300"
+  align="right"
+/>
+
+
 
 Petlibro Local brings supported Petlibro camera feeders onto a user-controlled
 LAN. It replaces the feeder's cloud MQTT connection with a local broker,
