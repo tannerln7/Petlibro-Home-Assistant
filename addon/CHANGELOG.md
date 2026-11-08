@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.3.15
+
+- Promote the hardware-tested development series to stable, using the native
+  PLAF203 transport in go2rtc `v1.9.14-petlibro.4`.
+- Correct transport receipt independently of codec decoding, correlate native
+  reset completion, preserve bootstrap receipt state, and fix fragmented AAC,
+  16-bit fragment counts, and initial reliable sequencing.
+- Recognize OEM feeding errors and preserve independent operational incidents
+  across settings writes and reconnects. Resolve eligible failures only after
+  a coherent newer successful feed, and NTP errors only after confirmed sync.
+- Keep routine cloud/camera diagnostics at low verbosity, acknowledge grain
+  events before downstream callbacks, and avoid duplicate failure reports.
+- Run update and compatibility connection work on genuine availability changes
+  rather than every return to READY after persistent settings verification.
+- Improve State Agent update timeouts, polling recovery, packaging, and concise
+  update lifecycle logs so expected activation downtime is not a warning.
+- Release State Agent 0.4.0 with corrected pending feed-ring traversal, separate
+  error-ring records, snapshot validity checks, and signed-release-owned,
+  hash-verified compatibility assets without changing the update trust chain.
+- Automatically reconcile required compatibility assets after usable connections
+  and updates; fresh bootstrap uses the same managed manifest and file layout.
+- Request compatibility activation reboot only after fresh Idle confirmation,
+  outside nearby scheduled feeds, with no write/update in progress and a durable
+  attempt guard. Report actual activation through **Ping mitigation active**.
+- Limit routine camera info logging to stream-started and stream-ended messages,
+  while retaining detailed diagnostics at debug/trace and meaningful warnings.
+
 ## 0.3.15-beta.8
 
 - Update the embedded go2rtc fork to `v1.9.14-petlibro.4-dev.2`.

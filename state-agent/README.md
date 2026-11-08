@@ -251,9 +251,12 @@ transaction is outstanding.
 AppDaemon reconciles after a usable connection and after a confirmed State
 Agent update. Enable/disable changes desired state only. `active` is set by the
 boot launcher; `reboot_required` is true whenever desired and active state
-differ. Existing installations therefore wait for a natural or explicit
-operator reboot rather than interrupting OEM operation. The bootstrap payload
-installs the same assets before its already-required final reboot.
+differ. AppDaemon requests an activation reboot only after fresh Idle
+confirmation, outside nearby scheduled feeds, with no write or update in
+progress and a durable per-release attempt guard. Otherwise activation waits
+for a safe opportunity or an operator reboot. The agent itself never reboots
+as part of reconciliation. The bootstrap payload installs the same assets
+before its already-required final reboot.
 
 Create a normal release manifest with:
 
