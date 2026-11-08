@@ -76,7 +76,7 @@ and `device_ip` options are migrated into this registry when all three exist.
 | `feeder_https_addr`                        | empty                    | Optional HTTPS endpoint included only in an explicit feeder update                       |
 | `petlibro_state_agent_url`                 | empty                    | Optional state API URL; empty derives `http://<feeder-ip>:8765`, and `{ip}` is supported |
 | `petlibro_state_agent_token`               | empty                    | Bearer token configured in the feeder-side State Agent                                   |
-| `petlibro_state_agent_timeout_seconds`     | `2`                      | Local API request timeout, from 1 to 10 seconds                                          |
+| `petlibro_state_agent_timeout_seconds`     | `2`                      | Ordinary local API request timeout, from 1 to 10 seconds; signed update uploads use a separate bounded timeout |
 | `state_agent_updates.enabled`              | `false`                  | Enable signed State Agent release checking after feeder-side bootstrap                   |
 | `state_agent_updates.manifest_url`         | signed project feed      | HTTPS `latest.json` URL used when updates are enabled                                     |
 | `state_agent_updates.check_on_connect`     | `true`                   | Allow a throttled release check after connection or Home Assistant birth                 |
@@ -126,11 +126,11 @@ field from the update.
 | `go2rtc_webrtc_port` | `8555`            | WebRTC TCP/UDP port                                                                               |
 
 The tested HD stream may first emit a 640x360 SPS and switch to 1920x1080 later.
-The camera adapter automatically waits up to 15 seconds for that transition.
+With `camera_quality=hd`, the camera adapter waits up to 15 seconds for that transition.
 Some observed sessions transitioned after several minutes and were initially
-advertised as 640x360. `camera_quality` is the request sent to the device;
-runtime `actual_resolution` is the observed SPS and is not forced by that
-request.
+advertised as 640x360. `camera_quality` is a startup-readiness preference, not a physical resolution command;
+runtime `actual_resolution` is the observed SPS and is not forced by the
+preference.
 
 `camera_audio` is disabled by default for backward compatibility. Enabling it
 requests inbound AAC (44.1 kHz mono on the tested PLAF203). Native-AAC clients may consume
@@ -171,11 +171,35 @@ and uploads the artifact to the authenticated feeder API. It never asks the
 feeder to download a URL. See the [configuration reference](../docs/configuration.md#state-agent-updates)
 and [State Agent guide](../state-agent/README.md#signed-updates).
 
+State Agent 0.4.0 also supports release-managed compatibility files. Existing
+installations first use the normal signed **State Agent firmware** update; no
+repeat bootstrap is required. The **Deploy feeder compatibility files** button
+then installs the embedded assets but does not enable them. After deployment,
+the **Block OEM connectivity probes** switch changes desired state. Reboot the
+feeder only when the diagnostic **Feeder compatibility reboot required** sensor
+is on. Disabling is equally reversible and also requires a reboot if the shim
+is currently active.
+
+Deployment is intentionally conservative: only installer-generated recognized
+startup content is migrated. A modified or unknown `/user/app_start.sh` is
+left untouched and the compatibility status reports failure. The original OEM
+firmware and ping executable are never replaced.
+
 The default manifest is the project's signed stable feed:
 
 ```text
 https://raw.githubusercontent.com/tannerln7/Petlibro-Home-Assistant/state-agent-releases/state-agent/latest.json
 ```
+
+State Agent release candidates are separately opt-in. A canary installation
+can set `state_agent_updates.manifest_url` to:
+
+```text
+https://raw.githubusercontent.com/tannerln7/Petlibro-Home-Assistant/state-agent-releases/state-agent/dev/latest.json
+```
+
+Using the development add-on repository does not change this URL
+automatically.
 
 The nine **Feeding schedule** text entities accept flat JSON. Each document's
 `id` must match its displayed slot number. Editing an existing ID updates it;

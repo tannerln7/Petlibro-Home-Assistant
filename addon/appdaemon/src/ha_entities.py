@@ -476,6 +476,14 @@ class HomeAssistantDiscoveryMqtt:
             "diagnostic",
             payload_press="check",
         )
+        self._remove_obsolete_compatibility_discovery()
+        self._ha_binary_sensor_config_publish(
+            "Ping mitigation active",
+            "mdi:shield-check-outline",
+            "compatibility",
+            "active",
+            "diagnostic",
+        )
 
         self._ha_sensor_config_publish(
             "Feeder motor state",
@@ -941,8 +949,21 @@ class HomeAssistantDiscoveryMqtt:
             "serial_number": self.serial_number,
         }
 
-    def _mqtt_publish(self, topic: str, payload: dict):
-        payload_json = json.dumps(payload)
+    def _remove_obsolete_compatibility_discovery(self) -> None:
+        for component, name in (
+            ("button", "compatibility_deploy"),
+            ("switch", "compatibility_ping_mitigation"),
+            ("binary_sensor", "compatibility_deployed"),
+            ("binary_sensor", "compatibility_reboot_required"),
+            ("sensor", "compatibility_deployment"),
+            ("sensor", "compatibility_last_reason"),
+        ):
+            self._mqtt_publish(
+                self._ha_config_topic_base_path_get(component, name), ""
+            )
+
+    def _mqtt_publish(self, topic: str, payload: dict | str):
+        payload_json = json.dumps(payload) if isinstance(payload, dict) else payload
         self.mqtt.mqtt_publish(topic, payload_json, namespace="mqtt", retain=True)
 
     def _config_unique_id_get(self, type_: str, name: str):

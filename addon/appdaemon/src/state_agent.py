@@ -11,6 +11,7 @@ from urllib import error, parse, request
 
 MAX_RESPONSE_BYTES = 1024 * 1024
 MAX_UPDATE_UPLOAD_BYTES = 32 * 1024 * 1024 + 16 * 1024 + 64 + 20
+DEFAULT_UPDATE_UPLOAD_TIMEOUT_SECONDS = 30.0
 
 
 class StateAgentError(RuntimeError):
@@ -19,6 +20,18 @@ class StateAgentError(RuntimeError):
 
 class StateAgentUnavailable(StateAgentError):
     pass
+
+
+class StateAgentUnsupported(StateAgentError):
+    """The connected agent does not implement the requested API capability."""
+
+
+class StateAgentConflict(StateAgentError):
+    """A fixed State Agent operation was rejected in its current state."""
+
+    def __init__(self, reason: str = "operation_conflict"):
+        super().__init__(reason)
+        self.reason = reason
 
 
 class StateAgentUnauthorized(StateAgentError):
@@ -76,6 +89,7 @@ class FeederQueue:
     head: int
     tail: int
     pending: bool
+    valid: bool = True
 
     @classmethod
     def from_dict(cls, data: object, name: str = "queue") -> FeederQueue:
@@ -84,10 +98,20 @@ class FeederQueue:
             head=_integer(obj.get("head"), f"{name}.head", 0, 255),
             tail=_integer(obj.get("tail"), f"{name}.tail", 0, 255),
             pending=_boolean(obj.get("pending"), f"{name}.pending"),
+            valid=(
+                _boolean(obj.get("valid"), f"{name}.valid")
+                if "valid" in obj
+                else True
+            ),
         )
 
     def to_dict(self) -> dict[str, object]:
-        return {"head": self.head, "tail": self.tail, "pending": self.pending}
+        return {
+            "head": self.head,
+            "tail": self.tail,
+            "pending": self.pending,
+            "valid": self.valid,
+        }
 
 
 @dataclass(frozen=True)
@@ -376,6 +400,10 @@ class FeedEventSnapshot:
     err_queue: FeederQueue
     events: tuple[Mapping[str, object], ...]
     semantics: str
+    error_events: tuple[Mapping[str, object], ...] = ()
+    snapshot_consistent: bool = True
+    normal_ring_valid: bool = True
+    error_ring_valid: bool = True
 
     @classmethod
     def from_dict(cls, data: object) -> FeedEventSnapshot:
@@ -385,11 +413,32 @@ class FeedEventSnapshot:
             isinstance(event_value, dict) for event_value in events
         ):
             raise StateAgentBadResponse("events must be an array of objects")
+        error_events = obj.get("error_events", [])
+        if not isinstance(error_events, list) or not all(
+            isinstance(event_value, dict) for event_value in error_events
+        ):
+            raise StateAgentBadResponse("error_events must be an array of objects")
         return cls(
             queue=FeederQueue.from_dict(obj.get("queue")),
             err_queue=FeederQueue.from_dict(obj.get("err_queue"), "err_queue"),
             events=tuple(dict(event_value) for event_value in events),
             semantics=_nonempty_string(obj.get("semantics"), "semantics"),
+            error_events=tuple(dict(event_value) for event_value in error_events),
+            snapshot_consistent=(
+                _boolean(obj.get("snapshot_consistent"), "snapshot_consistent")
+                if "snapshot_consistent" in obj
+                else True
+            ),
+            normal_ring_valid=(
+                _boolean(obj.get("normal_ring_valid"), "normal_ring_valid")
+                if "normal_ring_valid" in obj
+                else True
+            ),
+            error_ring_valid=(
+                _boolean(obj.get("error_ring_valid"), "error_ring_valid")
+                if "error_ring_valid" in obj
+                else True
+            ),
         )
 
 
@@ -473,10 +522,57 @@ class StateAgentUpdateSubmitResult:
         )
 
 
+@dataclass(frozen=True)
+class CompatibilityStatus:
+    asset_version: str
+    original_ping_path: str | None
+    supported: bool
+    deployed: bool
+    shim_current: bool
+    startup_current: bool
+    backup_available: bool
+    enabled: bool
+    active: bool
+    reboot_required: bool
+    last_reason: str
+
+    @classmethod
+    def from_dict(cls, data: object) -> CompatibilityStatus:
+        obj = _successful_object(data)
+        return cls(
+            asset_version=_nonempty_string(obj.get("asset_version"), "asset_version"),
+            original_ping_path=_optional_nonempty_string(
+                obj.get("original_ping_path"), "original_ping_path"
+            ),
+            supported=_boolean(obj.get("supported"), "supported"),
+            deployed=_boolean(obj.get("deployed"), "deployed"),
+            shim_current=_boolean(obj.get("shim_current"), "shim_current"),
+            startup_current=_boolean(
+                obj.get("startup_current"), "startup_current"
+            ),
+            backup_available=_boolean(
+                obj.get("backup_available"), "backup_available"
+            ),
+            enabled=_boolean(obj.get("enabled"), "enabled"),
+            active=_boolean(obj.get("active"), "active"),
+            reboot_required=_boolean(
+                obj.get("reboot_required"), "reboot_required"
+            ),
+            last_reason=_nonempty_string(obj.get("last_reason"), "last_reason"),
+        )
+
+
 class StateAgentClient:
     """Small blocking HTTP client intended to run in an AppDaemon executor."""
 
-    def __init__(self, base_url: str, token: str, timeout_seconds: float = 2.0):
+    def __init__(
+        self,
+        base_url: str,
+        token: str,
+        timeout_seconds: float = 2.0,
+        *,
+        update_timeout_seconds: float = DEFAULT_UPDATE_UPLOAD_TIMEOUT_SECONDS,
+    ):
         parsed = parse.urlsplit(base_url.rstrip("/"))
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ValueError("state-agent URL must be an HTTP(S) URL with a host")
@@ -486,11 +582,14 @@ class StateAgentClient:
             )
         if timeout_seconds <= 0:
             raise ValueError("state-agent timeout must be positive")
+        if update_timeout_seconds <= 0:
+            raise ValueError("state-agent update timeout must be positive")
         self._base_url = parse.urlunsplit(
             (parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", "")
         )
         self._token = token
         self._timeout_seconds = float(timeout_seconds)
+        self._update_timeout_seconds = float(update_timeout_seconds)
 
     def health(self) -> Mapping[str, object]:
         return _successful_object(self._get("/health"))
@@ -511,6 +610,34 @@ class StateAgentClient:
     def update_status(self) -> StateAgentUpdateStatus:
         return StateAgentUpdateStatus.from_dict(self._get("/v1/update-status"))
 
+    def compatibility_status(self) -> CompatibilityStatus:
+        return CompatibilityStatus.from_dict(self._get("/v1/compatibility"))
+
+    def compatibility_reconcile(self) -> CompatibilityStatus:
+        return CompatibilityStatus.from_dict(
+            self._post_empty_json("/v1/compatibility/reconcile")
+        )
+
+    def compatibility_deploy(self) -> CompatibilityStatus:
+        return CompatibilityStatus.from_dict(
+            self._post_empty_json("/v1/compatibility/deploy")
+        )
+
+    def compatibility_enable(self) -> CompatibilityStatus:
+        return CompatibilityStatus.from_dict(
+            self._post_empty_json("/v1/compatibility/enable")
+        )
+
+    def compatibility_disable(self) -> CompatibilityStatus:
+        return CompatibilityStatus.from_dict(
+            self._post_empty_json("/v1/compatibility/disable")
+        )
+
+    def compatibility_restore_startup(self) -> CompatibilityStatus:
+        return CompatibilityStatus.from_dict(
+            self._post_empty_json("/v1/compatibility/restore-startup")
+        )
+
     def submit_update(self, payload: bytes) -> StateAgentUpdateSubmitResult:
         if not isinstance(payload, (bytes, bytearray)):
             raise TypeError("update payload must be bytes")
@@ -524,6 +651,7 @@ class StateAgentClient:
             body=bytes(payload),
             content_type="application/octet-stream",
             accept="application/json",
+            timeout_seconds=self._update_timeout_seconds,
         )
         try:
             decoded = json.loads(body.decode("utf-8"))
@@ -539,6 +667,20 @@ class StateAgentClient:
             raise StateAgentBadResponse("state agent returned invalid JSON") from None
         return _object(decoded, "response")
 
+    def _post_empty_json(self, path: str) -> Mapping[str, object]:
+        body = self._request(
+            path,
+            method="POST",
+            body=b"",
+            content_type="application/json",
+            accept="application/json",
+        )
+        try:
+            decoded = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise StateAgentBadResponse("state agent returned invalid JSON") from None
+        return _object(decoded, "response")
+
     def _request(
         self,
         path: str,
@@ -547,6 +689,7 @@ class StateAgentClient:
         accept: str,
         body: bytes | None = None,
         content_type: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> bytes:
         headers = {
             "Accept": accept,
@@ -560,14 +703,40 @@ class StateAgentClient:
             data=body,
             method=method,
         )
+        effective_timeout = (
+            self._timeout_seconds if timeout_seconds is None else timeout_seconds
+        )
         try:
-            with request.urlopen(req, timeout=self._timeout_seconds) as response:
+            with request.urlopen(req, timeout=effective_timeout) as response:
                 payload = response.read(MAX_RESPONSE_BYTES + 1)
         except error.HTTPError as exc:
             if exc.code in {401, 403}:
                 raise StateAgentUnauthorized(
                     "state agent rejected authentication"
                 ) from None
+            if exc.code in {404, 405}:
+                raise StateAgentUnsupported(
+                    "state agent capability is unavailable"
+                ) from None
+            if exc.code == 409:
+                reason = "operation_conflict"
+                try:
+                    document = json.loads(exc.read(1025).decode("utf-8"))
+                    candidate = document.get("error") if isinstance(document, dict) else None
+                    if (
+                        isinstance(candidate, str)
+                        and 0 < len(candidate) <= 96
+                        and all(
+                            character.islower()
+                            or character.isdigit()
+                            or character == "_"
+                            for character in candidate
+                        )
+                    ):
+                        reason = candidate
+                except (UnicodeDecodeError, json.JSONDecodeError, OSError):
+                    pass
+                raise StateAgentConflict(reason) from None
             raise StateAgentUnavailable(
                 f"state agent returned HTTP status {exc.code}"
             ) from None
@@ -593,6 +762,12 @@ class UnavailableStateAgentClient:
     version = _unavailable
     update_status = _unavailable
     submit_update = _unavailable
+    compatibility_status = _unavailable
+    compatibility_reconcile = _unavailable
+    compatibility_deploy = _unavailable
+    compatibility_enable = _unavailable
+    compatibility_disable = _unavailable
+    compatibility_restore_startup = _unavailable
 
 
 def _successful_object(data: object) -> Mapping[str, Any]:

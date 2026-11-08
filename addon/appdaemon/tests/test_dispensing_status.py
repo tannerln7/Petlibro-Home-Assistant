@@ -96,6 +96,32 @@ def connected_projector():
     return projector, state
 
 
+def test_automatic_reboot_idle_proof_expires_and_is_invalidated_by_runtime_events(
+    monkeypatch,
+):
+    import dispensing_status
+
+    clock = [100.0]
+    monkeypatch.setattr(dispensing_status.time, "monotonic", lambda: clock[0])
+    projector, _state = connected_projector()
+    assert not projector.idle_confirmed_recently(20)
+    projector.apply_runtime_snapshot(
+        RuntimeSnapshotResult(request=request(), motor_state=2)
+    )
+    assert projector.idle_confirmed_recently(20)
+    clock[0] = 121
+    assert not projector.idle_confirmed_recently(20)
+    clock[0] = 110
+    projector.apply_grain_event(FoodOutputProgress.IDLE, 1)
+    assert not projector.idle_confirmed_recently(20)
+    projector.apply_runtime_snapshot(
+        RuntimeSnapshotResult(request=request(runtime_generation=1), motor_state=2)
+    )
+    assert projector.idle_confirmed_recently(20)
+    projector.mark_unavailable()
+    assert not projector.idle_confirmed_recently(20)
+
+
 @pytest.mark.parametrize(
     ("motor_state", "expected"),
     [
@@ -362,6 +388,9 @@ def test_backend_preserves_grain_event_mappings(step, expected):
         actual_grain_num=1,
         message_id=MessageId("grain"),
         timestamp=Timestamp.now(),
+        exec_time=Timestamp.now(),
+        error_code=None,
+        finished=step == ExecStep.GRAIN_END,
     )
 
     backend._grain_output_event_cb(event)
@@ -373,6 +402,8 @@ def test_ha_birth_republishes_availability_and_requests_runtime_without_reconnec
     app = object.__new__(Plaf203)
     app.logger = Logger()
     app._overall_available = True
+    app._operational_errors = {}
+    app._ntp_sync_failed = False
     app.state = CapturingState()
     app.discovery = SimpleNamespace(calls=0)
     app.discovery.discovery_issue = lambda: setattr(
@@ -415,6 +446,8 @@ def test_ha_birth_correlated_response_restores_each_recognized_state(
     app = object.__new__(Plaf203)
     app.logger = Logger()
     app._overall_available = True
+    app._operational_errors = {}
+    app._ntp_sync_failed = False
     app.state = CapturingState()
     app.discovery = SimpleNamespace(discovery_issue=lambda: None)
     app.coordinator = SimpleNamespace(latest_truth=lambda: None)

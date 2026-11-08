@@ -1,0 +1,27 @@
+#!/bin/sh
+
+# Fail only the confirmed OEM invocation. The shell pipeline receives no ping
+# output and quickly evaluates to zero successful replies. Different argument
+# counts or ordering are delegated unchanged.
+if [ "$#" -eq 3 ] && [ "$2" = "-c" ] && [ "$3" = "10" ]; then
+    case "$1" in
+        aws.amazon.com|www.cloudflare.com|baidu.com|114.114.114.114)
+            exit 1
+            ;;
+    esac
+fi
+
+# Bypass PATH so unrelated requests retain the feeder's original ping.
+# The sentinel also bounds failure if an OEM filesystem change ever redirects
+# one of these absolute paths back to this shim after activation.
+if [ "${PLAF203_PING_SHIM_DELEGATING:-}" = "1" ]; then
+    exit 127
+fi
+export PLAF203_PING_SHIM_DELEGATING=1
+if [ -x /bin/ping ]; then
+    exec /bin/ping "$@"
+fi
+if [ -x /usr/bin/ping ]; then
+    exec /usr/bin/ping "$@"
+fi
+exit 127

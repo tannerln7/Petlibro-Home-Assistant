@@ -1,5 +1,127 @@
 # Changelog
 
+## 0.3.15
+
+- Promote the hardware-tested development series to stable, using the native
+  PLAF203 transport in go2rtc `v1.9.14-petlibro.4`.
+- Correct transport receipt independently of codec decoding, correlate native
+  reset completion, preserve bootstrap receipt state, and fix fragmented AAC,
+  16-bit fragment counts, and initial reliable sequencing.
+- Recognize OEM feeding errors and preserve independent operational incidents
+  across settings writes and reconnects. Resolve eligible failures only after
+  a coherent newer successful feed, and NTP errors only after confirmed sync.
+- Keep routine cloud/camera diagnostics at low verbosity, acknowledge grain
+  events before downstream callbacks, and avoid duplicate failure reports.
+- Run update and compatibility connection work on genuine availability changes
+  rather than every return to READY after persistent settings verification.
+- Improve State Agent update timeouts, polling recovery, packaging, and concise
+  update lifecycle logs so expected activation downtime is not a warning.
+- Release State Agent 0.4.0 with corrected pending feed-ring traversal, separate
+  error-ring records, snapshot validity checks, and signed-release-owned,
+  hash-verified compatibility assets without changing the update trust chain.
+- Automatically reconcile required compatibility assets after usable connections
+  and updates; fresh bootstrap uses the same managed manifest and file layout.
+- Request compatibility activation reboot only after fresh Idle confirmation,
+  outside nearby scheduled feeds, with no write/update in progress and a durable
+  attempt guard. Report actual activation through **Ping mitigation active**.
+- Limit routine camera info logging to stream-started and stream-ended messages,
+  while retaining detailed diagnostics at debug/trace and meaningful warnings.
+
+## 0.3.15-beta.8
+
+- Update the embedded go2rtc fork to `v1.9.14-petlibro.4-dev.2`.
+- Fix PLAF203 receive-reset bootstrap by accepting the observed device
+  protocol version and correcting the initial reliable sequence.
+- Add physical-device capture regression coverage for both observed
+  reset-completion orderings and correlation validation.
+- Confirm 1920x1080 H.264 and AAC playback in a successful five-minute
+  physical-device FFmpeg decode test.
+
+## 0.3.15-beta.7
+
+- Update the embedded go2rtc fork to `v1.9.14-petlibro.4-dev.1` for PLAF203 physical-device qualification.
+- Correct transport receipt tracking independently of H.264/AAC decoding, native
+  reset correlation, bootstrap sequence continuity, and sender-clear/reset handling.
+- Correct fragmented AAC and 16-bit fragment counts; align ACK scheduling with
+  native protocol behavior. No additional configuration switches are required.
+- Automated transport tests passed upstream; this beta requires camera hardware
+  qualification before promotion to stable.
+
+## 0.3.15-beta.6
+
+- Automatically request a feeder reboot to activate fully deployed compatibility
+  files when fresh live Idle is confirmed, no write or agent update is in
+  progress, and no scheduled feeding time is nearby. Defer unknown/busy states
+  and persist a per-release attempt guard to prevent repeated reboot requests.
+- Keep actual mitigation activation distinct from deployment and reboot requests;
+  document runtime snapshot timeout warnings and conservative activation fallback.
+
+## 0.3.15-beta.5
+
+- Run State Agent update and compatibility connection checks only when feeder
+  availability becomes usable, not after routine settings-write verification
+  or truth refreshes.
+- Preserve operational errors across settings writes, reconnects, and Home
+  Assistant birth; resolve NTP errors only after successful synchronization
+  without clearing a feeding failure.
+- Track a bounded set of session-scoped failure categories and resolve eligible
+  dispensing incidents only after a coherent newer successful feed. Scheduled
+  execution failures require a subsequent successful scheduled feed; unknown
+  and unrelated errors remain independent.
+- Preserve structured error context, deduplicate uncoded portion mismatches,
+  and report command rejections as warnings rather than hardware faults.
+- Do not report NTP synchronization as successful merely because a calibration
+  response was sent.
+
+## 0.3.15-beta.4
+
+- Log expected temporary State Agent unavailability during update activation at
+  debug level, while retaining a warning when bounded status polling expires.
+- Add structured info logs when a State Agent update starts and when its target
+  version is confirmed active; terminal failures retain warning severity.
+- Reconcile signed State Agent compatibility assets automatically after
+  connection and successful updates, including bounded recovery from transient
+  interruptions and compatibility with the earlier fixed-operation API.
+- Replace manual compatibility controls with one **Ping mitigation active**
+  diagnostic and remove obsolete retained Home Assistant discovery entries.
+- Make bootstrap consume the State Agent release's managed-asset manifest so
+  fresh installs deploy and enable the same guarded startup and ping mitigation
+  before the installer's existing final reboot.
+- Limit routine camera info logging to concise stream-started and stream-ended
+  lifecycle events while retaining transport and codec details at debug level.
+
+## 0.3.15-beta.3
+
+- Give signed State Agent uploads a separate bounded timeout so slower feeder
+  flash writes do not inherit the short ordinary state-API timeout.
+- Preserve update and compatibility callbacks when executor operations fail,
+  allowing update-status polling to span the expected State Agent restart and
+  preventing Home Assistant update state from remaining stuck on installing.
+
+## 0.3.15-beta.2
+
+- Include the compatibility coordinator in the generated AppDaemon runtime
+  module set, preventing startup failure before older State Agent installations
+  can be discovered and updated.
+- Verify that every maintained AppDaemon source module is present in the
+  generated runtime module set to prevent future packaging omissions.
+
+## 0.3.15-beta.1
+
+- Parse and classify OEM `ERROR_EVENT` messages, preserve grain error codes,
+  accept OEM-specific manual-feed response codes, acknowledge grain records
+  before best-effort projection, and suppress duplicate failure reports.
+- Correct State Agent feed-ring traversal, expose pending `err_feed_rec.bin`
+  records, and report queue/snapshot validity without writing OEM files.
+- Add signed-ELF-embedded, fixed-path compatibility asset deployment with
+  hash verification, atomic replacement, guarded startup backup/recovery, and
+  explicit deployment/enable/active/reboot-required status.
+- Add an opt-in PATH-scoped ping shim for the confirmed blocking OEM probes;
+  installation and State Agent update do not enable it or reboot the feeder.
+- Add an independent, opt-in signed State Agent development feed with
+  exact-revision CI builds, immutable prerelease artifacts, guarded local
+  signing and publication, and public post-publication verification.
+
 ## 0.3.14
 
 - Honor the feeder's negotiated MQTT keepalive in the temporary bootstrap

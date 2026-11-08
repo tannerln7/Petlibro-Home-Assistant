@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import enum
+import time
 from typing import Protocol
 
 
@@ -58,6 +59,7 @@ class DispensingStatusProjector:
         self.available = False
         self.connection_generation: int | None = None
         self.runtime_event_generation = 0
+        self._idle_confirmed_at: float | None = None
         self._retained_progress_tombstone_issued = False
 
     def initialize(self) -> None:
@@ -80,6 +82,7 @@ class DispensingStatusProjector:
         self.mark_unavailable()
 
     def mark_unavailable(self) -> None:
+        self._idle_confirmed_at = None
         self.available = False
         self.state.publish(self.AVAILABILITY_TOPIC, False)
 
@@ -120,7 +123,19 @@ class DispensingStatusProjector:
             return False
 
         self._publish(progress)
+        self._idle_confirmed_at = (
+            time.monotonic() if progress is FoodOutputProgress.IDLE else None
+        )
         return True
+
+    def idle_confirmed_recently(self, max_age_seconds: float) -> bool:
+        """Only a fresh correlated motor snapshot authorizes automatic reboot."""
+        return (
+            self.available
+            and self.current_state is FoodOutputProgress.IDLE
+            and self._idle_confirmed_at is not None
+            and 0 <= time.monotonic() - self._idle_confirmed_at <= max_age_seconds
+        )
 
     def apply_grain_event(
         self,
@@ -139,6 +154,7 @@ class DispensingStatusProjector:
             return False
 
         self.runtime_event_generation += 1
+        self._idle_confirmed_at = None
         self._publish(progress)
         return True
 

@@ -101,7 +101,9 @@ query parameters, or a fragment.
 Set `petlibro_state_agent_token` to the bearer token configured in the feeder
 agent. The renderer places it in the mode-0600 AppDaemon secrets file and
 references it with `!secret`; application logs never include it. The default
-request timeout is two seconds.
+ordinary API request timeout is two seconds. Signed update uploads use a
+separate 30-second timeout because feeder flash writes can legitimately take
+longer; update-status polling remains bounded independently.
 
 The backend requires the current tracked State Agent schema. That agent rejects
 any `state.bin` whose length is not exactly 236 bytes and labels decoded fields
@@ -126,6 +128,21 @@ state_agent_updates:
   check_interval_hours: 24
 ```
 
+The stable URL above remains the default. For an explicit hardware-qualification
+installation only, opt into State Agent prereleases by replacing it with:
+
+```yaml
+state_agent_updates:
+  enabled: true
+  manifest_url: https://raw.githubusercontent.com/tannerln7/Petlibro-Home-Assistant/state-agent-releases/state-agent/dev/latest.json
+  check_on_connect: true
+  check_interval_hours: 24
+```
+
+Selecting the add-on's `develop` branch does not implicitly select this State
+Agent feed; the URL must be changed deliberately. Return to the stable URL
+after qualification if prerelease updates are no longer desired.
+
 `manifest_url` is required when enabled and must be HTTPS without credentials,
 query parameters, or a fragment. `check_interval_hours` is an integer from 1
 through 168. `check_on_connect` permits a throttled check after a usable feeder
@@ -141,6 +158,35 @@ release URLs must both use HTTPS. The feeder receives only the already verified
 binary frame and never accesses the release URL. While a submitted update is in
 progress, the controller queries only `/v1/update-status` and `/v1/version` on
 the local feeder.
+
+After the new version is confirmed, the controller asks that State Agent to
+reconcile its release-managed compatibility assets and required features. This
+fixed-path operation is hash-verified and idempotent. When deployment is complete
+and enabled but activation requires reboot, AppDaemon automatically requests an
+OEM reboot once it can confirm a safe activation window:
+
+- MQTT and the State Agent are usable, with no pending settings write or agent
+  installation and no unresolved NTP synchronization failure;
+- no known plan's UTC feeding time is within five minutes, before or after
+  (conservatively including non-execution days and midnight);
+- a correlated live motor snapshot confirmed Idle within the last 20 seconds,
+  with no newer grain event, runtime invalidation, or disconnect.
+
+Unsafe or unknown conditions defer activation and are rechecked every 30
+seconds. A fresh runtime response also wakes the check immediately. An
+activation probe that fails is not repeated until new grain activity or a
+reconnection; missing motor telemetry must not turn into a warning flood or be
+treated as Idle. A natural or explicit reboot remains the fallback when safe
+automatic activation cannot be established.
+
+The controller saves one automatic reboot attempt per asset version in its
+existing local persistent namespace **before** sending the command. It does not
+retry that release's reboot across controller restarts, even if activation is
+still pending; inspect the API/logs and reboot explicitly if necessary. The
+State Agent API itself still never reboots. Home Assistant exposes only the
+diagnostic **Ping mitigation active** binary sensor; it changes only when the
+agent reports actual activation after boot. Deployment details and pending
+reboot reasons remain available from `GET /v1/compatibility` and logs.
 
 On a feeder startup event or first heartbeat, the controller reads `/v1/core`
 before accepting a persistent write. It then mirrors feeder settings and
@@ -232,6 +278,16 @@ Idle, Dispensing, or Recovering. Grain events then provide immediate
 Dispensing, Blocked, and Idle transitions. Unknown values, malformed replies,
 timeouts, and disconnects make only this entity unavailable; they never infer
 Idle from stale state.
+
+`runtime snapshot request timed out` means no matching MQTT
+`ATTR_GET_SERVICE` response arrived within ten seconds; the accompanying
+`dispensing runtime snapshot unavailable` warning describes the same failed
+refresh at the projection layer. These are not State Agent HTTP/update
+timeouts or proof of a dispensing failure. Persistent state reconciliation and
+signed updates remain independent. Missing live Idle confirmation does, however,
+defer an automatic compatibility reboot. Diagnose missing, rejected, or
+uncorrelated MQTT replies using debug logs rather than assuming the motor is
+idle or that the State Agent update failed.
 
 `food_output/progress` and its dedicated availability topic are non-retained.
 The last dispense started, completed, portions, and source topics are retained

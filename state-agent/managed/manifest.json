@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "assets": [
+    {
+      "name": "ping",
+      "source": "ping",
+      "symbol": "MANAGED_PING",
+      "path_symbol": "COMPAT_PING_REL",
+      "mode_symbol": "MANAGED_PING_MODE",
+      "destination": "data/local-compat/bin/ping",
+      "mode": "0755"
+    },
+    {
+      "name": "app_start_backup",
+      "source": "app_start.legacy.sh",
+      "symbol": "LEGACY_APP_START",
+      "path_symbol": "COMPAT_BACKUP_APP_START_REL",
+      "mode_symbol": "LEGACY_APP_START_MODE",
+      "destination": "data/local-compat/backup/app_start.sh",
+      "mode": "0700"
+    },
+    {
+      "name": "app_start",
+      "source": "app_start.sh",
+      "symbol": "MANAGED_APP_START",
+      "mode_symbol": "MANAGED_APP_START_MODE",
+      "destination": "app_start.sh",
+      "mode": "0755"
+    },
+    {
+      "name": "ping_mitigation_enabled",
+      "content": "enabled\n",
+      "symbol": "COMPAT_ENABLE_MARKER",
+      "path_symbol": "COMPAT_ENABLE_REL",
+      "mode_symbol": "COMPAT_ENABLE_MODE",
+      "destination": "data/local-compat/ping-shim.enabled",
+      "mode": "0600",
+      "activation": true
+    }
+  ]
+}

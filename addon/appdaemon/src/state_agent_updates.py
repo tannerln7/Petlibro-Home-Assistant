@@ -7,6 +7,7 @@ import json
 import re
 import struct
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 from urllib import error, parse, request
@@ -16,6 +17,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from state_agent import (
     StateAgentBadResponse,
     StateAgentError,
+    StateAgentTimeout,
+    StateAgentUnavailable,
     StateAgentUpdateStatus,
 )
 
@@ -47,6 +50,10 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 class UpdateValidationError(RuntimeError):
     """Raised when OTA release metadata or content fails validation."""
+
+
+class _UpdateSubmissionOutcomeUnknown(RuntimeError):
+    """The update request may have reached the State Agent."""
 
 
 class _RejectRedirectHandler(request.HTTPRedirectHandler):
@@ -273,6 +280,10 @@ class VerifiedReleaseBundle:
 class StateAgentUpdateCoordinator:
     """Dedicated OTA checker/uploader independent from feeder truth reconciliation."""
 
+    @property
+    def update_in_progress(self) -> bool:
+        return self._latest_state.in_progress
+
     def __init__(
         self,
         ad,
@@ -282,6 +293,7 @@ class StateAgentUpdateCoordinator:
         options: StateAgentUpdateOptions,
         *,
         public_key_path: str = "/opt/petlibro-local/release-public-key.hex",
+        update_complete_callback: Callable[[str], None] | None = None,
     ):
         self.ad = ad
         self.state = state_publisher
@@ -289,6 +301,7 @@ class StateAgentUpdateCoordinator:
         self.logger = logger
         self.options = options
         self._public_key = _load_public_key(public_key_path)
+        self._update_complete_callback = update_complete_callback
         self._check_timer = None
         self._status_poll_timer = None
         self._status_poll_attempts = 0
@@ -357,7 +370,7 @@ class StateAgentUpdateCoordinator:
             return self._check_for_updates(fetch_artifact=False)
 
         self._busy = True
-        self.ad.submit_to_executor(
+        self._submit_to_executor(
             worker,
             callback=lambda result, **_kwargs: self._on_check_finished(result=result),
         )
@@ -380,7 +393,7 @@ class StateAgentUpdateCoordinator:
         def worker() -> UpdateStateSnapshot:
             return self._install_latest()
 
-        self.ad.submit_to_executor(
+        self._submit_to_executor(
             worker,
             callback=lambda result, **_kwargs: self._on_install_finished(result=result),
         )
@@ -409,6 +422,13 @@ class StateAgentUpdateCoordinator:
 
     def _on_install_finished(self, *, result: object) -> None:
         self._busy = False
+        if isinstance(result, _UpdateSubmissionOutcomeUnknown):
+            self.logger.warning(
+                "state-agent update submission outcome is unknown; polling status"
+            )
+            self._status_poll_attempts = 0
+            self._schedule_status_poll()
+            return
         snapshot = self._extract_result(result)
         if snapshot is None:
             self._set_in_progress(False)
@@ -417,6 +437,11 @@ class StateAgentUpdateCoordinator:
         self._last_check_monotonic = time.monotonic()
         self._publish_state()
         if snapshot.in_progress:
+            self.logger.info(
+                "state-agent update started",
+                previous_version=snapshot.installed_version,
+                target_version=snapshot.latest_version,
+            )
             self._status_poll_attempts = 0
             self._schedule_status_poll()
 
@@ -459,17 +484,30 @@ class StateAgentUpdateCoordinator:
         def worker() -> UpdateStateSnapshot:
             return self._poll_feeder_update_status()
 
-        self.ad.submit_to_executor(
+        self._submit_to_executor(
             worker,
             callback=lambda result, **_kwargs: self._on_status_poll_finished(result=result),
         )
 
+    def _submit_to_executor(self, operation, *, callback) -> None:
+        # AppDaemon logs executor exceptions without dispatching the callback.
+        # Returning the exception keeps coordinator busy/progress state recoverable.
+        def captured_operation():
+            try:
+                return operation()
+            except Exception as exc:
+                return exc
+
+        self.ad.submit_to_executor(captured_operation, callback=callback)
+
     def _on_status_poll_finished(self, *, result: object) -> None:
         self._busy = False
         if isinstance(result, Exception):
-            self.logger.warning(
+            self.logger.debug(
                 "state-agent update status temporarily unavailable",
                 error_type=type(result).__name__,
+                attempt=self._status_poll_attempts + 1,
+                attempt_limit=STATUS_POLL_MAX_ATTEMPTS,
             )
             self._continue_status_poll_or_timeout()
             return
@@ -479,6 +517,7 @@ class StateAgentUpdateCoordinator:
             )
             self._continue_status_poll_or_timeout()
             return
+        previous_snapshot = self._latest_state
         snapshot = result
         self._latest_state = snapshot
         self._publish_state()
@@ -486,6 +525,43 @@ class StateAgentUpdateCoordinator:
             self._continue_status_poll_or_timeout()
         else:
             self._status_poll_attempts = 0
+            self._log_terminal_update_status(previous_snapshot, snapshot)
+
+    def _log_terminal_update_status(
+        self,
+        previous: UpdateStateSnapshot,
+        current: UpdateStateSnapshot,
+    ) -> None:
+        if current.last_error:
+            self.logger.warning(
+                "state-agent update failed",
+                previous_version=previous.installed_version,
+                target_version=previous.latest_version,
+                installed_version=current.installed_version,
+                reason=current.last_error,
+            )
+            return
+        if current.installed_version != previous.latest_version:
+            self.logger.warning(
+                "state-agent update finished without reaching target version",
+                previous_version=previous.installed_version,
+                target_version=previous.latest_version,
+                installed_version=current.installed_version,
+            )
+            return
+        self.logger.info(
+            "state-agent update complete",
+            previous_version=previous.installed_version,
+            installed_version=current.installed_version,
+        )
+        if self._update_complete_callback is not None:
+            try:
+                self._update_complete_callback(current.installed_version)
+            except Exception as error:
+                self.logger.warning(
+                    "post-update compatibility reconciliation could not be scheduled",
+                    error_type=type(error).__name__,
+                )
 
     def _continue_status_poll_or_timeout(self) -> None:
         self._status_poll_attempts += 1
@@ -502,6 +578,8 @@ class StateAgentUpdateCoordinator:
         self.logger.warning(
             "state-agent update status polling timed out",
             attempts=self._status_poll_attempts,
+            attempt_limit=STATUS_POLL_MAX_ATTEMPTS,
+            poll_interval_seconds=STATUS_POLL_INTERVAL_SECONDS,
         )
         self._publish_state()
 
@@ -586,7 +664,10 @@ class StateAgentUpdateCoordinator:
             bundle.signature_bytes,
             artifact_bytes,
         )
-        submit_result = self.state_agent.submit_update(frame)
+        try:
+            submit_result = self.state_agent.submit_update(frame)
+        except (StateAgentTimeout, StateAgentUnavailable) as exc:
+            raise _UpdateSubmissionOutcomeUnknown from exc
         if not submit_result.accepted:
             raise StateAgentBadResponse("state agent rejected update upload")
         return UpdateStateSnapshot(

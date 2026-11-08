@@ -12,6 +12,11 @@ installer binds its protected token to one feeder/Home Assistant address pair.
 Multi-feeder State Agent provisioning therefore remains an advanced manual
 deployment rather than part of this guide.
 
+The installer deploys and enables the State Agent release's fixed compatibility
+assets. Its already-required final reboot activates the guarded connectivity-
+probe mitigation. Missing or invalid compatibility dependencies fall back to
+the normal OEM launch path instead of preventing firmware startup.
+
 > [!CAUTION]
 > The OTA path has been demonstrated on firmware 3.1.48 and the payload has
 > automated transaction tests, but not every stock variant or power-loss point

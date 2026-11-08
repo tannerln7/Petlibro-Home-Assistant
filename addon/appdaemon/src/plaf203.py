@@ -3,17 +3,23 @@
 from __future__ import annotations
 
 import datetime
+import time
 
 from appdaemon import adapi, adbase
 from appdaemon.plugins.mqtt import mqttapi
-from backend import Backend
+from backend import Backend, ErrorCategory, OperationalError
 from camera_metadata import CameraMetadataPublisher
 from commands import CommandRouter
-from dispensing_status import DispensingStatusProjector, FoodOutputProgress
+from compatibility import CompatibilityCoordinator
+from dispensing_status import (
+    DispensingStatusProjector,
+    FoodOutputProgress,
+    RuntimeSnapshotResult,
+)
 from feeder_mqtt_validation import validate_feeder_mqtt_destination
 from ha_entities import HomeAssistantDiscoveryMqtt, HomeAssistantStatePublisher
 from petlibro_logging import PetlibroLogger
-from protocol import GetFeedingPlanEventIn
+from protocol import GetFeedingPlanEventIn, GrainOutputEventIn, GrainOutputType
 from state_agent import (
     FeederPlan,
     FeederTruth,
@@ -28,6 +34,9 @@ from state_coordinator import (
 )
 from storage import Storage
 from telemetry import TelemetryPublisher
+
+COMPATIBILITY_IDLE_MAX_AGE_SECONDS = 20
+COMPATIBILITY_PLAN_GUARD_SECONDS = 5 * 60
 
 
 class Plaf203(adbase.ADBase):
@@ -47,6 +56,14 @@ class Plaf203(adbase.ADBase):
         self.dispensing_status = DispensingStatusProjector(self.state, self.logger)
         self.dispensing_status.initialize()
         self._overall_available = False
+        # One latest unresolved observation per fixed category; never an event
+        # history. A controller restart starts a new diagnostic session.
+        self._operational_errors: dict[
+            ErrorCategory, tuple[OperationalError, float]
+        ] = {}
+        self._ntp_sync_failed = False
+        self._compatibility_snapshot_request: tuple[str, int, int] | None = None
+        self._publish_device_error()
         self.storage = Storage(self.ad, "plaf203", self.serial_number)
         self.storage.initialize()
 
@@ -79,12 +96,21 @@ class Plaf203(adbase.ADBase):
         update_options = StateAgentUpdateOptions.from_mapping(
             self.args.get("state_agent_updates")
         )
+        self.compatibility = CompatibilityCoordinator(
+            self.ad,
+            self.state,
+            state_agent,
+            PetlibroLogger(self.ad, "petlibro.compatibility", log_level),
+            activate_if_safe=self._activate_compatibility_if_safe,
+        )
+        self.compatibility.start()
         self.updater = StateAgentUpdateCoordinator(
             self.ad,
             self.state,
             state_agent,
             PetlibroLogger(self.ad, "petlibro.updates", log_level),
             update_options,
+            update_complete_callback=self.compatibility.on_state_agent_update_complete,
         )
         self.updater.start()
         self.backend = Backend()
@@ -152,6 +178,7 @@ class Plaf203(adbase.ADBase):
     def terminate(self) -> None:
         self.camera_metadata.stop()
         self.updater.stop()
+        self.compatibility.stop()
         self.coordinator.shutdown()
         self.storage.terminate()
         self.dispensing_status.on_feeder_disconnected()
@@ -191,6 +218,7 @@ class Plaf203(adbase.ADBase):
         self.backend.went_offline_listen(self._went_offline)
         self.backend.ntp_sync_status_listen(self._ntp_sync_status)
         self.backend.error_listen(self._device_error)
+        self.backend.feed_success_listen(self._feed_succeeded)
         self.backend.heartbeat_event_listen(self.coordinator.on_heartbeat)
         self.backend.persistent_state_hint_listen(
             self.coordinator.on_persistent_state_hint
@@ -203,21 +231,77 @@ class Plaf203(adbase.ADBase):
         self.backend.food_output_progress_listen(self._food_output_progress)
         self.backend.runtime_snapshot_listen(
             self.dispensing_status.runtime_snapshot_started,
-            self.dispensing_status.apply_runtime_snapshot,
+            self._runtime_snapshot_result,
             self.dispensing_status.runtime_event_generation_get,
         )
+
+    def _runtime_snapshot_result(self, result: RuntimeSnapshotResult) -> None:
+        if self.dispensing_status.apply_runtime_snapshot(result):
+            self.compatibility.on_runtime_snapshot()
 
     def _apply_feeder_truth(self, truth: FeederTruth) -> None:
         self.state.apply_feeder_truth(truth)
 
+    def _activate_compatibility_if_safe(self, version: str) -> bool:
+        if self.storage.compatibility_reboot_version_get() == version:
+            return True  # One automatic reboot request per release, even after restart.
+        if (
+            not self._overall_available or not self.backend.is_online
+            or not self.coordinator.is_ready_for_user_write()
+            or self.updater.update_in_progress or self._ntp_sync_failed
+        ):
+            self.logger.debug("compatibility reboot deferred until feeder is ready")
+            return False
+        truth = self.coordinator.latest_truth()
+        if truth is None:
+            return False
+        now = datetime.datetime.now(datetime.timezone.utc)
+        seconds = now.hour * 3600 + now.minute * 60 + now.second
+        # Deliberately conservative: protect every known plan's UTC time even
+        # on non-execution days. Include midnight and the post-feed window.
+        if any(
+            abs((plan.hour_utc * 3600 + plan.minute * 60 - seconds + 43200)
+                % 86400 - 43200) <= COMPATIBILITY_PLAN_GUARD_SECONDS
+            for plan in truth.plans.semantic_records
+        ):
+            self.logger.debug("compatibility reboot deferred near scheduled feeding")
+            return False
+        if not self.dispensing_status.idle_confirmed_recently(
+            COMPATIBILITY_IDLE_MAX_AGE_SECONDS
+        ):
+            key = (
+                version, self.backend.connection_generation,
+                self.dispensing_status.runtime_event_generation_get(),
+            )
+            # A failed/unsupported query must not cause endless snapshot
+            # warnings. New runtime activity or reconnect permits a new probe.
+            if (
+                self.backend.runtime_snapshot_pending is None
+                and self._compatibility_snapshot_request != key
+            ):
+                self._compatibility_snapshot_request = key
+                self.backend.request_runtime_snapshot("compatibility activation")
+            self.logger.debug("compatibility reboot deferred until live idle is confirmed")
+            return False
+        self.storage.compatibility_reboot_version_set(version)
+        self.logger.info(
+            "rebooting feeder to activate release-managed compatibility",
+            asset_version=version,
+        )
+        self.backend.device_reboot()
+        return True
+
     def _coordinator_availability_set(self, available: bool) -> None:
+        was_available = self._overall_available
         self._overall_available = available
         self.state.publish("device/online", available)
         if not available:
             return
-        self.updater.on_usable_connection()
-        self.state.publish("device/error_state", False)
-        self.state.publish("device/error_message", "No error")
+        # READY also follows ordinary write verification and truth refreshes.
+        # Only a genuine availability recovery starts connection lifecycle work.
+        if not was_available:
+            self.updater.on_usable_connection()
+            self.compatibility.on_usable_connection()
         if self.persist_feeder_mqtt and self._feeder_mqtt_persistence_due:
             request = PersistentWriteRequest(
                 control="device.feeder_mqtt_destination",
@@ -270,6 +354,7 @@ class Plaf203(adbase.ADBase):
 
     def _went_offline(self) -> None:
         self.logger.info("device offline", serial=self.serial_number)
+        self.backend.invalidate_feed_recovery()
         self.dispensing_status.on_feeder_disconnected()
         self.coordinator.on_feeder_disconnected("feeder MQTT heartbeat lost")
 
@@ -289,12 +374,16 @@ class Plaf203(adbase.ADBase):
         self.logger.info("Home Assistant online; restoring MQTT projections")
         self.discovery.discovery_issue()
         self.state.publish("device/online", self._overall_available)
+        self._publish_device_error()
         latest_truth = self.coordinator.latest_truth()
         if latest_truth is not None:
             self._apply_feeder_truth(latest_truth)
         updater = getattr(self, "updater", None)
         if updater is not None:
             updater.on_home_assistant_birth()
+        compatibility = getattr(self, "compatibility", None)
+        if compatibility is not None:
+            compatibility.on_home_assistant_birth()
         self.dispensing_status.mark_unavailable()
         self.backend.request_runtime_snapshot("Home Assistant birth")
 
@@ -303,12 +392,67 @@ class Plaf203(adbase.ADBase):
             self.state.publish(
                 "device/ntp_last_correct", datetime.datetime.now().astimezone()
             )
+            self._ntp_sync_failed = False
+            self._publish_device_error()
             return
         self.logger.warning("device NTP correction failed")
-        self.state.publish("device/error_state", True)
-        self.state.publish("device/error_message", "NTP sync with device failed")
+        self._ntp_sync_failed = True
+        self._publish_device_error()
 
-    def _device_error(self, message: str) -> None:
-        self.logger.error("device error", detail=message)
-        self.state.publish("device/error_state", True)
-        self.state.publish("device/error_message", message)
+    def _device_error(self, error: OperationalError) -> None:
+        self.logger.error(
+            "device error", detail=error.message, category=error.category.value,
+            error_code=error.code,
+        )
+        previous = self._operational_errors.get(error.category)
+        if (
+            previous is not None
+            and previous[0].event_time_ms is not None
+            and error.event_time_ms is not None
+            and error.event_time_ms < previous[0].event_time_ms
+        ):
+            # Preserve newer metadata, but a newly received ambiguous record
+            # must still prevent an already-running feed from clearing it.
+            error = previous[0]
+        self._operational_errors.pop(error.category, None)
+        self._operational_errors[error.category] = (error, time.monotonic())
+        self._publish_device_error()
+
+    def _feed_succeeded(
+        self, start: GrainOutputEventIn, end: GrainOutputEventIn, observed: float
+    ) -> None:
+        recoverable = {
+            ErrorCategory.NO_FOOD, ErrorCategory.OUTLET, ErrorCategory.MOTOR,
+            ErrorCategory.PORTIONS, ErrorCategory.SCHEDULED,
+        }
+        for category, (error, reported) in list(self._operational_errors.items()):
+            if (
+                category not in recoverable
+                or error.event_time_ms is None
+                or abs(error.received_time_ms - error.event_time_ms)
+                >= Backend.NTP_SYNC_TIME_DIFF_THRESHOLD_SEC * 1000
+                or error.message_id == start.message_id.data
+                or observed <= reported
+                or start.exec_time.to_timestamp_epoch_ms() <= error.event_time_ms
+                or (
+                    category == ErrorCategory.SCHEDULED
+                    and end.type_ != GrainOutputType.FEED_PLAN
+                )
+            ):
+                continue
+            del self._operational_errors[category]
+            self.logger.info(
+                "subsequent dispensing capability observed; feeding incident resolved",
+                category=category.value, error_code=error.code,
+            )
+        self._publish_device_error()
+
+    def _publish_device_error(self) -> None:
+        latest = next(reversed(self._operational_errors.values()), None)
+        message = latest[0].message if latest is not None else None
+        if message is None and self._ntp_sync_failed:
+            message = "NTP sync with device failed"
+        self.state.publish("device/error_state", message is not None)
+        self.state.publish(
+            "device/error_message", message if message is not None else "No error"
+        )
