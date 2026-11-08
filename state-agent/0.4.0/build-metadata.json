@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "source_revision": "71e23e6d4116e4d49f476954b9f7bd1b56d768f9",
+  "version": "0.4.0",
+  "platform": "linux-armv7-eabihf",
+  "artifact": {
+    "name": "plaf203-state-agent",
+    "sha256": "9012f1ecfd2ffabe4b4a0c3c394629857fcdf744e459e32d2732432459ffd425",
+    "size": 635584
+  },
+  "trust_anchor_sha256": "f5d73a66e33bad0467bee3b26d4345031714eb28e04ba7c4836fd6a39c85baca",
+  "managed_manifest_sha256": "5e65a555bad4ddb025b2996d821325417a44bdd4175e19ed70442c2711a9e37b",
+  "validation": "scripts/validate.sh --strict",
+  "compiler": "arm-linux-gnueabihf-gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0"
+}
